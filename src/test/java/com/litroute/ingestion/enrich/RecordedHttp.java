@@ -28,13 +28,25 @@ public final class RecordedHttp implements HttpFetcher {
     private static final Map<String, Recorded> RECORDINGS = load();
 
     /** Every URL requested, in order, so a test can assert what was - and was never - contacted. */
-    final List<String> requests = new ArrayList<>();
+    public final List<String> requests = new ArrayList<>();
 
     private final List<String> offlineFragments = new ArrayList<>();
+    private final Map<String, boolean[]> flakyFragments = new LinkedHashMap<>();
+    private final Map<String, Integer> callsPerFragment = new LinkedHashMap<>();
 
     /** Makes any URL containing this fragment fail as an unreachable host would. */
-    RecordedHttp offlineFor(String urlFragment) {
+    public RecordedHttp offlineFor(String urlFragment) {
         offlineFragments.add(urlFragment);
+        return this;
+    }
+
+    /**
+     * Makes a host fail intermittently: {@code down[i]} says whether the i-th request matching this
+     * fragment fails. Requests past the end of the array succeed. Real APIs throttle and time out in
+     * bursts rather than going away cleanly, and the retry policy has to be judged against that.
+     */
+    public RecordedHttp flakyFor(String urlFragment, boolean... down) {
+        flakyFragments.put(urlFragment, down);
         return this;
     }
 
@@ -45,6 +57,15 @@ public final class RecordedHttp implements HttpFetcher {
         for (String fragment : offlineFragments) {
             if (url.contains(fragment)) {
                 throw new IOException("simulated: network unreachable");
+            }
+        }
+        for (Map.Entry<String, boolean[]> flaky : flakyFragments.entrySet()) {
+            if (!url.contains(flaky.getKey())) {
+                continue;
+            }
+            int call = callsPerFragment.merge(flaky.getKey(), 1, Integer::sum) - 1;
+            if (call < flaky.getValue().length && flaky.getValue()[call]) {
+                throw new IOException("simulated: request timed out");
             }
         }
         Recorded recorded = RECORDINGS.get(url);
@@ -61,11 +82,11 @@ public final class RecordedHttp implements HttpFetcher {
         return new HttpReply(recorded.status(), recorded.contentType(), body, uri, truncated);
     }
 
-    long count(String urlFragment) {
+    public long count(String urlFragment) {
         return requests.stream().filter(url -> url.contains(urlFragment)).count();
     }
 
-    boolean requested(String urlFragment) {
+    public boolean requested(String urlFragment) {
         return count(urlFragment) > 0;
     }
 

@@ -1,132 +1,141 @@
 package com.litroute.ingestion.enrich;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
-import java.io.IOException;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import org.junit.Test;
 
+/**
+ * Asking Crossref and OpenAlex together, against the replies they really gave for the Hygrothermal
+ * paper from the SpringerOpen alert. The two APIs genuinely disagree about that paper - Crossref
+ * spells its second author "Luis Silva" and OpenAlex "Luís Silva", and Crossref lists the same PDF
+ * URL twice - which is what makes it a fair test of the merge rules.
+ *
+ * Outages are simulated at the network layer rather than by standing in for a source, so what is
+ * being exercised is the real Crossref and OpenAlex code paths meeting a real failure.
+ */
 public class CompositeMetadataLookupTest {
 
-    /** Answers from a script: each call either returns the answer or, for "down" steps, throws like an offline API. */
-    private static final class FakeSource implements MetadataSource {
-        private final String name;
-        private final Optional<PaperMetadata> answer;
-        private final boolean[] downSteps;
-        final List<PaperQuery> queries = new ArrayList<>();
+    private static final String TITLE = "Hygrothermal analysis of ceramic coating durability "
+            + "under thermal fluctuations on building facades in Brasília";
+    private static final String DOI = "10.1186/s43065-024-00115-x";
+    private static final String PDF = "https://link.springer.com/content/pdf/" + DOI + ".pdf";
 
-        FakeSource(String name, Optional<PaperMetadata> answer, boolean... downSteps) {
-            this.name = name;
-            this.answer = answer;
-            this.downSteps = downSteps;
-        }
-
-        static FakeSource offline(String name) {
-            return new FakeSource(name, Optional.empty(), true, true, true, true, true, true);
-        }
-
-        @Override
-        public String name() {
-            return name;
-        }
-
-        @Override
-        public Optional<PaperMetadata> lookup(PaperQuery query) throws IOException {
-            int call = queries.size();
-            queries.add(query);
-            if (call < downSteps.length && downSteps[call]) {
-                throw new IOException(name + " is down");
-            }
-            return answer;
-        }
+    /** What M3 asks when the alert gave no DOI - the case that makes Crossref search by title. */
+    private static PaperQuery byTitle() {
+        return new PaperQuery(TITLE, List.of(), Optional.empty());
     }
 
-    private static final PaperQuery QUERY = new PaperQuery("Some paper title here", List.of(), Optional.empty());
-
-    private static PaperMetadata crossrefSays() {
-        return new PaperMetadata(Optional.of("10.9999/x"), Optional.of("Some paper title here"), List.of("A One", "B Two"),
-                Optional.of("Journal J"), Optional.empty(), Optional.of("https://doi.org/10.9999/x"), List.of());
+    /** What M3 asks when the alert's link already yielded a DOI. */
+    private static PaperQuery byDoi() {
+        return new PaperQuery(TITLE, List.of(), Optional.of(DOI));
     }
 
-    private static PaperMetadata openAlexSays() {
-        return new PaperMetadata(Optional.of("10.9999/x"), Optional.empty(), List.of("Different Author"),
-                Optional.of("Other Name"), Optional.of(2025), Optional.empty(), List.of("https://oa.test/x.pdf"));
+    private static CompositeMetadataLookup lookupOver(RecordedHttp http) {
+        return new CompositeMetadataLookup(List.of(new CrossrefSource(http), new OpenAlexSource(http)));
     }
 
     @Test
-    public void mergesBothSourcesEarlierOnesWinAndLaterOnesFillGaps() {
-        FakeSource crossref = new FakeSource("Crossref", Optional.of(crossrefSays()));
-        FakeSource openAlex = new FakeSource("OpenAlex", Optional.of(openAlexSays()));
+    public void bothSourcesAreMergedWithTheEarlierOneWinningFieldByField() {
+        PaperMetadata merged = lookupOver(new RecordedHttp()).find(byTitle()).orElseThrow();
 
-        PaperMetadata merged = new CompositeMetadataLookup(List.of(crossref, openAlex)).find(QUERY).orElseThrow();
-
-        assertEquals(List.of("A One", "B Two"), merged.authors());
-        assertEquals(Optional.of("Journal J"), merged.venue());
-        assertEquals("gap filled by the second source", Optional.of(2025), merged.year());
-        assertEquals("PDF location only the second source knew", List.of("https://oa.test/x.pdf"), merged.pdfUrls());
+        assertEquals(Optional.of(DOI), merged.doi());
+        assertEquals("Crossref is asked first, so its spelling of the authors is the one kept",
+                List.of("Gilberto Gomes", "Luis Silva", "Elton Bauer"), merged.authors());
+        assertEquals(Optional.of("Journal of Infrastructure Preservation and Resilience"), merged.venue());
+        assertEquals(Optional.of(2025), merged.year());
     }
 
+    /** Crossref really does list this paper's PDF twice; one URL must come out, not two. */
+    @Test
+    public void aPdfLocationOfferedByBothSourcesIsNotListedTwice() {
+        PaperMetadata merged = lookupOver(new RecordedHttp()).find(byTitle()).orElseThrow();
+
+        assertEquals(List.of(PDF), merged.pdfUrls());
+    }
+
+    /**
+     * Once Crossref has turned the title into a DOI, OpenAlex must be asked by that DOI - an exact
+     * lookup - rather than made to guess from the title all over again.
+     */
     @Test
     public void aDoiFoundByTheFirstSourceIsUsedToQueryTheSecondExactly() {
-        FakeSource crossref = new FakeSource("Crossref", Optional.of(crossrefSays()));
-        FakeSource openAlex = new FakeSource("OpenAlex", Optional.of(openAlexSays()));
+        RecordedHttp http = new RecordedHttp();
 
-        new CompositeMetadataLookup(List.of(crossref, openAlex)).find(QUERY);
+        lookupOver(http).find(byTitle());
 
-        assertEquals(Optional.empty(), crossref.queries.get(0).doi());
-        assertEquals(Optional.of("10.9999/x"), openAlex.queries.get(0).doi());
+        assertTrue("Crossref had only the title to go on",
+                http.requests.get(0).contains("api.crossref.org/works?query.bibliographic="));
+        assertTrue("OpenAlex was asked by DOI: " + http.requests,
+                http.requests.stream().anyMatch(u -> u.equals("https://api.openalex.org/works/https://doi.org/" + DOI)));
+        assertEquals("OpenAlex never had to search by title", 0,
+                http.requests.stream().filter(u -> u.contains("openalex.org/works?search=")).count());
     }
 
     @Test
-    public void oneSourceOfflineTheOtherStillAnswers() {
-        FakeSource crossref = FakeSource.offline("Crossref");
-        FakeSource openAlex = new FakeSource("OpenAlex", Optional.of(openAlexSays()));
+    public void whenCrossrefIsDownOpenAlexStillAnswers() {
+        PaperMetadata found = lookupOver(new RecordedHttp().offlineFor("api.crossref.org"))
+                .find(byDoi()).orElseThrow();
 
-        PaperMetadata found = new CompositeMetadataLookup(List.of(crossref, openAlex)).find(QUERY).orElseThrow();
-        assertEquals(List.of("https://oa.test/x.pdf"), found.pdfUrls());
-
-        // ...and the other way round.
-        FakeSource crossref2 = new FakeSource("Crossref", Optional.of(crossrefSays()));
-        FakeSource openAlex2 = FakeSource.offline("OpenAlex");
-        assertEquals(Optional.of("10.9999/x"),
-                new CompositeMetadataLookup(List.of(crossref2, openAlex2)).find(QUERY).orElseThrow().doi());
+        assertEquals(Optional.of(DOI), found.doi());
+        assertEquals("OpenAlex's own spelling now, with no Crossref to override it",
+                List.of("Gilberto Gomes", "Luís Silva", "Elton Bauer"), found.authors());
+        assertEquals(List.of(PDF), found.pdfUrls());
     }
 
     @Test
-    public void bothSourcesOfflineGivesNoResultInsteadOfAnException() {
-        CompositeMetadataLookup lookup = new CompositeMetadataLookup(
-                List.of(FakeSource.offline("Crossref"), FakeSource.offline("OpenAlex")));
+    public void whenOpenAlexIsDownCrossrefStillAnswers() {
+        PaperMetadata found = lookupOver(new RecordedHttp().offlineFor("api.openalex.org"))
+                .find(byTitle()).orElseThrow();
 
-        assertEquals(Optional.empty(), lookup.find(QUERY));
+        assertEquals(Optional.of(DOI), found.doi());
+        assertEquals(List.of("Gilberto Gomes", "Luis Silva", "Elton Bauer"), found.authors());
     }
 
+    /** Both APIs unreachable is a paper we learned nothing about, not a failure that stops the run. */
+    @Test
+    public void bothSourcesDownGivesNoResultInsteadOfAnException() {
+        RecordedHttp http = new RecordedHttp().offlineFor("api.crossref.org").offlineFor("api.openalex.org");
+
+        assertEquals(Optional.empty(), lookupOver(http).find(byDoi()));
+    }
+
+    /**
+     * An API that is down stays down for a while. Retrying it once per paper would cost a timeout on
+     * every one of the 31 papers in a batch, so after three failures in a row it is left alone for the
+     * rest of the run - while the source that still works keeps being asked.
+     */
     @Test
     public void aSourceThatKeepsFailingIsSkippedForTheRestOfTheRun() {
-        FakeSource crossref = FakeSource.offline("Crossref");
-        FakeSource openAlex = new FakeSource("OpenAlex", Optional.of(openAlexSays()));
-        CompositeMetadataLookup lookup = new CompositeMetadataLookup(List.of(crossref, openAlex));
+        RecordedHttp http = new RecordedHttp().offlineFor("api.crossref.org");
+        CompositeMetadataLookup lookup = lookupOver(http);
 
         for (int paper = 0; paper < 6; paper++) {
-            lookup.find(QUERY);
+            lookup.find(byDoi());
         }
 
-        assertEquals("stops being asked after MAX_CONSECUTIVE_FAILURES", CompositeMetadataLookup.MAX_CONSECUTIVE_FAILURES,
-                crossref.queries.size());
-        assertEquals("the healthy source is asked every time", 6, openAlex.queries.size());
+        assertEquals("Crossref stops being asked after MAX_CONSECUTIVE_FAILURES",
+                CompositeMetadataLookup.MAX_CONSECUTIVE_FAILURES, http.count("api.crossref.org"));
+        assertEquals("the healthy source is asked for every paper", 6, http.count("api.openalex.org"));
     }
 
+    /**
+     * Throttling and timeouts come in bursts, and a source that recovers must not be written off. Two
+     * failures then a success, repeatedly, never reaches three in a row - so Crossref is asked about
+     * every paper.
+     */
     @Test
     public void aSuccessResetsTheFailureCountSoOccasionalBlipsNeverDisableASource() {
-        // fails, fails, works, fails, fails, works ... never 3 failures in a row
-        FakeSource flaky = new FakeSource("Crossref", Optional.of(crossrefSays()), true, true, false, true, true, false);
-        CompositeMetadataLookup lookup = new CompositeMetadataLookup(List.of(flaky));
+        RecordedHttp http = new RecordedHttp()
+                .flakyFor("api.crossref.org", true, true, false, true, true, false);
+        CompositeMetadataLookup lookup = lookupOver(http);
 
         for (int paper = 0; paper < 6; paper++) {
-            lookup.find(QUERY);
+            lookup.find(byDoi());
         }
 
-        assertEquals(6, flaky.queries.size());
+        assertEquals("never three in a row, so Crossref is never skipped", 6, http.count("api.crossref.org"));
     }
 }
