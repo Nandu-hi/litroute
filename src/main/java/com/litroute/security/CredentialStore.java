@@ -2,11 +2,16 @@ package com.litroute.security;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonGenerator;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.core.JsonToken;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.litroute.security.CredentialCipher.EncryptedBlob;
 import com.litroute.util.AtomicFiles;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.security.GeneralSecurityException;
 import java.util.Arrays;
@@ -28,6 +33,22 @@ import java.util.Optional;
  * GmailCredentials - it overwrites the previous encrypted file, there is no
  * versioning or migration to worry about since this store only ever holds
  * one record.
+ *
+ * The plaintext {emailAddress, appPassword} payload is written and read
+ * through Jackson's streaming JsonGenerator/JsonParser API rather than
+ * ObjectMapper's record binding, specifically so the app password is never
+ * materialized as a java.lang.String: writeString(char[], int, int) and
+ * getTextCharacters() move the secret straight between char[] buffers that
+ * this class clones, uses, and zeroes. A String is immutable, cannot be
+ * wiped, and would defeat the char[]-for-secrets design GmailCredentials
+ * documents.
+ *
+ * Neither load() nor save() clears the caller-supplied passphrase array: the
+ * master passphrase is read once at process start and typically reused for
+ * the process's whole lifetime (e.g. a later save() after a load()), so this
+ * class treats it as borrowed, not owned. The caller that originally read
+ * the passphrase is responsible for zeroing it exactly once, when the
+ * process is done with it for good.
  */
 public final class CredentialStore {
 
@@ -49,21 +70,51 @@ public final class CredentialStore {
     }
 
     public Optional<GmailCredentials> load(char[] passphrase) throws IOException, GeneralSecurityException {
-        if (!exists()) {
+        byte[] fileBytes;
+        try {
+            fileBytes = Files.readAllBytes(storeFile);
+        } catch (NoSuchFileException e) {
             return Optional.empty();
         }
-        Envelope envelope = JSON.readValue(Files.readAllBytes(storeFile), Envelope.class);
+
+        Envelope envelope = JSON.readValue(fileBytes, Envelope.class);
+        if (envelope.salt() == null || envelope.iv() == null || envelope.ciphertext() == null) {
+            throw new IOException("Corrupt credential file: missing salt, iv, or ciphertext in " + storeFile);
+        }
         EncryptedBlob blob = new EncryptedBlob(
                 Base64.getDecoder().decode(envelope.salt()),
                 Base64.getDecoder().decode(envelope.iv()),
                 Base64.getDecoder().decode(envelope.ciphertext()));
 
         byte[] plaintext = cipher.decrypt(blob, passphrase);
+        char[] appPassword = null;
         try {
-            PlaintextPayload payload = JSON.readValue(plaintext, PlaintextPayload.class);
-            return Optional.of(new GmailCredentials(payload.emailAddress(), payload.appPassword().toCharArray()));
+            String emailAddress = null;
+            try (JsonParser parser = JSON.getFactory().createParser(plaintext)) {
+                if (parser.nextToken() != JsonToken.START_OBJECT) {
+                    throw new IOException("Corrupt credential file: expected a JSON object");
+                }
+                while (parser.nextToken() == JsonToken.FIELD_NAME) {
+                    String fieldName = parser.currentName();
+                    parser.nextToken();
+                    if ("emailAddress".equals(fieldName)) {
+                        emailAddress = parser.getText();
+                    } else if ("appPassword".equals(fieldName)) {
+                        int length = parser.getTextLength();
+                        appPassword = new char[length];
+                        System.arraycopy(parser.getTextCharacters(), parser.getTextOffset(), appPassword, 0, length);
+                    }
+                }
+            }
+            if (emailAddress == null || appPassword == null) {
+                throw new IOException("Corrupt credential file: missing emailAddress or appPassword");
+            }
+            return Optional.of(new GmailCredentials(emailAddress, appPassword));
         } finally {
             Arrays.fill(plaintext, (byte) 0);
+            if (appPassword != null) {
+                Arrays.fill(appPassword, '\0');
+            }
         }
     }
 
@@ -71,8 +122,7 @@ public final class CredentialStore {
         char[] appPassword = credentials.appPassword();
         byte[] plaintext;
         try {
-            PlaintextPayload payload = new PlaintextPayload(credentials.emailAddress(), new String(appPassword));
-            plaintext = JSON.writeValueAsBytes(payload);
+            plaintext = serializePayload(credentials.emailAddress(), appPassword);
         } finally {
             Arrays.fill(appPassword, '\0');
         }
@@ -93,6 +143,18 @@ public final class CredentialStore {
         Files.deleteIfExists(storeFile);
     }
 
+    private static byte[] serializePayload(String emailAddress, char[] appPassword) throws IOException {
+        ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+        try (JsonGenerator generator = JSON.getFactory().createGenerator(buffer)) {
+            generator.writeStartObject();
+            generator.writeStringField("emailAddress", emailAddress);
+            generator.writeFieldName("appPassword");
+            generator.writeString(appPassword, 0, appPassword.length);
+            generator.writeEndObject();
+        }
+        return buffer.toByteArray();
+    }
+
     private record Envelope(
             @JsonProperty("salt") String salt,
             @JsonProperty("iv") String iv,
@@ -100,15 +162,6 @@ public final class CredentialStore {
 
         @JsonCreator
         Envelope {
-        }
-    }
-
-    private record PlaintextPayload(
-            @JsonProperty("emailAddress") String emailAddress,
-            @JsonProperty("appPassword") String appPassword) {
-
-        @JsonCreator
-        PlaintextPayload {
         }
     }
 }

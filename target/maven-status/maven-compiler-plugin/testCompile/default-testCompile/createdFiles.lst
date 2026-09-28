@@ -1,5 +1,0 @@
-com/litroute/ingestion/email/GmailEmailSourceTest.class
-com/litroute/security/CredentialStoreTest.class
-com/litroute/ingestion/email/AlertClassifierTest.class
-com/litroute/AppTest.class
-com/litroute/store/EmailCacheStoreTest.class

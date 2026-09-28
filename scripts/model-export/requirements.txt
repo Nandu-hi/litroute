@@ -1,0 +1,7 @@
+transformers
+adapters
+onnx
+onnxruntime
+onnxscript
+numpy
+sentencepiece

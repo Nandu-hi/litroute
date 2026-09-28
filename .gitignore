@@ -1,0 +1,18 @@
+# Maven build output
+target/
+
+# IDE / editor
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+
+# Scratch
+temp.txt
+*.log
+
+# Model export venv / output (model files belong in ~/.litroute/models, not git)
+scripts/model-export/.venv/
+scripts/model-export/out/

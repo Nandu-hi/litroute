@@ -1,6 +1,7 @@
 package com.litroute.model;
 
 import java.time.Instant;
+import java.util.Objects;
 import java.util.Optional;
 
 /**
@@ -14,14 +15,16 @@ public record RawEmail(
         String messageId,
         String subject,
         String fromAddress,
-        Instant receivedAt,
+        Instant receivedAt, //UTC timestamp
         Optional<String> htmlBody,
         Optional<String> plainTextBody) {
 
     public RawEmail {
-        if (messageId == null || messageId.isBlank()) {
+        if (messageId == null || messageId.isBlank() || messageId.isEmpty() ) {
             throw new IllegalArgumentException("messageId must not be blank");
         }
+        Objects.requireNonNull(htmlBody, "htmlBody must not be null");
+        Objects.requireNonNull(plainTextBody, "plainTextBody must not be null");
         if (htmlBody.isEmpty() && plainTextBody.isEmpty()) {
             throw new IllegalArgumentException("RawEmail must have at least one of htmlBody/plainTextBody");
         }
