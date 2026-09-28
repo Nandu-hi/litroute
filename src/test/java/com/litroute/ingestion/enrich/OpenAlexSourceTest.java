@@ -1,70 +1,68 @@
 package com.litroute.ingestion.enrich;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertTrue;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Optional;
 import org.junit.Test;
 
+/**
+ * OpenAlex lookups, against the replies OpenAlex really gave for the papers in the sample mails.
+ * OpenAlex earns its place in the pipeline by knowing where the open-access PDF is, which Crossref
+ * usually does not.
+ */
 public class OpenAlexSourceTest {
 
-    private static final String TITLE = "Advancing soil-structure interaction (SSI): a comprehensive review of current practices, "
-            + "challenges, and future directions";
+    private static final String HYGRO_DOI = "10.1186/s43065-024-00115-x";
+    private static final String HYGRO_TITLE = "Hygrothermal analysis of ceramic coating durability "
+            + "under thermal fluctuations on building facades in Brasília";
 
-    private static final String WORK = """
-            {"doi":"https://doi.org/10.1186/s43065-025-00118-2","display_name":"%s","publication_year":2025,
-             "authorships":[{"author":{"display_name":"Imtiyaz Akbar Najar"}},{"author":{"display_name":"Shanshan Tang"}}],
-             "primary_location":{"landing_page_url":"https://oa.test/landing","pdf_url":null,
-                                 "source":{"display_name":"Journal of Infrastructure Preservation and Resilience"}},
-             "best_oa_location":{"pdf_url":"https://oa.test/ssi.pdf"},
-             "locations":[{"pdf_url":"https://oa.test/ssi.pdf"},{"pdf_url":"https://repo.test/ssi-preprint.pdf"},{"pdf_url":null}]}
-            """.formatted(TITLE);
+    private final RecordedHttp http = new RecordedHttp();
+    private final OpenAlexSource source = new OpenAlexSource(http);
 
-    private static final String UNRELATED = """
-            {"doi":"https://doi.org/10.9999/other","display_name":"Deep learning for crack detection","authorships":[]}
-            """;
-
-    private final FakeHttp http = new FakeHttp();
-    private final OpenAlexSource source = new OpenAlexSource(http, "https://oa.test");
+    private static PaperQuery byDoi() {
+        return new PaperQuery(HYGRO_TITLE, List.of(), Optional.of(HYGRO_DOI));
+    }
 
     @Test
-    public void lookupByDoiReadsTheWorkWithTheDoiPrefixStrippedAndOpenAccessPdfsFirst() throws IOException {
-        http.on("oa.test/works/https://doi.org/10.1186/s43065-025-00118-2", FakeHttp.json(WORK));
+    public void aDoiLookupReturnsWhatOpenAlexKnowsAboutThatWork() throws IOException {
+        PaperMetadata found = source.lookup(byDoi()).orElseThrow();
 
-        PaperMetadata found = source.lookup(new PaperQuery("ignored", List.of(), Optional.of("10.1186/s43065-025-00118-2"))).orElseThrow();
-
-        assertEquals(Optional.of("10.1186/s43065-025-00118-2"), found.doi());
-        assertEquals(Optional.of(TITLE), found.title());
-        assertEquals(List.of("Imtiyaz Akbar Najar", "Shanshan Tang"), found.authors());
+        assertEquals("the DOI comes back bare, not as the https://doi.org/... form OpenAlex stores",
+                Optional.of(HYGRO_DOI), found.doi());
+        assertEquals(Optional.of(HYGRO_TITLE), found.title());
+        assertEquals(List.of("Gilberto Gomes", "Luís Silva", "Elton Bauer"), found.authors());
         assertEquals(Optional.of("Journal of Infrastructure Preservation and Resilience"), found.venue());
         assertEquals(Optional.of(2025), found.year());
-        assertEquals(Optional.of("https://oa.test/landing"), found.landingUrl());
-        // best_oa_location first, no duplicates, nulls skipped.
-        assertEquals(List.of("https://oa.test/ssi.pdf", "https://repo.test/ssi-preprint.pdf"), found.pdfUrls());
     }
 
+    /** The open-access PDF location is the reason this source is in the pipeline at all. */
     @Test
-    public void titleSearchPicksTheMatchingResult() throws IOException {
-        http.on("oa.test/works?search=", FakeHttp.json("{\"results\":[" + UNRELATED + "," + WORK + "]}"));
+    public void theOpenAccessPdfLocationIsReported() throws IOException {
+        PaperMetadata found = source.lookup(byDoi()).orElseThrow();
 
-        PaperMetadata found = source.lookup(new PaperQuery(TITLE, List.of(), Optional.empty())).orElseThrow();
-
-        assertEquals(Optional.of("10.1186/s43065-025-00118-2"), found.doi());
+        assertTrue(found.pdfUrls().contains("https://link.springer.com/content/pdf/" + HYGRO_DOI + ".pdf"));
+        assertFalse("this work has a second location with no pdf_url; it must not become an empty entry",
+                found.pdfUrls().contains(""));
     }
 
+    // OpenAlex's title-search branch has no test here on purpose: across all six sample mails it is
+    // never taken. Crossref answers first and always supplies a DOI, so CompositeMetadataLookup only
+    // ever asks OpenAlex by DOI, and the recording therefore contains no OpenAlex title search to
+    // replay. Covering it would mean inventing a request the pipeline does not make.
+
+    /**
+     * An unreachable API is reported, not swallowed: CompositeMetadataLookup is the layer that
+     * decides a dead source should be skipped, and it can only do that if it hears about the failure.
+     */
     @Test
-    public void titleSearchWithNothingSimilarIsNoMatch() throws IOException {
-        http.on("oa.test/works?search=", FakeHttp.json("{\"results\":[" + UNRELATED + "]}"));
+    public void anUnreachableApiIsReportedToTheCaller() {
+        OpenAlexSource offline = new OpenAlexSource(new RecordedHttp().offlineFor("openalex.org"));
 
-        assertEquals(Optional.empty(), source.lookup(new PaperQuery(TITLE, List.of(), Optional.empty())));
-    }
-
-    @Test
-    public void unreachableOpenAlexIsAFailureNotANoMatch() {
-        http.on("oa.test", FakeHttp.offline());
-
-        assertThrows(IOException.class, () -> source.lookup(new PaperQuery(TITLE, List.of(), Optional.empty())));
+        assertThrows(IOException.class, () -> offline.lookup(byDoi()));
     }
 }

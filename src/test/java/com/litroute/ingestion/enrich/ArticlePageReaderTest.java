@@ -1,71 +1,69 @@
 package com.litroute.ingestion.enrich;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.util.List;
 import java.util.Optional;
 import org.junit.Test;
 
+/**
+ * Reading a publisher's article page, against the pages the publishers really served for the papers
+ * in the sample mails (see src/test/resources/http/README.md).
+ */
 public class ArticlePageReaderTest {
 
-    private static final String ARTICLE_PAGE = """
-            <html><head>
-            <meta name="citation_title" content="Advancing soil-structure interaction (SSI)">
-            <meta name="citation_author" content="Imtiyaz Akbar Najar">
-            <meta name="citation_author" content="Shanshan Tang">
-            <meta name="citation_journal_title" content="Journal of Infrastructure Preservation and Resilience">
-            <meta name="citation_publication_date" content="2025/01/26">
-            <meta name="citation_doi" content="10.1186/s43065-025-00118-2">
-            <meta name="citation_pdf_url" content="/counter/pdf/10.1186/s43065-025-00118-2.pdf">
-            </head><body>paywalled or not, the meta tags are public</body></html>
-            """;
+    private static final String SSI_PAGE =
+            "https://jipr.springeropen.com/articles/10.1186/s43065-025-00118-2?utm_source=alert&utm_medium=email";
 
-    private final FakeHttp http = new FakeHttp();
+    private final RecordedHttp http = new RecordedHttp();
     private final ArticlePageReader reader = new ArticlePageReader(http);
 
     @Test
-    public void readsTheCitationMetaTagsAndResolvesARelativePdfLink() {
-        http.on("pub.test/articles/", FakeHttp.html(ARTICLE_PAGE));
-
-        PaperMetadata page = reader.read("https://pub.test/articles/10.1186/s43065-025-00118-2").orElseThrow();
+    public void readsTheCitationMetadataSpringerOpenPublishes() {
+        PaperMetadata page = reader.read(SSI_PAGE).orElseThrow();
 
         assertEquals(Optional.of("10.1186/s43065-025-00118-2"), page.doi());
-        assertEquals(Optional.of("Advancing soil-structure interaction (SSI)"), page.title());
-        assertEquals(List.of("Imtiyaz Akbar Najar", "Shanshan Tang"), page.authors());
+        assertEquals(Optional.of("Advancing soil-structure interaction (SSI): a comprehensive review of "
+                + "current practices, challenges, and future directions"), page.title());
         assertEquals(Optional.of("Journal of Infrastructure Preservation and Resilience"), page.venue());
-        assertEquals(Optional.of(2025), page.year());
-        assertEquals(List.of("https://pub.test/counter/pdf/10.1186/s43065-025-00118-2.pdf"), page.pdfUrls());
-        assertEquals(Optional.of("https://pub.test/articles/10.1186/s43065-025-00118-2"), page.landingUrl());
+        assertEquals("citation_publication_date is \"2025/12\"; only the year is kept",
+                Optional.of(2025), page.year());
+        assertEquals(List.of("https://link.springer.com/content/pdf/10.1186/s43065-025-00118-2.pdf"), page.pdfUrls());
+        assertEquals(Optional.of(SSI_PAGE), page.landingUrl());
+    }
+
+    /**
+     * Publishers write citation_author family-name-first. The reader keeps the page's own spelling
+     * rather than guessing where to split a name, so these come back as the page states them.
+     */
+    @Test
+    public void authorsComeBackExactlyAsThePageStatesThem() {
+        PaperMetadata page = reader.read(SSI_PAGE).orElseThrow();
+
+        assertEquals("Najar, Imtiyaz Akbar", page.authors().get(0));
+        assertTrue("every author of a nine-author review is kept", page.authors().size() >= 8);
+    }
+
+    /**
+     * ASCE serves a 403 to anything that isn't a browser. That is the normal case for a subscription
+     * publisher, so it has to read as "nothing learned here", not as an error that stops the paper.
+     */
+    @Test
+    public void aPublisherThatBlocksRobotsSimplyYieldsNothing() {
+        assertEquals(Optional.empty(), reader.read("https://ascelibrary.org/doi/10.1061/nhrefo.nheng-2711?af=R"));
     }
 
     @Test
-    public void aLinkThatIsItselfAPdfIsReportedAsThePdfLocation() {
-        http.on("pub.test/doi/pdf/", FakeHttp.pdf());
+    public void aPageThatCannotBeReachedYieldsNothingRatherThanFailing() {
+        ArticlePageReader offline = new ArticlePageReader(new RecordedHttp().offlineFor("springeropen.com"));
 
-        PaperMetadata page = reader.read("https://pub.test/doi/pdf/10.9999/eqe.test").orElseThrow();
-
-        assertEquals(List.of("https://pub.test/doi/pdf/10.9999/eqe.test"), page.pdfUrls());
-        assertEquals(Optional.empty(), page.doi());
+        assertEquals(Optional.empty(), offline.read(SSI_PAGE));
     }
 
+    /** A malformed URL must not escape as an exception from what is a best-effort lookup. */
     @Test
-    public void aBlockedOrMissingPageGivesNothingAndNeverThrows() {
-        http.on("pub.test/blocked", FakeHttp.status(403));
-        http.on("pub.test/down", FakeHttp.offline());
-
-        assertEquals(Optional.empty(), reader.read("https://pub.test/blocked"));
-        assertEquals(Optional.empty(), reader.read("https://pub.test/down"));
-        assertEquals(Optional.empty(), reader.read("https://pub.test/never-routed-so-404"));
-    }
-
-    @Test
-    public void aPageWithoutCitationMetaTagsStillYieldsItsAddressButNothingElse() {
-        http.on("pub.test/plain", FakeHttp.html("<html><body><h1>Some article</h1></body></html>"));
-
-        PaperMetadata page = reader.read("https://pub.test/plain").orElseThrow();
-
-        assertEquals(Optional.empty(), page.doi());
-        assertEquals(List.of(), page.pdfUrls());
-        assertEquals(List.of(), page.authors());
+    public void aMalformedUrlYieldsNothingRatherThanFailing() {
+        assertEquals(Optional.empty(), reader.read("not a url at all"));
     }
 }

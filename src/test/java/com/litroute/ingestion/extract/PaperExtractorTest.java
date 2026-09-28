@@ -184,11 +184,13 @@ public class PaperExtractorTest {
         List<PaperCandidate> papers = extract("sciencedirect_recommendations.html",
                 "New recommendations available on ScienceDirect");
 
-        // Papers 1-3: click-tracking wrapper with the real ScienceDirect URL embedded percent-encoded -> unwrapped.
+        // Papers 1-3: click-tracking wrapper with the real ScienceDirect URL embedded percent-encoded
+        // -> unwrapped to the article's own PII.
+        List<String> piis = List.of("S2212420924008781", "S002980182402290X", "S0959652624010898");
         for (int i = 0; i < 3; i++) {
             String url = papers.get(i).url().orElseThrow();
             assertTrue("paper #" + (i + 1) + " url was " + url,
-                    url.startsWith("https://www.sciencedirect.com/science/article/pii/S000000000000000" + (i + 1)));
+                    url.startsWith("https://www.sciencedirect.com/science/article/pii/" + piis.get(i)));
         }
         // Papers 4-5: fully opaque tokens. Still emitted with full text metadata, just nothing decodable.
         for (int i = 3; i < 5; i++) {
