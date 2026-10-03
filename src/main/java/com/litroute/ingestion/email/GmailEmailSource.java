@@ -42,15 +42,32 @@ public final class GmailEmailSource implements EmailSource {
     private final int imapPort;
     private final boolean trustAnyServerCertificate;
 
+    /**
+     * Input: none.
+     * Output: a new GmailEmailSource using a default AlertClassifier and real Gmail IMAP settings.
+     *
+     * Creates a production email source with default classification rules.
+     */
     public GmailEmailSource() {
         this(new AlertClassifier());
     }
 
+    /**
+     * Input: alertClassifier - decides whether an email is a publication alert.
+     * Output: a new GmailEmailSource pointed at imap.gmail.com:993 with full certificate checking.
+     *
+     * Creates a production email source with a caller-supplied classifier.
+     */
     public GmailEmailSource(AlertClassifier alertClassifier) {
         this(alertClassifier, GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, false);
     }
 
     /**
+     * Input: alertClassifier, imapHost, imapPort, and trustAnyServerCertificate (skip certificate checks).
+     * Output: a new GmailEmailSource connected to the given IMAP server.
+     *
+     * Creates an email source with fully configurable server settings.
+     *
      * Visible for tests to point at a fake IMAP server (e.g. GreenMail) instead of real Gmail.
      * trustAnyServerCertificate skips hostname/certificate validation, which is only ever
      * appropriate against a local test server's self-signed certificate - never for real Gmail.
@@ -62,6 +79,12 @@ public final class GmailEmailSource implements EmailSource {
         this.trustAnyServerCertificate = trustAnyServerCertificate;
     }
 
+    /**
+     * Input: credentials (Gmail address and app password) and the message IDs already processed.
+     * Output: the new alert emails found in the INBOX, or an empty list if fetching fails.
+     *
+     * Logs in to Gmail over IMAP, reads the inbox, and always closes the connection and wipes the password.
+     */
     @Override
     public List<RawEmail> fetchNewAlerts(GmailCredentials credentials, Set<String> alreadyProcessedMessageIds) {
         char[] appPassword = credentials.appPassword();
@@ -84,6 +107,12 @@ public final class GmailEmailSource implements EmailSource {
         }
     }
 
+    /**
+     * Input: a connected Store and the message IDs already processed.
+     * Output: the new alert emails in the INBOX; throws MessagingException if the folder cannot be read.
+     *
+     * Opens the INBOX read-only and converts each new alert message into a RawEmail.
+     */
     private List<RawEmail> readInbox(Store store, Set<String> alreadyProcessedMessageIds) throws MessagingException {
         List<RawEmail> alerts = new ArrayList<>();
         Folder inbox = store.getFolder("INBOX");
@@ -99,6 +128,12 @@ public final class GmailEmailSource implements EmailSource {
         return alerts;
     }
 
+    /**
+     * Input: one mail message and the message IDs already processed.
+     * Output: a RawEmail if the message is a new, readable alert; otherwise an empty Optional.
+     *
+     * Skips messages that lack an ID, were already processed, are not alerts, or cannot be read.
+     */
     private Optional<RawEmail> toRawEmailIfNewAlert(Message message, Set<String> alreadyProcessedMessageIds) {
         try {
             String messageId = firstHeaderOrNull(message, "Message-ID");
@@ -130,11 +165,23 @@ public final class GmailEmailSource implements EmailSource {
         }
     }
 
+    /**
+     * Input: a mail message and a header name.
+     * Output: the first value of that header, or null if the header is absent.
+     *
+     * Reads a single header value from a message.
+     */
     private static String firstHeaderOrNull(Message message, String headerName) throws MessagingException {
         String[] values = message.getHeader(headerName);
         return (values != null && values.length > 0) ? values[0] : null;
     }
 
+    /**
+     * Input: a mail message.
+     * Output: the first sender's plain email address, or null if the message has no sender.
+     *
+     * Extracts the sender address from the From header, without the display name.
+     */
     private static String fromAddressOf(Message message) throws MessagingException {
         Address[] from = message.getFrom();
         if (from == null || from.length == 0) {
@@ -146,11 +193,23 @@ public final class GmailEmailSource implements EmailSource {
     private record BodyParts(Optional<String> html, Optional<String> plainText) {
         static final BodyParts EMPTY = new BodyParts(Optional.empty(), Optional.empty());
 
+        /**
+         * Input: another BodyParts.
+         * Output: a new BodyParts holding this one's HTML and plain text, filling any gap from the other.
+         *
+         * Combines two results, keeping the first HTML and first plain text found.
+         */
         BodyParts merge(BodyParts other) {
             return new BodyParts(html.or(other::html), plainText.or(other::plainText));
         }
     }
 
+    /**
+     * Input: a message or message part.
+     * Output: its HTML and plain-text bodies; throws MessagingException or IOException if content cannot be read.
+     *
+     * Walks the MIME structure, recursing into multipart sections, to find the text bodies.
+     */
     private BodyParts extractBodies(Part part) throws MessagingException, IOException {
         if (part.isMimeType("text/html") && part.getContent() instanceof String htmlContent) {
             return new BodyParts(Optional.of(htmlContent), Optional.empty());
@@ -169,6 +228,12 @@ public final class GmailEmailSource implements EmailSource {
         return BodyParts.EMPTY;
     }
 
+    /**
+     * Input: none (uses the host, port and trust settings of this instance).
+     * Output: the Jakarta Mail properties for an SSL IMAP connection.
+     *
+     * Builds the connection settings, including 10-second timeouts and optional certificate trust.
+     */
     private Properties imapProperties() {
         Properties properties = new Properties();
         properties.put("mail.store.protocol", "imaps");

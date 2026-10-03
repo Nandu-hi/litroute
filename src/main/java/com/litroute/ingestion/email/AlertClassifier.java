@@ -9,67 +9,45 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Decides whether an inbox message looks like a publication/citation alert
- * worth handing to M2, as opposed to ordinary mail. M1 scans the whole
- * INBOX rather than requiring a dedicated Gmail label/filter, so this is the
- * only thing standing between "every email the user has ever received" and
- * the pipeline.
+ * Decides whether an inbox message looks like a publication/citation alert worth
+ * handing to M2. M1 scans the whole INBOX with no label or filter, so this is the
+ * only gate between every email the user has received and the pipeline.
  *
- * The job is purely "does this look like a paper alert", applied uniformly
- * regardless of how the mail arrived - there is no separate forwarding
- * mechanism and no forwarder-address allowlist. Acceptance is not limited to
- * a fixed set of known publishers either: KNOWN_ALERT_SENDER_DOMAINS is a
- * fast, low-false-positive path for mailing lists already confirmed (via six
- * real alert emails the client shared: SpringerOpen, Taylor & Francis,
- * Google Scholar, ScienceDirect/Elsevier, and ASCE), while SUBJECT_KEYWORDS
- * is deliberately broad so an alert from any publication is still recognized
- * by its subject wording alone.
+ * Acceptance is uniform and not limited to known publishers: KNOWN_ALERT_SENDER_DOMAINS
+ * is a low-false-positive fast path (from six real client alerts: SpringerOpen,
+ * Taylor &amp; Francis, Google Scholar, ScienceDirect/Elsevier, ASCE), while the broad
+ * SUBJECT_KEYWORDS catch alerts from any other publication by subject wording.
  *
- * A forwarded alert is still just "an email that looks like a paper alert" -
- * when the direct envelope sender/subject don't match (typical for a forward,
- * since the IMAP "From" is the forwarder's own address), the same check is
- * re-run against the sender/subject of every message quoted in the body:
- *
- * <pre>
- * ---------- Forwarded message ---------
- * From: An Advisor &lt;advisor@example.edu&gt;
- * Date: Tue, Jan 28, 2025 at 9:10 AM
- * Subject: Fwd: New Articles From Journal of Infrastructure Preservation and Resilience
- * To: &lt;aprakashn@gmail.com&gt;
- *
- * ---------- Forwarded message ---------
- * From: SpringerOpen &lt;no-reply@springeropen.com&gt;
- * Date: Mon, Jan 27, 2025 at 2:35 PM
- * Subject: New Articles From Journal of Infrastructure Preservation and Resilience
- * To: &lt;someone@example.edu&gt;
- * </pre>
- *
- * An alert can reach the inbox after any number of hops, so <em>every</em>
- * quoted header block is checked, not just the outermost one: the block a
- * publisher's own domain appears in is the innermost, and with a subject that
- * only the publisher domain identifies (no alert keyword), stopping at the
- * first block would miss the alert entirely. Blocks are found by the quoted
- * {@code From:}/{@code Subject:} header pair itself rather than by one mail
- * client's forward marker, so Gmail's "Forwarded message" banner, Apple Mail's
- * "Begin forwarded message:" and Outlook's "-----Original Message-----" all
- * work, including a chain that passed through several of them and picked up
- * "&gt;" quote markers on the way.
+ * A forwarded alert has the forwarder as its IMAP sender, so when the direct
+ * sender/subject don't match, the same check runs on <em>every</em> quoted
+ * {@code From:}/{@code Subject:} header block in the body (the innermost block is
+ * often the one naming the publisher). Blocks are found by the header pair itself,
+ * not by a mail client's forward banner, so Gmail, Apple Mail and Outlook forwards,
+ * including multi-hop chains with "&gt;" quote markers, all work.
  *
  * See {@link #isPublicationAlert(String, String, Optional)}. Extend
- * KNOWN_ALERT_SENDER_DOMAINS/SUBJECT_KEYWORDS as new mailing lists or
- * phrasings come up rather than writing new classifier logic.
+ * KNOWN_ALERT_SENDER_DOMAINS/SUBJECT_KEYWORDS for new mailing lists instead of
+ * adding classifier logic.
  */
 public final class AlertClassifier {
 
-    /** The "From:" line of a quoted message, and the address inside it. */
+    /**
+     * The "From:" line of a quoted message, and the address inside it. The address in the
+     * last "&lt;...&gt;" is preferred, so a display name that itself contains an address
+     * ({@code "a@corp.com via Lists" <noreply@publisher.com>}) can't be mistaken for the
+     * sender; a bare address with no brackets is the fallback.
+     */
     private static final Pattern QUOTED_FROM_LINE =
-            Pattern.compile("(?i)^From:.*?<?(?<from>[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,})>?");
+            Pattern.compile("(?i)^From:(?:.*<|.*?)(?<from>[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,})");
 
     /** The "Subject:" line of the same block. */
     private static final Pattern QUOTED_SUBJECT_LINE = Pattern.compile("(?i)^Subject:\\s*(?<subject>.*)");
 
-    /** The "> " (or "&gt;&gt; ") markers a client adds to each line for every level it quotes. */
-    private static final Pattern QUOTE_MARKERS = Pattern.compile("^[>\\s]+");
+    /**
+     * The "> " (or HTML-escaped "&gt;&gt; ") markers a client adds to each line for every
+     * level it quotes.
+     */
+    private static final Pattern QUOTE_MARKERS = Pattern.compile("(?i)^(?:>|&gt;|\\s)+");
 
     /**
      * How far below a "From:" line its block's "Subject:" may sit. Gmail writes
