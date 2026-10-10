@@ -22,7 +22,8 @@ import java.util.Optional;
  * @param articleType     the alert's own label ("Research article", "Technical Papers", ...)
  * @param doi             bare DOI (no URL prefix, query string, or ".pdf" suffix)
  * @param url             best link to the paper, with any redirect wrapper already unwrapped
- * @param abstractSnippet abstract excerpt shown in the alert, if any
+ * @param abstractSnippet abstract excerpt shown in the alert; if the alert shows none, the abstract
+ *                        Crossref or OpenAlex hold for the paper, if any
  * @param pdfPath         where the paper's PDF was saved locally; empty if no downloadable PDF was
  *                        found (paywalled, no open-access copy, or every lookup source offline)
  */

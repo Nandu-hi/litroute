@@ -38,6 +38,9 @@ public class OpenAlexSourceTest {
         assertEquals(List.of("Gilberto Gomes", "Luís Silva", "Elton Bauer"), found.authors());
         assertEquals(Optional.of("Journal of Infrastructure Preservation and Resilience"), found.venue());
         assertEquals(Optional.of(2025), found.year());
+        assertTrue("the abstract is rebuilt from OpenAlex's inverted index, without its heading",
+                found.abstractText().orElseThrow()
+                        .startsWith("Building facades are continuously subjected to various external agents"));
     }
 
     /** The open-access PDF location is the reason this source is in the pipeline at all. */

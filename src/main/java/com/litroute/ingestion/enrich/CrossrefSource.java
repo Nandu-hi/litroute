@@ -9,7 +9,8 @@ import java.util.Optional;
 
 /**
  * Crossref REST API. With a DOI it fetches that exact work; without one it runs a bibliographic
- * search on the title and accepts the best hit only if its title really matches.
+ * search on the title and accepts the best hit only if its title really matches. Only the exact
+ * work carries the abstract (when the publisher deposited one); search hits are kept small.
  */
 public final class CrossrefSource implements MetadataSource {
 
@@ -88,6 +89,7 @@ public final class CrossrefSource implements MetadataSource {
                 authors,
                 ApiJson.text(work.path("container-title").path(0)),
                 year > 0 ? Optional.of(year) : Optional.empty(),
+                ApiJson.text(work.path("abstract")).flatMap(ApiJson::abstractText),
                 ApiJson.text(work.path("URL")),
                 pdfUrls);
     }

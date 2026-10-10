@@ -5,12 +5,15 @@ import com.litroute.util.Titles;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 
 /**
  * OpenAlex API. Its strength here is open-access PDF locations ({@code best_oa_location.pdf_url} and
- * the other {@code locations}), which Crossref usually lacks. Like Crossref: exact by DOI, else a
- * title search whose best hit must genuinely match the title.
+ * the other {@code locations}), which Crossref usually lacks, and abstracts for papers whose
+ * publisher deposited none with Crossref. Like Crossref: exact by DOI, else a title search whose best
+ * hit must genuinely match the title.
  */
 public final class OpenAlexSource implements MetadataSource {
 
@@ -81,8 +84,20 @@ public final class OpenAlexSource implements MetadataSource {
                 authors,
                 ApiJson.text(work.path("primary_location").path("source").path("display_name")),
                 year > 0 ? Optional.of(year) : Optional.empty(),
+                abstractOf(work.path("abstract_inverted_index")),
                 ApiJson.text(work.path("primary_location").path("landing_page_url")),
                 pdfUrls);
+    }
+
+    /**
+     * OpenAlex stores an abstract "inverted" - each word with the positions it occurs at - for
+     * licensing reasons; putting every word back at its positions restores the text.
+     */
+    private static Optional<String> abstractOf(JsonNode invertedIndex) {
+        Map<Integer, String> byPosition = new TreeMap<>();
+        invertedIndex.fields().forEachRemaining(word -> word.getValue()
+                .forEach(position -> byPosition.put(position.asInt(), word.getKey())));
+        return ApiJson.abstractText(String.join(" ", byPosition.values()));
     }
 
     private static void addPdf(List<String> pdfUrls, JsonNode location) {

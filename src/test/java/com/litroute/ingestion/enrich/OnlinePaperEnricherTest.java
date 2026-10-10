@@ -81,6 +81,16 @@ public class OnlinePaperEnricherTest {
                 http.requested("jipr.springeropen.com/articles"));
     }
 
+    /** An alert that shows no abstract (SpringerOpen's show none) gets the one the APIs hold. */
+    @Test
+    public void anAlertWithoutAnAbstractGetsTheOneTheApisHold() {
+        PaperCandidate enriched = enricher().enrich(
+                fromAlert(SSI_TITLE, List.of("Imtiyaz Akbar Najar"), Optional.of(SSI_LINK)), LinkKind.READABLE);
+
+        assertTrue(enriched.abstractSnippet().orElseThrow().startsWith("The safety, stability, and long-term performance "
+                + "of reinforced concrete (RC) structures depend significantly on soil-structure interaction"));
+    }
+
     /** The alert's own words are never overwritten, however confident a lookup is. */
     @Test
     public void whatTheEmailStatedIsNeverOverwrittenByALookup() {

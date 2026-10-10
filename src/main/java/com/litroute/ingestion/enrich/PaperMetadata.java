@@ -9,8 +9,9 @@ import java.util.Set;
 /**
  * What one source (Crossref, OpenAlex, the publisher's page) knows about a paper.
  *
- * @param pdfUrls candidate locations of the PDF, best first; may be paywalled, so the downloader
- *                checks each one really returns a PDF
+ * @param abstractText the paper's abstract as plain text, when the source holds one
+ * @param pdfUrls      candidate locations of the PDF, best first; may be paywalled, so the downloader
+ *                     checks each one really returns a PDF
  */
 public record PaperMetadata(
         Optional<String> doi,
@@ -18,11 +19,12 @@ public record PaperMetadata(
         List<String> authors,
         Optional<String> venue,
         Optional<Integer> year,
+        Optional<String> abstractText,
         Optional<String> landingUrl,
         List<String> pdfUrls) {
 
     public static final PaperMetadata EMPTY = new PaperMetadata(Optional.empty(), Optional.empty(), List.of(),
-            Optional.empty(), Optional.empty(), Optional.empty(), List.of());
+            Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(), List.of());
 
     public PaperMetadata {
         authors = List.copyOf(authors);
@@ -39,6 +41,7 @@ public record PaperMetadata(
                 authors.isEmpty() ? other.authors : authors,
                 venue.or(() -> other.venue),
                 year.or(() -> other.year),
+                abstractText.or(() -> other.abstractText),
                 landingUrl.or(() -> other.landingUrl),
                 new ArrayList<>(pdfs));
     }

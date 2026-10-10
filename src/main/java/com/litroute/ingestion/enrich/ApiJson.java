@@ -7,6 +7,7 @@ import java.net.URI;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.Optional;
+import java.util.regex.Pattern;
 import org.jsoup.Jsoup;
 
 /** Shared plumbing for the JSON APIs: fetch + parse, and URL-encoding. */
@@ -14,6 +15,7 @@ final class ApiJson {
 
     private static final ObjectMapper JSON = new ObjectMapper();
     private static final long MAX_JSON_BYTES = 4L * 1024 * 1024;
+    private static final Pattern ABSTRACT_HEADING = Pattern.compile("(?i)^abstract\\b[\\s.:]*");
 
     private ApiJson() {
     }
@@ -48,6 +50,12 @@ final class ApiJson {
         }
         String value = clean(node.asText(""));
         return value.isEmpty() ? Optional.empty() : Optional.of(value);
+    }
+
+    /** An abstract without the "Abstract" heading both APIs often keep at its start; empty if nothing is left. */
+    static Optional<String> abstractText(String text) {
+        String body = ABSTRACT_HEADING.matcher(text.strip()).replaceFirst("");
+        return body.isBlank() ? Optional.empty() : Optional.of(body);
     }
 
     /**

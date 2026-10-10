@@ -49,6 +49,11 @@ public final class AlertBatchProcessor {
     private final EmailCacheStore processedEmails;
     private final Deduplicator deduplicator = new Deduplicator();
 
+    /**
+     * @param extractorFactory builds the extractor once M7c's lookup cache has been loaded
+     * @param enrichmentCache M7c, holding the enriched papers and the lookup cache
+     * @param processedEmails M7a, holding the IDs of emails already handled
+     */
     public AlertBatchProcessor(ExtractorFactory extractorFactory, EnrichmentCacheStore enrichmentCache,
             EmailCacheStore processedEmails) {
         this.extractorFactory = extractorFactory;

@@ -33,6 +33,8 @@ public class CrossrefSourceTest {
         assertEquals(Optional.of("Journal of Infrastructure Preservation and Resilience"), found.venue());
         assertEquals(Optional.of(2025), found.year());
         assertEquals(Optional.of("https://doi.org/" + HYGRO_DOI), found.landingUrl());
+        assertTrue("the deposited JATS abstract, as plain text without its heading", found.abstractText().orElseThrow()
+                .startsWith("Building facades are continuously subjected to various external agents"));
     }
 
     /** A paper whose alert gave no DOI has to be found from its title alone. */

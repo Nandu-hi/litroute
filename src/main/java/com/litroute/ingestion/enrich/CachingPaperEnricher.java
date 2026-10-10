@@ -64,7 +64,7 @@ public final class CachingPaperEnricher implements PaperEnricher {
                 paper.articleType(),
                 paper.doi().or(cached::doi),
                 paper.url().or(cached::url),
-                paper.abstractSnippet(),
+                paper.abstractSnippet().or(cached::abstractSnippet),
                 paper.pdfPath().or(cached::pdfPath));
     }
 }

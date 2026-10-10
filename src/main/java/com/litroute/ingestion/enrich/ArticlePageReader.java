@@ -50,7 +50,7 @@ public final class ArticlePageReader {
         }
         if (PdfDownloader.isPdf(reply.body()) || reply.contentType().toLowerCase().contains("application/pdf")) {
             return Optional.of(new PaperMetadata(Optional.empty(), Optional.empty(), List.of(), Optional.empty(),
-                    Optional.empty(), Optional.empty(), List.of(reply.finalUri().toString())));
+                    Optional.empty(), Optional.empty(), Optional.empty(), List.of(reply.finalUri().toString())));
         }
         Document page = Jsoup.parse(new String(reply.body(), StandardCharsets.UTF_8), reply.finalUri().toString());
 
@@ -72,6 +72,7 @@ public final class ArticlePageReader {
                 authors.stream().filter(name -> !name.isEmpty()).toList(),
                 firstMeta(page, "citation_journal_title", "citation_conference_title", "prism.publicationName"),
                 year,
+                Optional.empty(),
                 Optional.of(reply.finalUri().toString()),
                 pdfUrls));
     }

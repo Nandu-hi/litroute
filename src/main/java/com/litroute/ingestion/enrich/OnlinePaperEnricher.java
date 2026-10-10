@@ -70,7 +70,7 @@ public final class OnlinePaperEnricher implements PaperEnricher {
                 paper.articleType(),
                 doi,
                 paper.url().or(() -> found.landingUrl()).or(() -> doi.map("https://doi.org/"::concat)),
-                paper.abstractSnippet(),
+                paper.abstractSnippet().or(() -> found.abstractText()),
                 pdf);
     }
 }
