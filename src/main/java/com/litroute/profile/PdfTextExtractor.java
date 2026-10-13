@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
-import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.LinkedHashSet;
@@ -19,6 +18,8 @@ import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.pdmodel.PDPage;
@@ -206,9 +207,7 @@ public final class PdfTextExtractor {
             }
             List<Line> run = largestTitleRun();
             if (!run.isEmpty()) {
-                for (Line line : run) {
-                    titleLines.add(lines.indexOf(line));
-                }
+                run.forEach(line -> titleLines.add(lines.indexOf(line)));
                 return joinLines(run);
             }
             return metadata != null ? metadata : fileStem;
@@ -327,38 +326,26 @@ public final class PdfTextExtractor {
         }
 
         private List<String> headings(int end) {
-            List<String> headings = new ArrayList<>();
-            for (int i = 0; i < end; i++) {
-                if (isBodyLine(i) && !isFrontMatter(i) && isHeadingAt(i)) {
-                    headings.add(lines.get(i).text());
-                }
-            }
-            return headings;
+            return IntStream.range(0, end)
+                    .filter(i -> isBodyLine(i) && !isFrontMatter(i) && isHeadingAt(i))
+                    .mapToObj(i -> lines.get(i).text())
+                    .toList();
         }
 
         /** Body-size text and headings; drops footnotes, captions, tables and figure labels. */
         private List<Line> bodyLines(int end) {
-            List<Line> body = new ArrayList<>();
-            for (int i = 0; i < end; i++) {
-                Line line = lines.get(i);
-                if (isBodyLine(i) && !isFrontMatter(i) && (isBodySize(line) || isHeadingAt(i))
-                        && !BRANDING.matcher(line.text()).find()) {
-                    body.add(line);
-                }
-            }
-            return body;
+            return IntStream.range(0, end)
+                    .filter(i -> isBodyLine(i) && !isFrontMatter(i) && (isBodySize(lines.get(i)) || isHeadingAt(i))
+                            && !BRANDING.matcher(lines.get(i).text()).find())
+                    .mapToObj(lines::get)
+                    .toList();
         }
 
         private boolean isBodyLine(int i) {
-            if (titleLines.contains(i)) {
-                return false;
-            }
-            if (abstractStart >= 0 && i >= abstractStart && i < abstractEnd) {
-                return false;
-            }
             Line line = lines.get(i);
+            boolean inAbstract = abstractStart >= 0 && i >= abstractStart && i < abstractEnd;
             boolean keywordsLine = line.page() <= 2 && line.text().toLowerCase(Locale.ROOT).startsWith("key");
-            return !keywordsLine;
+            return !titleLines.contains(i) && !inAbstract && !keywordsLine;
         }
 
         /** Page 1 before the abstract: authors, affiliations, journal banners. */
@@ -443,11 +430,7 @@ public final class PdfTextExtractor {
             previous = current;
             current = swap;
         }
-        int best = Integer.MAX_VALUE;
-        for (int distance : previous) {
-            best = Math.min(best, distance);
-        }
-        return best <= title.length() * METADATA_TITLE_TOLERANCE;
+        return Arrays.stream(previous).min().getAsInt() <= title.length() * METADATA_TITLE_TOLERANCE;
     }
 
     private static boolean plausibleTitle(String text) {
@@ -469,22 +452,13 @@ public final class PdfTextExtractor {
      * pages, and lines that are only a number.
      */
     private static List<Line> withoutPageFurniture(List<Line> lines) {
-        Map<String, Set<Integer>> pagesByKey = new HashMap<>();
-        int pageCount = 0;
-        for (Line line : lines) {
-            pagesByKey.computeIfAbsent(furnitureKey(line), k -> new HashSet<>()).add(line.page());
-            pageCount = Math.max(pageCount, line.page());
-        }
-        int threshold = Math.max(3, pageCount / 3);
-        List<Line> kept = new ArrayList<>();
-        for (Line line : lines) {
-            boolean repeated = pagesByKey.get(furnitureKey(line)).size() >= threshold;
-            boolean pageNumber = line.text().matches("(?i)(?:page\\s*)?\\d+(?:\\s*(?:of|/)\\s*\\d+)?");
-            if (!repeated && !pageNumber) {
-                kept.add(line);
-            }
-        }
-        return kept;
+        Map<String, Set<Integer>> pagesByKey = lines.stream().collect(
+                Collectors.groupingBy(PdfTextExtractor::furnitureKey, Collectors.mapping(Line::page, Collectors.toSet())));
+        int threshold = Math.max(3, lines.stream().mapToInt(Line::page).max().orElse(0) / 3);
+        return lines.stream()
+                .filter(line -> pagesByKey.get(furnitureKey(line)).size() < threshold)
+                .filter(line -> !line.text().matches("(?i)(?:page\\s*)?\\d+(?:\\s*(?:of|/)\\s*\\d+)?"))
+                .toList();
     }
 
     private static String furnitureKey(Line line) {
@@ -493,10 +467,8 @@ public final class PdfTextExtractor {
 
     /** The font size most of the text is set in. */
     private static float bodyFontSize(List<Line> lines) {
-        Map<Float, Integer> charsBySize = new HashMap<>();
-        for (Line line : lines) {
-            charsBySize.merge(line.size(), line.text().length(), Integer::sum);
-        }
+        Map<Float, Integer> charsBySize = lines.stream()
+                .collect(Collectors.groupingBy(Line::size, Collectors.summingInt(line -> line.text().length())));
         return charsBySize.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(10f);
     }
 
@@ -538,11 +510,9 @@ public final class PdfTextExtractor {
         if (chunks.size() <= MAX_BODY_CHUNKS) {
             return chunks;
         }
-        List<String> sampled = new ArrayList<>();
-        for (int i = 0; i < MAX_BODY_CHUNKS; i++) {
-            sampled.add(chunks.get((int) Math.round(i * (chunks.size() - 1) / (double) (MAX_BODY_CHUNKS - 1))));
-        }
-        return sampled;
+        return IntStream.range(0, MAX_BODY_CHUNKS)
+                .mapToObj(i -> chunks.get((int) Math.round(i * (chunks.size() - 1) / (double) (MAX_BODY_CHUNKS - 1))))
+                .toList();
     }
 
     private static String truncate(String text, int maxChars) {
@@ -554,18 +524,11 @@ public final class PdfTextExtractor {
     }
 
     private static int letterCount(List<Line> lines) {
-        int letters = 0;
-        for (Line line : lines) {
-            letters += (int) line.text().chars().filter(Character::isLetter).count();
-        }
-        return letters;
+        return (int) lines.stream().flatMapToInt(line -> line.text().chars()).filter(Character::isLetter).count();
     }
 
     private static double letterShare(List<Line> lines) {
-        long nonSpace = 0;
-        for (Line line : lines) {
-            nonSpace += line.text().chars().filter(c -> !Character.isWhitespace(c)).count();
-        }
+        long nonSpace = lines.stream().flatMapToInt(line -> line.text().chars()).filter(c -> !Character.isWhitespace(c)).count();
         return nonSpace == 0 ? 0 : letterCount(lines) / (double) nonSpace;
     }
 
@@ -588,10 +551,6 @@ public final class PdfTextExtractor {
         private final List<PendingLine> pageLines = new ArrayList<>();
         private StringBuilder text = new StringBuilder();
         private List<TextPosition> glyphs = new ArrayList<>();
-
-        LineCollector() {
-            super();
-        }
 
         @Override
         protected void writeString(String string, List<TextPosition> textPositions) {
@@ -669,26 +628,15 @@ public final class PdfTextExtractor {
 
         /** Most common glyph size, to the nearest half point - an average is skewed by sub/superscripts. */
         private static float dominantSize(List<TextPosition> glyphs) {
-            Map<Float, Integer> counts = new HashMap<>();
-            for (TextPosition glyph : glyphs) {
-                counts.merge(Math.round(glyph.getFontSizeInPt() * 2) / 2f, 1, Integer::sum);
-            }
+            Map<Float, Long> counts = glyphs.stream()
+                    .collect(Collectors.groupingBy(glyph -> Math.round(glyph.getFontSizeInPt() * 2) / 2f, Collectors.counting()));
             return counts.entrySet().stream().max(Map.Entry.comparingByValue()).get().getKey();
         }
 
         private static boolean mostlyBold(List<TextPosition> glyphs) {
-            int bold = 0;
-            int counted = 0;
-            for (TextPosition glyph : glyphs) {
-                if (glyph.getUnicode().isBlank()) {
-                    continue;
-                }
-                counted++;
-                if (isBold(glyph.getFont())) {
-                    bold++;
-                }
-            }
-            return counted > 0 && bold * 10 >= counted * 6;
+            List<TextPosition> visible = glyphs.stream().filter(glyph -> !glyph.getUnicode().isBlank()).toList();
+            long bold = visible.stream().filter(glyph -> isBold(glyph.getFont())).count();
+            return !visible.isEmpty() && bold * 10 >= visible.size() * 6L;
         }
 
         private static boolean isBold(PDFont font) {
@@ -705,15 +653,7 @@ public final class PdfTextExtractor {
     }
 
     /** A line still being assembled, with the glyphs it was drawn from. */
-    private static final class PendingLine {
-
-        private final StringBuilder text;
-        private final List<TextPosition> glyphs;
-
-        PendingLine(StringBuilder text, List<TextPosition> glyphs) {
-            this.text = text;
-            this.glyphs = glyphs;
-        }
+    private record PendingLine(StringBuilder text, List<TextPosition> glyphs) {
 
         /** One or two glyphs drawn apart from any word: a candidate for the line it belongs to. */
         boolean isStray() {

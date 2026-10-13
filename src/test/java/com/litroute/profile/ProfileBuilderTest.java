@@ -8,7 +8,6 @@ import static org.junit.Assume.assumeTrue;
 
 import com.litroute.embedding.Specter2EmbeddingProvider;
 import com.litroute.model.Profile;
-import com.litroute.model.Profile.InterestCluster;
 import com.litroute.model.Profile.ProfilePaper;
 import com.litroute.profile.ProfileBuilder.BuildReport;
 import com.litroute.profile.ProfileBuilder.ProfileReport;
@@ -88,8 +87,8 @@ public class ProfileBuilderTest {
 
     /**
      * The point of a profile: a paper from one student's folder must look more like that student's
-     * interests than like anyone else's. Leave-one-out: each paper is scored against its own
-     * folder's interests clustered without it (or any near-identical copy of it), so it never matches
+     * papers as a whole than like anyone else's. Leave-one-out: each paper is compared with the mean
+     * of its own folder's other papers (without any near-identical copy of it), so it never matches
      * itself. Students in one field overlap - multi-fidelity simulation and uncertainty
      * quantification, say - so the bar is a clear majority first and nearly all in the top two.
      */
@@ -99,7 +98,6 @@ public class ProfileBuilderTest {
         assumeTrue("needs at least two test profiles", profiles.size() >= 2);
         Map<String, Integer> profilesPerPaper = new HashMap<>();
         profiles.values().forEach(p -> p.papers().forEach(paper -> profilesPerPaper.merge(paper.sha256(), 1, Integer::sum)));
-        EmbeddingClusterer clusterer = new EmbeddingClusterer();
 
         List<String> misses = new ArrayList<>();
         int checked = 0;
@@ -112,10 +110,10 @@ public class ProfileBuilderTest {
                     continue; // a PDF in two folders belongs to both; a lone paper has nothing to match
                 }
                 checked++;
-                double ownScore = nearestInterest(paper, clusterer.cluster(rest));
+                double ownScore = Vectors.cosine(paper.embedding(), mean(rest));
                 List<String> closer = new ArrayList<>();
                 for (Profile other : profiles.values()) {
-                    if (other != own && nearestInterest(paper, other.clusters()) > ownScore) {
+                    if (other != own && Vectors.cosine(paper.embedding(), mean(other.papers())) > ownScore) {
                         closer.add(other.name());
                     }
                 }
@@ -234,8 +232,7 @@ public class ProfileBuilderTest {
                 .map(p -> new ProfilePaper(p.relativePath(), p.sha256(), p.title(), p.embedding(), p.abstractView(),
                         p.structureView(), p.bodyView()))
                 .toList();
-        workspace.store().save(new Profile(stored.name(), stored.emails(), vectorsOnly, stored.clusters(), stored.modelId(),
-                stored.updatedAt()));
+        workspace.store().save(new Profile(stored.name(), stored.emails(), vectorsOnly, stored.modelId(), stored.updatedAt()));
         // A paper also saved in another folder may be known with its text from there, and need no reading.
         long elsewhere = vectorsOnly.stream().filter(paper -> saved.values().stream()
                 .anyMatch(other -> other != stored && other.papers().stream().anyMatch(p -> p.sha256().equals(paper.sha256()))))
@@ -264,8 +261,7 @@ public class ProfileBuilderTest {
             TestProfiles.link(pdf, folder.resolve(pdf.getFileName()));
         }
         // The same papers, saved as if an older model had embedded them.
-        workspace.store().save(new Profile("zz-stale", List.of(), papers, new EmbeddingClusterer().cluster(papers),
-                "some-older-model", source.updatedAt()));
+        workspace.store().save(new Profile("zz-stale", List.of(), papers, "some-older-model", source.updatedAt()));
 
         ProfileReport report = reportFor(workspace.builder().syncAll(), "zz-stale");
 
@@ -273,12 +269,9 @@ public class ProfileBuilderTest {
         assertEquals(Specter2EmbeddingProvider.MODEL_ID, workspace.store().load("zz-stale").orElseThrow().modelId());
     }
 
-    private static double nearestInterest(ProfilePaper paper, List<InterestCluster> clusters) {
-        double best = -1;
-        for (InterestCluster cluster : clusters) {
-            best = Math.max(best, Vectors.cosine(paper.embedding(), cluster.centroid()));
-        }
-        return best;
+    /** The papers as a whole: the mean of their combined vectors. */
+    private static float[] mean(List<ProfilePaper> papers) {
+        return Vectors.mean(papers.stream().map(ProfilePaper::embedding).toList());
     }
 
     private static Profile smallestProfile() {

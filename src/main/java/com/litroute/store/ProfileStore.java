@@ -1,10 +1,10 @@
 package com.litroute.store;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.litroute.model.Profile;
-import com.litroute.model.Profile.InterestCluster;
 import com.litroute.model.Profile.ProfilePaper;
 import com.litroute.util.AtomicFiles;
 import java.io.IOException;
@@ -29,25 +29,26 @@ public final class ProfileStore {
     private static final TypeReference<Map<String, StoredProfile>> FILE_FORMAT = new TypeReference<>() {
     };
 
-    /** JSON shape of a Profile: plain nullable fields, so Jackson needs no Optional/Instant module. */
+    /**
+     * JSON shape of a Profile: plain nullable fields, so Jackson needs no Optional/Instant module.
+     * Stores written while profiles were split into interest clusters still load: their clusters are
+     * ignored, and dropped the next time the store is written.
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
+    @JsonIgnoreProperties({"clusters"})
     private record StoredProfile(
-            String name, List<String> emails, List<StoredPaper> papers, List<StoredCluster> clusters,
-            String modelId, String updatedAt) {
+            String name, List<String> emails, List<StoredPaper> papers, String modelId, String updatedAt) {
 
         static StoredProfile from(Profile profile) {
             return new StoredProfile(profile.name(), profile.emails(),
-                    profile.papers().stream().map(StoredPaper::from).toList(),
-                    profile.clusters().stream().map(c -> new StoredCluster(c.centroid(), c.memberSha256s())).toList(),
-                    profile.modelId(), profile.updatedAt().toString());
+                    profile.papers().stream().map(StoredPaper::from).toList(), profile.modelId(),
+                    profile.updatedAt().toString());
         }
 
         Profile toProfile() throws IOException {
             try {
                 return new Profile(name, emails == null ? List.of() : emails,
-                        papers.stream().map(StoredPaper::toPaper).toList(),
-                        clusters.stream().map(c -> new InterestCluster(c.centroid(), c.memberSha256s())).toList(),
-                        modelId, Instant.parse(updatedAt));
+                        papers.stream().map(StoredPaper::toPaper).toList(), modelId, Instant.parse(updatedAt));
             } catch (RuntimeException e) {
                 throw new IOException("Corrupt profile entry \"" + name + "\": " + e.getMessage(), e);
             }
@@ -71,9 +72,6 @@ public final class ProfileStore {
                     Optional.ofNullable(structureView), Optional.ofNullable(bodyView), Optional.ofNullable(abstractText),
                     Optional.ofNullable(bodyText));
         }
-    }
-
-    private record StoredCluster(float[] centroid, List<String> memberSha256s) {
     }
 
     private final Path storeFile;

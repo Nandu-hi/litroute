@@ -1,0 +1,227 @@
+M5 PLAN - PROFILE BUILDER
+LitRoute (CS5013), package com.litroute.profile
+Updated 2026-10-14 to match the code as built.
+
+
+1. PURPOSE
+----------
+M5 turns each student's folder of reference papers into a saved profile that M6 can match new
+papers against. A profile records what the student works on: one SPECTER2 vector per paper,
+plus the paper's own text. It is built once and then updated only where a folder changed, so a
+student's PDFs are read and embedded once, not on every run.
+
+
+2. SCOPE
+--------
+In scope
+  - Reading every student folder under the profiles root and building or updating one profile
+    per folder.
+  - Extracting each PDF's title, abstract, section headings and body text.
+  - Embedding each paper with SPECTER2 and storing the vectors and text in M7d.
+  - Reading the optional email.txt, where M10 will send a student's approved papers.
+  - Reporting what changed and which PDFs could not be used.
+
+Out of scope
+  - Scoring or routing papers (M6).
+  - Deciding when to rebuild. For now ProfileBuilderCli is run by hand; M9/M8 will trigger it.
+  - OCR. A scanned PDF without a text layer is skipped and reported.
+
+
+3. INPUTS AND OUTPUTS
+---------------------
+Input   Profiles root, default ~/.litroute/profiles
+          <student>/            one folder per student, named after the student
+              *.pdf             reference papers (subfolders are read too)
+              email.txt         optional: addresses for M10, one or more per line
+Input   EmbeddingProvider: Specter2EmbeddingProvider (ONNX export of SPECTER2,
+        model id "specter2-proximity-onnx/cls/512", 512-token input limit)
+Output  Profile per folder, saved in M7d (~/.litroute/data/profiles.json):
+          name, emails, papers, modelId, updatedAt
+          each paper: relative path, SHA-256 of the file, title, combined vector,
+          abstract / structure / body view vectors, abstract text, body text
+Output  BuildReport: per folder, how many PDFs were embedded, reused, given their text or
+        skipped (with the reason), the addresses read, and whether a profile was stored; plus
+        the profiles removed because their folder is gone.
+
+
+4. DESIGN DECISIONS
+-------------------
+4.1 The folder is the source of truth
+    Adding a folder adds a profile; adding, replacing or deleting a PDF updates it; deleting the
+    folder removes the profile at the next sync. Nobody edits profiles by hand.
+
+4.2 Papers are recognised by content, so nothing is embedded twice
+    Each PDF is identified by the SHA-256 of its bytes. A paper already embedded with the same
+    model, in any profile, is reused even if it was renamed, moved or copied into a second
+    student's folder. Embedding takes seconds per PDF (all 297 reference PDFs took about 12.5
+    minutes once). A sync with nothing new finishes in about 10 seconds.
+
+4.3 SPECTER2, with three views per paper
+    SPECTER2 is trained on scientific papers as "title [SEP] abstract", so each paper is embedded
+    as three views, each with the title in front:
+        abstract view    title + abstract                               weight 0.6
+        structure view   title + section headings                       weight 0.2
+        body view        mean over title + each sampled body passage    weight 0.2
+    The combined vector is the weighted sum, normalised to unit length; a missing view's weight
+    goes to the others. The abstract dominates because that is what the model was trained on; the
+    other two add methods and materials an abstract leaves out.
+
+4.4 Each paper's text is kept, not just its vectors
+    M6 matches wording as well as meaning (see m6plan.txt), so the abstract and body text are
+    stored with the vectors. M6 can then score, and compare scoring strategies, without opening
+    any PDF again. A store saved before text was kept gets it added by re-reading the PDFs,
+    without re-embedding.
+
+4.5 Profiles are uniform: no interest clustering
+    A profile is one body of work, not split into separate research interests. M5 used to
+    group each student's papers with average-linkage clustering, so that a student with two
+    topics would be represented by two directions. It was removed on 2026-10-14 because it made
+    no measurable difference. On the 48 papers the professor filed by student (scored from full
+    PDFs against all eight full profiles), matching gave the same result with and without
+    clusters: 46 of 48 to the right student, 20 recommendations, all correct. M6 instead
+    compares a paper with the student's papers taken together (their mean vector) and with the
+    three closest papers. The second part still lets a paper that matches only part of a
+    student's work score well.
+
+4.6 One bad PDF never stops a build
+    A corrupt, password-protected, scanned or undecodable PDF is logged, reported as skipped
+    with its reason, and the profile is built from the rest. A folder with no readable PDF gets
+    no profile, and a previously saved one is removed.
+
+
+5. COMPONENTS
+-------------
+ProfileBuilder          Orchestrates a sync of every folder; owns reuse, change detection,
+                        removal of orphaned profiles and email.txt parsing.
+PdfTextExtractor        PDF -> PaperText (title, abstract, headings, body passages), using PDFBox.
+                        Throws UnreadablePdfException for PDFs that cannot contribute.
+PaperText               What was read from one PDF.
+PaperEmbedder           PaperText -> the three views and the combined vector. M6 reuses it, so
+                        a candidate paper is embedded exactly like a reference paper.
+UnreadablePdfException  Why a PDF was skipped; becomes the reason in the report.
+ProfileBuilderCli       Command-line entry point (section 9).
+ProfileStore (M7d)      Saves and loads all profiles as one JSON file, written atomically.
+
+
+6. PROCESSING STEPS (ProfileBuilder.syncAll)
+--------------------------------------------
+1. Load every saved profile from M7d. Index their papers by SHA-256, keeping only papers embedded
+   with the current model; vectors from another model are not comparable and are recomputed.
+2. List the non-hidden subfolders of the profiles root, sorted. Create the root if missing.
+3. For each folder:
+   a. Read email.txt: addresses separated by commas, semicolons or spaces; blank lines and
+      lines starting with # ignored; anything that is not an address logged and dropped;
+      duplicates (ignoring case) kept once.
+   b. Walk every non-hidden *.pdf, sorted, and hash it.
+      - Same hash already seen in this folder: skipped as "same file as ...".
+      - Hash known with this model: reused under its new path. If it was saved without text,
+        the PDF is read again for the text only.
+      - New hash: extracted and embedded, with progress logged.
+      - Unreadable: skipped with the reason.
+   c. Save the profile only if it is new, gained text, or differs in model, addresses or files
+      (path + hash). An unchanged profile keeps its updatedAt. Each changed profile is saved as
+      soon as it is built, so an interrupted run keeps the finished ones.
+4. Remove saved profiles whose folder no longer exists.
+
+
+7. PDF TEXT EXTRACTION RULES (PdfTextExtractor)
+-----------------------------------------------
+- At most the first 60 pages are read, in the PDF's content order, which keeps two-column
+  layouts intact.
+- Unreadable: fewer than 500 letters in the document (a scan without OCR), letters making up
+  under half of the non-space characters (undecodable fonts, a map or drawing), or a corrupt
+  or password-protected file.
+- Page furniture is dropped: lines repeated on several pages (ignoring digits) and lines that
+  are only a number.
+- Title: the PDF's metadata title if it is a real title that appears on the first pages;
+  otherwise the largest-font run of lines on page 1 that is clearly larger than body text and
+  is not journal branding; otherwise the file name.
+- Abstract: the text after an "Abstract" or "Executive Summary" heading in the first 10 pages,
+  up to keywords, "Introduction" or the next numbered heading. Without one, the opening body
+  text stands in.
+- Headings: short bold or larger lines that are numbered or lead into a paragraph.
+- Body: body-size text after the abstract up to the references, acknowledgements or other end
+  matter (looked for only after the first 25% of the document). Captions, footnotes and tables
+  are dropped and end-of-line hyphenation is undone. The text is cut into passages of about
+  1500 characters, which fit SPECTER2's 512 tokens with the title; up to 6 are kept, spread
+  evenly, so a long paper is represented beyond its introduction.
+- Ligatures, zero-width characters and separately drawn first letters are repaired.
+
+
+8. STORAGE (M7d) AND COMPATIBILITY
+----------------------------------
+- One JSON object keyed by profile name, in the order profiles were first saved, written
+  atomically so a crash never leaves a half-written file.
+- A store written before paper text was kept still loads; those papers simply have no text
+  until the next sync adds it.
+- A store written while profiles had interest clusters still loads; the clusters are ignored
+  and left out the next time the store is written. The live store was rewritten this way on
+  2026-10-14 and verified identical apart from the clusters.
+- A missing file or name means "no profile yet", which leads to onboarding, not an error.
+
+
+9. RUNNING IT
+-------------
+    mvn -q compile exec:java -Dexec.mainClass=com.litroute.profile.ProfileBuilderCli [-Dexec.args=PROFILES_DIR]
+
+PROFILES_DIR defaults to ~/.litroute/profiles. The CLI prints, per profile: embedded / unchanged /
+given text / skipped counts, the addresses, each skipped PDF with its reason, the minimum, mean
+and maximum paper-to-paper similarity, and every paper's similarity to the profile as a whole,
+most similar first, so a paper that does not fit its student stands out. Run it after adding,
+changing or removing a profile folder.
+
+
+10. TEST PLAN
+-------------
+Tests use the real SPECTER2 model and the real profile folders in ~/.litroute/profiles; there
+are no fake embedding providers. Embeddings are cached in target/test-profile-cache/ (seeded from
+the live store), and tests that change folders work on symlinked copies, so the real folders are
+never modified.
+
+PdfTextExtractorTest  Truncated, password-protected and text-less PDFs are unreadable; every
+                      readable test PDF yields a title, abstract and body; a metadata title is
+                      matched to the page text despite small differences; extraction is
+                      deterministic; body passages are spread across the text.
+PaperEmbedderTest     Unit-length views for what a paper's text has; a missing view leaves the
+                      abstract view alone.
+ProfileBuilderTest    Every folder with a readable PDF becomes a profile of dense vectors.
+                      email.txt parsing. Held out, a paper is closer to its own profile as a
+                      whole than to the others (a clear majority first, nearly all in the top
+                      two). A second sync reuses every embedding and leaves unchanged profiles
+                      alone. Only a changed PDF is embedded again. Unreadable PDFs are reported
+                      and the rest is built. A deleted folder removes its profile. A folder
+                      with no readable PDF is not saved. A new folder of known papers needs no
+                      embedding. Text missing from an older store is added without
+                      re-embedding. Vectors from another model are recomputed.
+ProfileStoreTest      Round trip with identical vectors; replace and remove by name; older
+                      stores (without text, or with interest clusters) still load; a corrupt
+                      file is reported, not treated as empty.
+
+Status: the full suite (199 tests) passes on the full profiles.
+
+
+11. CURRENT STATUS
+------------------
+Built and in use. The eight reference profiles:
+
+    RP1-mh-risk            40 papers      RP5-wf-risk            35 papers
+    RP2-pbee-res-recov     28 papers      RP6-wf-emiss           33 papers
+    RP3-mf-sim             28 papers      RP7-kem-rap            20 papers
+    RP4-mh-char            43 papers      RP8-doe-eq-unc-quant   67 papers
+
+297 PDFs, 294 readable. Skipped: RP2 EQ_NDMA_BMTPC_2016.pdf (undecodable text), RP6
+Flammability_smoke_toxicity_and_corrosiv.pdf (scan without OCR) and RP6 "_GoodRef_Soares Neto et
+al. (2008).pdf" (undecodable text).
+
+
+12. OPEN ITEMS
+--------------
+- No folder has an email.txt yet, so M10 has no addresses to send to.
+- RP1, RP6 and RP8 each contain at least one paper saved twice under different file names
+  (paper-to-paper similarity 1.000). M6 counts such copies once, but the folders could be
+  cleaned up.
+- Scanned PDFs without a text layer are skipped. OCR would recover them.
+- Profiles need enough papers. With only 5-7 papers per student, M6 placed 35 of 48 filed
+  papers correctly instead of 46; the full folders have 20-67 papers each.
+- Wire the sync into M9 (on startup or on a schedule) and M8 (a "rebuild profiles" action),
+  replacing the manual CLI run.

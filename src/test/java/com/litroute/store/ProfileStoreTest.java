@@ -5,10 +5,12 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.litroute.model.Profile;
-import com.litroute.model.Profile.InterestCluster;
 import com.litroute.model.Profile.ProfilePaper;
 import com.litroute.testing.TestProfiles;
+import com.litroute.util.Vectors;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -51,8 +53,8 @@ public class ProfileStoreTest {
         store.save(first);
         store.save(renamed(first, "other-student"));
 
-        Profile replaced = new Profile(first.name(), List.of("new@example.org"), first.papers(), first.clusters(),
-                first.modelId(), first.updatedAt());
+        Profile replaced = new Profile(first.name(), List.of("new@example.org"), first.papers(), first.modelId(),
+                first.updatedAt());
         store.save(replaced);
 
         assertEquals(List.of("new@example.org"), store.load(first.name()).orElseThrow().emails());
@@ -73,13 +75,37 @@ public class ProfileStoreTest {
                 .toList();
         Path file = Files.createTempDirectory("litroute-test").resolve("profiles.json");
         ProfileStore store = new ProfileStore(file);
-        store.save(new Profile(built.name(), built.emails(), vectorsOnly, built.clusters(), built.modelId(), built.updatedAt()));
+        store.save(new Profile(built.name(), built.emails(), vectorsOnly, built.modelId(), built.updatedAt()));
 
         assertFalse(Files.readString(file).contains("abstractText"));
         Profile loaded = store.load(built.name()).orElseThrow();
         assertEquals(built.papers().size(), loaded.papers().size());
         assertTrue(loaded.papers().stream().noneMatch(ProfilePaper::hasText));
         assertTrue("a real build keeps every paper's text", built.papers().stream().allMatch(ProfilePaper::hasText));
+    }
+
+    /**
+     * A store written while M5 split profiles into interest clusters still loads, with nothing lost but
+     * the clusters, and the next write leaves them out.
+     */
+    @Test
+    public void storeSavedWithInterestClustersStillLoads() throws IOException {
+        Profile built = TestProfiles.profiles().values().iterator().next();
+        Path file = Files.createTempDirectory("litroute-test").resolve("profiles.json");
+        ProfileStore store = new ProfileStore(file);
+        store.save(built);
+        // What M5 wrote then: the same profile plus its clusters, here one holding every paper.
+        ObjectMapper json = new ObjectMapper();
+        ObjectNode saved = (ObjectNode) json.readTree(file.toFile());
+        ObjectNode cluster = ((ObjectNode) saved.get(built.name())).putArray("clusters").addObject();
+        cluster.set("centroid", json.valueToTree(
+                Vectors.normalize(Vectors.mean(built.papers().stream().map(ProfilePaper::embedding).toList()))));
+        cluster.set("memberSha256s", json.valueToTree(built.papers().stream().map(ProfilePaper::sha256).toList()));
+        json.writeValue(file.toFile(), saved);
+
+        assertSameProfile(built, store.load(built.name()).orElseThrow());
+        store.save(renamed(built, "other-student"));
+        json.readTree(file.toFile()).forEach(entry -> assertFalse(entry.has("clusters")));
     }
 
     @Test(expected = IOException.class)
@@ -91,8 +117,7 @@ public class ProfileStoreTest {
     }
 
     private static Profile renamed(Profile profile, String name) {
-        return new Profile(name, profile.emails(), profile.papers(), profile.clusters(), profile.modelId(),
-                profile.updatedAt());
+        return new Profile(name, profile.emails(), profile.papers(), profile.modelId(), profile.updatedAt());
     }
 
     private static void assertSameProfile(Profile expected, Profile actual) {
@@ -115,13 +140,6 @@ public class ProfileStoreTest {
             e.bodyView().ifPresent(v -> assertArrayEquals(v, a.bodyView().get(), 0f));
             assertEquals(e.abstractText(), a.abstractText());
             assertEquals(e.bodyText(), a.bodyText());
-        }
-        assertEquals(expected.clusters().size(), actual.clusters().size());
-        for (int i = 0; i < expected.clusters().size(); i++) {
-            InterestCluster e = expected.clusters().get(i);
-            InterestCluster a = actual.clusters().get(i);
-            assertArrayEquals(e.centroid(), a.centroid(), 0f);
-            assertEquals(e.memberSha256s(), a.memberSha256s());
         }
     }
 }

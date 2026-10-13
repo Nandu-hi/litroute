@@ -2,7 +2,6 @@ package com.litroute.profile;
 
 import com.litroute.embedding.EmbeddingProvider;
 import com.litroute.model.Profile;
-import com.litroute.model.Profile.InterestCluster;
 import com.litroute.model.Profile.ProfilePaper;
 import com.litroute.store.ProfileStore;
 import java.io.IOException;
@@ -45,8 +44,12 @@ import java.util.stream.Stream;
  * removes the profile at the next {@link #syncAll()}. PDFs are recognized by content hash, so a run
  * only reads and embeds files it has not seen before (with the same model); everything else is
  * reused from the store. Each paper's text is stored with its vectors, for M6's word matching; a
- * store saved before that gets the text added by reading the PDFs again, without re-embedding. A PDF that cannot be read is logged, reported and skipped - it never stops
- * the rest of the profile, or other profiles, from being built.
+ * store saved before that gets the text added by reading the PDFs again, without re-embedding. A PDF
+ * that cannot be read is logged, reported and skipped - it never stops the rest of the profile, or
+ * other profiles, from being built.
+ *
+ * A profile is taken to be uniform: one body of work. It is just its papers; M6 compares a candidate
+ * with all of them together and with the closest few.
  */
 public final class ProfileBuilder {
 
@@ -68,8 +71,8 @@ public final class ProfileBuilder {
      * @param stored    false if the folder had no usable PDF, so no profile exists for it
      */
     public record ProfileReport(
-            String name, int embedded, int reused, int textAdded, List<SkippedPdf> skipped, int clusters,
-            List<String> emails, boolean stored) {
+            String name, int embedded, int reused, int textAdded, List<SkippedPdf> skipped, List<String> emails,
+            boolean stored) {
     }
 
     /** @param removed profiles deleted from the store because their folder no longer exists */
@@ -81,7 +84,6 @@ public final class ProfileBuilder {
     private final EmbeddingProvider provider;
     private final PdfTextExtractor extractor = new PdfTextExtractor();
     private final PaperEmbedder embedder;
-    private final EmbeddingClusterer clusterer = new EmbeddingClusterer();
 
     public ProfileBuilder(Path profilesRoot, ProfileStore store, EmbeddingProvider provider) {
         this.profilesRoot = profilesRoot;
@@ -186,34 +188,27 @@ public final class ProfileBuilder {
             if (previous != null) {
                 store.remove(name);
             }
-            return new ProfileReport(name, 0, 0, 0, skipped, 0, emails, false);
+            return new ProfileReport(name, 0, 0, 0, skipped, emails, false);
         }
         if (textAdded > 0) {
             LOG.log(Level.INFO, "{0}: kept the text of {1} papers that had only vectors (nothing re-embedded)",
                     new Object[] {name, textAdded});
         }
-        List<InterestCluster> clusters = clusterer.cluster(papers);
-        if (previous == null || textAdded > 0 || !unchanged(previous, emails, papers, clusters)) {
-            store.save(new Profile(name, emails, papers, clusters, provider.modelId(), Instant.now()));
+        if (previous == null || textAdded > 0 || !unchanged(previous, emails, papers)) {
+            store.save(new Profile(name, emails, papers, provider.modelId(), Instant.now()));
         }
-        return new ProfileReport(name, embedded, reused, textAdded, skipped, clusters.size(), emails, true);
+        return new ProfileReport(name, embedded, reused, textAdded, skipped, emails, true);
     }
 
-    /** Whether saving would change nothing but the timestamp: same model, addresses, files and interests. */
-    private boolean unchanged(Profile previous, List<String> emails, List<ProfilePaper> papers,
-            List<InterestCluster> clusters) {
+    /** Whether saving would change nothing but the timestamp: same model, addresses and files. */
+    private boolean unchanged(Profile previous, List<String> emails, List<ProfilePaper> papers) {
         return previous.modelId().equals(provider.modelId())
                 && previous.emails().equals(emails)
-                && files(previous.papers()).equals(files(papers))
-                && members(previous.clusters()).equals(members(clusters));
+                && files(previous.papers()).equals(files(papers));
     }
 
     private static List<String> files(List<ProfilePaper> papers) {
         return papers.stream().map(paper -> paper.relativePath() + "\n" + paper.sha256()).toList();
-    }
-
-    private static List<List<String>> members(List<InterestCluster> clusters) {
-        return clusters.stream().map(InterestCluster::memberSha256s).toList();
     }
 
     private List<Path> profileFolders() throws IOException {

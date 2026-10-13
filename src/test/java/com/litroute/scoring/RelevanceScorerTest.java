@@ -16,7 +16,6 @@ import com.litroute.ingestion.extract.AlertBatchProcessor;
 import com.litroute.ingestion.extract.PaperExtractor;
 import com.litroute.model.PaperCandidate;
 import com.litroute.model.Profile;
-import com.litroute.model.Profile.InterestCluster;
 import com.litroute.model.Profile.ProfilePaper;
 import com.litroute.model.ReviewStatus;
 import com.litroute.model.ScoredPaper;
@@ -266,8 +265,7 @@ public class RelevanceScorerTest {
     @Test(expected = IllegalArgumentException.class)
     public void profilesFromAnotherModelAreRejected() {
         Profile real = TestProfiles.profiles().values().iterator().next();
-        Profile older = new Profile(real.name(), real.emails(), real.papers(), real.clusters(), "some-older-model",
-                real.updatedAt());
+        Profile older = new Profile(real.name(), real.emails(), real.papers(), "some-older-model", real.updatedAt());
 
         new RelevanceScorer(TestModel.provider(), List.of(older));
     }
@@ -280,8 +278,7 @@ public class RelevanceScorerTest {
                 .map(p -> new ProfilePaper(p.relativePath(), p.sha256(), p.title(), p.embedding(), p.abstractView(),
                         p.structureView(), p.bodyView()))
                 .toList();
-        Profile older = new Profile(real.name(), real.emails(), vectorsOnly, real.clusters(), real.modelId(),
-                real.updatedAt());
+        Profile older = new Profile(real.name(), real.emails(), vectorsOnly, real.modelId(), real.updatedAt());
 
         try {
             new RelevanceScorer(TestModel.provider(), List.of(older));
@@ -381,10 +378,6 @@ public class RelevanceScorerTest {
                         new float[p.abstractView().length], p.structureView().map(v -> new float[v.length]),
                         p.bodyView().map(v -> new float[v.length]), Optional.of(""), Optional.of("")))
                 .toList();
-        List<InterestCluster> clusters = profile.clusters().stream()
-                .map(c -> new InterestCluster(new float[c.centroid().length],
-                        c.memberSha256s().stream().map(sha -> "blank-" + sha).toList()))
-                .toList();
-        return new Profile(name, profile.emails(), papers, clusters, profile.modelId(), profile.updatedAt());
+        return new Profile(name, profile.emails(), papers, profile.modelId(), profile.updatedAt());
     }
 }

@@ -18,12 +18,22 @@ import java.util.logging.Logger;
 
 /**
  * Saves a paper's PDF into a local folder. Each candidate URL is tried in order and accepted only if
- * the response is a real PDF (starts with "%PDF-"): a paywall or login page that answers 200 with
+ * the response is a real PDF (has the "%PDF-" header in its first 1 KB): a paywall or login page that answers 200 with
  * HTML is rejected and the next URL is tried, so a "PDF" file on disk is always a PDF.
  *
  * Files are named after the DOI (or, without one, a hash of the title), so running the pipeline
  * again reuses the file already on disk instead of downloading it a second time. Only URLs a
  * publisher or aggregator serves publicly are fetched - no login, no workaround for a paywall.
+ *
+ * <p>Example:
+ *
+ * <pre>{@code
+ * Input:  new PdfDownloader(fetcher, Path.of("/home/me/.litroute/data/pdfs"))
+ *             .download(List.of("https://www.sciencedirect.com/.../pdf",       // 200, HTML login page -> skipped
+ *                               "https://www.mdpi.com/2077-1312/12/3/400/pdf"), // 200, %PDF-1.7 -> saved
+ *                       "10.3390_jmse12030400")
+ * Output: Optional[/home/me/.litroute/data/pdfs/10.3390_jmse12030400.pdf]
+ * }</pre>
  */
 public final class PdfDownloader {
 
@@ -33,16 +43,67 @@ public final class PdfDownloader {
     private final HttpFetcher fetcher;
     private final Path directory;
 
+    /**
+     * Creates a downloader that fetches through {@code fetcher} and saves into {@code directory}. The directory
+     * doesn't have to exist yet.
+     *
+     * <p>Example:
+     *
+     * <pre>{@code
+     * Input:  new PdfDownloader(new JdkHttpFetcher("LitRoute/1.0 ..."), PdfDownloader.defaultDirectory())
+     * Output: a downloader saving real downloads under ~/.litroute/data/pdfs
+     * }</pre>
+     *
+     * @param fetcher the HTTP client used for every download
+     * @param directory the folder the PDFs are saved in
+     */
     public PdfDownloader(HttpFetcher fetcher, Path directory) {
         this.fetcher = fetcher;
         this.directory = directory;
     }
 
+    /**
+     * The folder PDFs are saved in by default: {@code ~/.litroute/data/pdfs}.
+     *
+     * <p>Example:
+     *
+     * <pre>{@code
+     * Input:  (user.home = "/home/srinandan")
+     * Output: /home/srinandan/.litroute/data/pdfs
+     * }</pre>
+     *
+     * @return the default PDF folder under the user's home directory
+     */
     public static Path defaultDirectory() {
         return Path.of(System.getProperty("user.home"), ".litroute", "data", "pdfs");
     }
 
-    /** @return the saved (or already present) PDF, or empty if none of the URLs served a real PDF */
+    /**
+     * Saves the paper's PDF as {@code <directory>/<fileStem>.pdf}. If a real PDF is already there it is returned
+     * with no network access. Otherwise each http(s) URL is tried in order, and the first reply that is a 2xx,
+     * not cut off at the 80 MB cap, and a real PDF (see {@link #isPdf}) is written atomically and returned.
+     * Non-http URLs, error replies, HTML pages and network failures are skipped, never thrown.
+     *
+     * <p>Example:
+     *
+     * <pre>{@code
+     * Input:  download(List.of("https://ascelibrary.org/doi/pdf/10.1061/X",          // 403 -> skipped
+     *                          "ftp://example.org/paper.pdf",                        // not http -> skipped
+     *                          "https://arxiv.org/pdf/2403.01234"),                  // 200, %PDF-1.5 -> saved
+     *                  "10.1061_X")
+     * Output: Optional[<directory>/10.1061_X.pdf]
+     *
+     * Input:  same call again
+     * Output: Optional[<directory>/10.1061_X.pdf]   (already on disk; nothing fetched)
+     *
+     * Input:  download(List.of("https://www.sciencedirect.com/.../pdf"), "10.1016_j.oceaneng.2024.117")   // HTML paywall
+     * Output: Optional.empty
+     * }</pre>
+     *
+     * @param candidateUrls possible PDF locations, best first
+     * @param fileStem the file name without extension, from {@link #fileStem}
+     * @return the saved (or already present) PDF, or empty if none of the URLs served a real PDF
+     */
     public Optional<Path> download(List<String> candidateUrls, String fileStem) {
         Path target = directory.resolve(fileStem + ".pdf");
         if (isPdfFile(target)) {
@@ -68,7 +129,26 @@ public final class PdfDownloader {
         return Optional.empty();
     }
 
-    /** File name (without extension) for a paper: its DOI made filesystem-safe, else a short hash of its title. */
+    /**
+     * File name (without extension) for a paper: its DOI made filesystem-safe, else a short hash of its title.
+     * In a DOI every character other than letters, digits, {@code .}, {@code _} and {@code -} becomes {@code _},
+     * leading dots become one {@code _} (no hidden files), and the result is cut to 120 characters. Without a DOI,
+     * the title is stripped of accents, case, spaces and punctuation before hashing, so small differences in how
+     * two emails write the same title give the same file.
+     *
+     * <p>Example:
+     *
+     * <pre>{@code
+     * Input:  Optional[10.1016/j.oceaneng.2024.117], any title   Output: "10.1016_j.oceaneng.2024.117"
+     * Input:  Optional[10.1002/(SICI)1097-0258]                  Output: "10.1002__SICI_1097-0258"
+     * Input:  Optional.empty, "Wave Loads: A Review"             Output: "title-b4e875f17d8ff795"   (SHA-256 of "waveloadsareview")
+     * Input:  Optional.empty, "wave loads - a review"            Output: the same stem as the line above
+     * }</pre>
+     *
+     * @param doi the paper's DOI, if known
+     * @param title the paper's title, used only when there is no DOI
+     * @return a file name stem safe on any filesystem
+     */
     public static String fileStem(Optional<String> doi, String title) {
         if (doi.isPresent()) {
             String safe = doi.get().replaceAll("[^A-Za-z0-9._-]", "_").replaceFirst("^\\.+", "_");
@@ -84,11 +164,42 @@ public final class PdfDownloader {
         }
     }
 
+    /**
+     * Tells whether a body is a PDF by looking for the {@code %PDF-} header in its first 1 KB (the PDF spec allows
+     * some bytes before it). The content type isn't trusted, since servers often get it wrong.
+     *
+     * <p>Example:
+     *
+     * <pre>{@code
+     * Input:  bytes of "%PDF-1.7\n%..."                       Output: true
+     * Input:  bytes of "\r\n%PDF-1.4 ..."                     Output: true    (header after a few junk bytes)
+     * Input:  bytes of "<!DOCTYPE html><title>Sign in</title>"  Output: false
+     * Input:  empty array                                     Output: false
+     * }</pre>
+     *
+     * @param body the downloaded bytes
+     * @return true if the {@code %PDF-} header appears in the first 1024 bytes
+     */
     static boolean isPdf(byte[] body) {
         int limit = Math.min(body.length, 1024);
         return new String(body, 0, limit, StandardCharsets.ISO_8859_1).contains("%PDF-");
     }
 
+    /**
+     * Tells whether a file on disk is a real PDF, using the same header check as {@link #isPdf}. A missing file,
+     * a directory, or a file that can't be read gives false, so the PDF is downloaded again.
+     *
+     * <p>Example:
+     *
+     * <pre>{@code
+     * Input:  pdfs/10.3390_jmse12030400.pdf, starting "%PDF-1.7"     Output: true
+     * Input:  pdfs/10.1016_j.oceaneng.2024.117.pdf, not there         Output: false
+     * Input:  pdfs/broken.pdf, containing an HTML page                Output: false
+     * }</pre>
+     *
+     * @param file the path to check
+     * @return true if it is a regular file whose first 1 KB holds the PDF header
+     */
     private static boolean isPdfFile(Path file) {
         if (!Files.isRegularFile(file)) {
             return false;

@@ -14,8 +14,8 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * Runs a whole batch of alert emails through M2 (extract), M3 (enrich) and M4 (deduplicate), then
- * persists the outcome exactly once:
+ * Run a batch of alert emails through M2 (extract), M3 (enrich) and M4 (deduplicate), then persist the
+ * outcome exactly once:
  *
  * <ol>
  *   <li>extract + enrich every email - nothing is written to disk in this phase;
@@ -35,12 +35,19 @@ import java.util.Set;
 public final class AlertBatchProcessor {
 
     /**
-     * Builds the extractor around M7c's live lookup cache, which only exists once the store has been
+     * Build the extractor around M7c's live lookup cache, which only exists once the store has been
      * read. Wiring it this way is what lets a lookup made during the run be written back with the rest
      * of the batch: pass {@code lookups -> new PaperExtractor(new CachingPaperEnricher(online, lookups))}.
      */
     @FunctionalInterface
     public interface ExtractorFactory {
+        /**
+         * Create the extractor to use for one batch.
+         *
+         * @param lookupCache the live, mutable lookup cache loaded from M7c, keyed by lookup key; must
+         *        not be {@code null}. Entries the extractor adds are persisted with the batch.
+         * @return the extractor for this batch; never {@code null}
+         */
         PaperExtractor create(Map<String, PaperCandidate> lookupCache);
     }
 
@@ -50,9 +57,13 @@ public final class AlertBatchProcessor {
     private final Deduplicator deduplicator = new Deduplicator();
 
     /**
-     * @param extractorFactory builds the extractor once M7c's lookup cache has been loaded
-     * @param enrichmentCache M7c, holding the enriched papers and the lookup cache
-     * @param processedEmails M7a, holding the IDs of emails already handled
+     * Create a processor whose extractor is built from M7c's lookup cache at the start of each run.
+     *
+     * @param extractorFactory builds the extractor once M7c's lookup cache has been loaded; must not
+     *        be {@code null}
+     * @param enrichmentCache M7c, holding the enriched papers and the lookup cache; must not be
+     *        {@code null}
+     * @param processedEmails M7a, holding the IDs of emails already handled; must not be {@code null}
      */
     public AlertBatchProcessor(ExtractorFactory extractorFactory, EnrichmentCacheStore enrichmentCache,
             EmailCacheStore processedEmails) {
@@ -61,16 +72,31 @@ public final class AlertBatchProcessor {
         this.processedEmails = processedEmails;
     }
 
-    /** For an extractor that has no use for the lookup cache (offline runs, tests). */
+    /**
+     * Create a processor around a fixed extractor that ignores the lookup cache (offline runs, tests).
+     *
+     * @param extractor the extractor used for every run; must not be {@code null}
+     * @param enrichmentCache M7c, holding the enriched papers and the lookup cache; must not be
+     *        {@code null}
+     * @param processedEmails M7a, holding the IDs of emails already handled; must not be {@code null}
+     */
     public AlertBatchProcessor(PaperExtractor extractor, EnrichmentCacheStore enrichmentCache,
             EmailCacheStore processedEmails) {
         this(lookups -> extractor, enrichmentCache, processedEmails);
     }
 
     /**
+     * Extract, enrich and deduplicate a batch of alert emails, then persist the result to M7c and
+     * mark the emails as processed in M7a, in that order.
+     *
+     * @param emails the alert emails of this batch; must not be {@code null} or contain
+     *        {@code null} elements, and each email needs a message ID. May be empty, in which case
+     *        the held papers are re-deduplicated and re-saved. Re-processing an email already
+     *        stored replaces its earlier papers rather than duplicating them.
      * @return every paper now held in M7c, enriched and deduplicated, in first-seen order
      * @throws IOException if a store can't be read or written; if M7c can't be saved the emails are
      *         left unmarked so the batch is retried
+     * @throws NullPointerException if {@code emails} or one of its elements is {@code null}
      */
     public List<PaperCandidate> process(List<RawEmail> emails) throws IOException {
         // Load first so a corrupt store fails before any lookups or downloads are spent on this batch.

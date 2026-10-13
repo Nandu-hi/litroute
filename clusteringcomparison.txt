@@ -1,0 +1,117 @@
+LITROUTE M6 - LEXICAL+SPECTER2 ON FULL PDFs, WITH vs WITHOUT INTEREST CLUSTERING
+================================================================================
+Run on 2026-10-13.
+
+Inputs
+  Profiles      ~/.litroute/profiles, full upload: 8 students, 297 PDFs, 294 readable
+                Unreadable: RP2 EQ_NDMA_BMTPC_2016.pdf; RP6 Flammability_smoke_toxicity_and_corrosiv.pdf
+                and "_GoodRef_Soares Neto et al. (2008).pdf". Nothing new had to be embedded:
+                every PDF was already in the saved store.
+  Filed papers  ~/.litroute/match-test: 48 PDFs, each filed under the student it should reach
+  Matcher       Lexical+SPECTER2 (HYBRID), scored from each paper's full PDF, the 48 papers
+                matched as one batch, top 3 recommended per student, relevance floor 0.50
+  Variants      WITH clusters    = current code: a student's papers are split into interests,
+                                   compared via the nearest interest centroid + 3 closest papers
+                WITHOUT clusters = every profile uniform: one centroid of all the student's papers
+                                   + 3 closest papers
+  Both variants scored the same profile store, so they compare the same papers.
+
+
+RESULT
+------
+                                         WITH clusters    WITHOUT clusters
+  Correctly matched (of 48)              46               46
+  Recommendation precision (P@3)         1.00             1.00
+  Recommended                            20               20
+  Recommended and correct                20 of 20         20 of 20
+
+DECISION: identical. Without clustering is not better, so it was NOT adopted; the code
+keeps interest clustering, unchanged.
+
+
+PER STUDENT (identical for both variants)
+-----------------------------------------
+  RP1-mh-risk            filed  6  assigned  7  recommended 3  recommended-correct 3
+  RP2-pbee-res-recov     filed  2  assigned  2  recommended 2  recommended-correct 2
+  RP3-mf-sim             filed  1  assigned  1  recommended 1  recommended-correct 1
+  RP4-mh-char            filed  8  assigned  6  recommended 3  recommended-correct 3
+  RP5-wf-risk            filed 11  assigned 11  recommended 3  recommended-correct 3
+  RP6-wf-emiss           filed  2  assigned  2  recommended 2  recommended-correct 2
+  RP7-kem-rap            filed 10  assigned 11  recommended 3  recommended-correct 3
+  RP8-doe-eq-unc-quant   filed  8  assigned  8  recommended 3  recommended-correct 3
+
+Students get fewer than 3 recommendations only when fewer than 3 papers were filed for them
+(RP2, RP3 and RP6 have 2, 1 and 2).
+
+
+THE ONLY DIFFERENCE
+-------------------
+Within RP7-kem-rap (10 filed, all 10 matched to RP7, all scoring about 0.97), the third
+recommendation slot goes to a different RP7 paper:
+  WITH clusters     "Efficient heuristics for handling ties in Kemeny rank aggregation"  (0.970)
+  WITHOUT clusters  "Approximate Condorcet Partitioning: Solving large-scale rank..."   (0.974)
+Both are correct RP7 papers, so no metric changes.
+
+
+MISSES (the same 2 papers in both variants)
+-------------------------------------------
+  RP4-mh-char/Adnan et al (2024) reportD2.2.pdf -> RP7-kem-rap, score 0.02
+      a scanned PDF with no text; only its file name could be matched
+  RP4-mh-char/Ba (2021) disaster scenario method.pdf -> RP1-mh-risk, score 0.39
+      "Multi-hazard disaster scenario method and emergency management for urban resilience";
+      it sits between RP4 (multi-hazard characterisation) and RP1 (multi-hazard risk)
+
+
+ALL 48 PAPERS
+-------------
+REC = recommended. Score = relevance x share (0-1).
+
+  FILED UNDER            WITH: assigned           score  rec    WITHOUT: assigned        score  rec   TITLE
+  RP1-mh-risk            RP1-mh-risk              0.590  -      RP1-mh-risk              0.592  -     Conditional probability of wind and seismic hazards with applications…
+  RP1-mh-risk            RP1-mh-risk              0.262  -      RP1-mh-risk              0.279  -     Reliability-Based Collapse Assessment of Wind-Excited Steel Structure…
+  RP1-mh-risk            RP1-mh-risk              0.486  -      RP1-mh-risk              0.484  -     Multihazard Performance-Based Assessment Framework for Multistory Ste…
+  RP1-mh-risk            RP1-mh-risk              0.627  REC    RP1-mh-risk              0.636  REC   Robust Optimum Design for Hybrid Vibration Control of Structures unde…
+  RP1-mh-risk            RP1-mh-risk              0.751  REC    RP1-mh-risk              0.747  REC   State of the Art of Multihazard Design
+  RP1-mh-risk            RP1-mh-risk              0.751  REC    RP1-mh-risk              0.747  REC   State of the Art of Multihazard Design
+  RP2-pbee-res-recov     RP2-pbee-res-recov       0.310  REC    RP2-pbee-res-recov       0.311  REC   Some issues in the practical application of risk‐targeted ground moti…
+  RP2-pbee-res-recov     RP2-pbee-res-recov       0.694  REC    RP2-pbee-res-recov       0.696  REC   Risk‐targeted seismic evaluation of functional recovery performance i…
+  RP3-mf-sim             RP3-mf-sim               0.403  REC    RP3-mf-sim               0.407  REC   A new model order reduction strategy adapted to nonlinear problems in…
+  RP4-mh-char            RP4-mh-char              0.682  REC    RP4-mh-char              0.689  REC   FORECASTING MULTI-HAZARD SCENARIOS WITH ENSEMBLE TROPICAL CYCLONE FOR…
+  RP4-mh-char            RP7-kem-rap              0.024  -      RP7-kem-rap              0.022  -     Adnan et al (2024) reportD2.2   <- MISS
+  RP4-mh-char            RP4-mh-char              0.882  REC    RP4-mh-char              0.880  REC   A comprehensive framework for quantifying diverse multi-hazard intera…
+  RP4-mh-char            RP4-mh-char              0.656  -      RP4-mh-char              0.639  -     Probabilistic cascading multi-hazard risk assessment methodology usin…
+  RP4-mh-char            RP4-mh-char              0.427  -      RP4-mh-char              0.457  -     LRFD methodology for river embankments against non-stationary floodin…
+  RP4-mh-char            RP4-mh-char              0.874  REC    RP4-mh-char              0.871  REC   Assessment of Cyclone Vulnerability, Hazard Evaluation and Mitigation…
+  RP4-mh-char            RP1-mh-risk              0.385  -      RP1-mh-risk              0.387  -     Multi-hazard disaster scenario method and emergency management for ur…   <- MISS
+  RP4-mh-char            RP4-mh-char              0.194  -      RP4-mh-char              0.204  -     BIS CycloneFloodLandslides 2498 BIS
+  RP5-wf-risk            RP5-wf-risk              0.882  -      RP5-wf-risk              0.880  -     Camp Fire Preliminary Reconnaissance
+  RP5-wf-risk            RP5-wf-risk              0.849  -      RP5-wf-risk              0.849  -     Preliminary Data Collected from the Camp Fire Reconnaissance
+  RP5-wf-risk            RP5-wf-risk              0.884  REC    RP5-wf-risk              0.883  REC   NIST Presentation Camp Fire: Fire Progression Timeline
+  RP5-wf-risk            RP5-wf-risk              0.851  -      RP5-wf-risk              0.849  -     Camp Fire – Fire Progression Timeline
+  RP5-wf-risk            RP5-wf-risk              0.914  REC    RP5-wf-risk              0.913  REC   A Case Study of the Camp Fire - Fire Progression Timeline
+  RP5-wf-risk            RP5-wf-risk              0.381  -      RP5-wf-risk              0.382  -     A Case Study of the Camp Fire - Fire Progression Timeline
+  RP5-wf-risk            RP5-wf-risk              0.912  REC    RP5-wf-risk              0.909  REC   Assessing wildfire exposure in the Wildland-Urban Interface area of t…
+  RP5-wf-risk            RP5-wf-risk              0.794  -      RP5-wf-risk              0.793  -     Building codes and community resilience to natural disasters
+  RP5-wf-risk            RP5-wf-risk              0.457  -      RP5-wf-risk              0.449  -     The 2018 Camp Fire: Meteorological Analysis Using In Situ Observation…
+  RP5-wf-risk            RP5-wf-risk              0.776  -      RP5-wf-risk              0.771  -     Wildland firefighter safety zones: a review of past science and summa…
+  RP5-wf-risk            RP5-wf-risk              0.822  -      RP5-wf-risk              0.820  -     Firefighter Safety Zones: How big is big enough?
+  RP6-wf-emiss           RP6-wf-emiss             0.358  REC    RP6-wf-emiss             0.360  REC   Wildfire smoke impacts respiratory health more than fine particles fr…
+  RP6-wf-emiss           RP6-wf-emiss             0.910  REC    RP6-wf-emiss             0.910  REC   Bryner (1991) Smoke emission and burning rates
+  RP7-kem-rap            RP7-kem-rap              0.967  -      RP7-kem-rap              0.972  -     Aggregating inconsistent information
+  RP7-kem-rap            RP7-kem-rap              0.973  REC    RP7-kem-rap              0.977  REC   Akbari ASU thesis (attention grabbing Tables 5.8-9)
+  RP7-kem-rap            RP7-kem-rap              0.970  -      RP7-kem-rap              0.974  REC   Approximate Condorcet Partitioning: Solving large-scale rank aggregat…
+  RP7-kem-rap            RP7-kem-rap              0.959  -      RP7-kem-rap              0.962  -     A highly scalable algorithm for weak rankings aggregation
+  RP7-kem-rap            RP7-kem-rap              0.962  -      RP7-kem-rap              0.964  -     A new approach for identifying the Kemeny median ranking
+  RP7-kem-rap            RP7-kem-rap              0.968  -      RP7-kem-rap              0.971  -     Efficient algorithms using subiterative convergence for Kemeny rankin…
+  RP7-kem-rap            RP7-kem-rap              0.970  REC    RP7-kem-rap              0.972  -     Efficient heuristics for handling ties in Kemeny rank aggregation
+  RP7-kem-rap            RP7-kem-rap              0.968  -      RP7-kem-rap              0.972  -     Fixed-Parameter Algorithms for Kemeny Scores
+  RP7-kem-rap            RP7-kem-rap              0.966  -      RP7-kem-rap              0.969  -     How Similarity Helps to Efficiently Compute Kemeny Rankings∗
+  RP7-kem-rap            RP7-kem-rap              0.973  REC    RP7-kem-rap              0.974  REC   Partial Kernelization for Rank Aggregation: Theory and Experiments
+  RP8-doe-eq-unc-quant   RP8-doe-eq-unc-quant     0.473  -      RP8-doe-eq-unc-quant     0.432  -     A review of Information Field Theory for Bayesian inference of random…
+  RP8-doe-eq-unc-quant   RP8-doe-eq-unc-quant     0.792  REC    RP8-doe-eq-unc-quant     0.795  REC   Machine Learning Driven Drift Capacity Model for Reinforced Concrete …
+  RP8-doe-eq-unc-quant   RP8-doe-eq-unc-quant     0.533  REC    RP8-doe-eq-unc-quant     0.536  REC   SAFETYUncertainty propagation in probabilistic seismic loss estimation
+  RP8-doe-eq-unc-quant   RP8-doe-eq-unc-quant     0.386  -      RP8-doe-eq-unc-quant     0.382  -     Probabilistic Push-Over Analysis of Structural and Soil-Structure Sys…
+  RP8-doe-eq-unc-quant   RP8-doe-eq-unc-quant     0.567  REC    RP8-doe-eq-unc-quant     0.571  REC   Error estimation of closed-form solution for annual rate of structura…
+  RP8-doe-eq-unc-quant   RP8-doe-eq-unc-quant     0.443  -      RP8-doe-eq-unc-quant     0.444  -     Causal inference on observational data: Opportunities and challenges …
+  RP8-doe-eq-unc-quant   RP8-doe-eq-unc-quant     0.339  -      RP8-doe-eq-unc-quant     0.338  -     Evaluating the effectiveness of ground motion intensity measures thro…
+  RP8-doe-eq-unc-quant   RP8-doe-eq-unc-quant     0.312  -      RP8-doe-eq-unc-quant     0.309  -     Design of computer experiments for developing seismic surrogate models

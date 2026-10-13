@@ -10,13 +10,12 @@ import java.util.Optional;
  * sends the approved ones to its email addresses.
  *
  * Every paper's own vectors and text are kept, not just a summary, so M6 can score papers by meaning
- * and by wording - and compare strategies - without re-reading any PDF.
+ * and by wording - and compare strategies - without re-reading any PDF. A profile is one uniform body
+ * of work: M6 compares a paper with all of its papers together and with the closest few.
  *
  * @param name      the profile folder's name
  * @param emails    addresses from the folder's email.txt, in file order; empty if there is none
  * @param papers    one entry per readable PDF in the folder; never empty
- * @param clusters  the student's distinct interests: groups of mutually similar papers; every paper
- *                  belongs to exactly one
  * @param modelId   the {@code EmbeddingProvider} that produced every vector here; vectors from
  *                  different models are not comparable
  * @param updatedAt when the profile last changed (papers, addresses or model)
@@ -25,7 +24,6 @@ public record Profile(
         String name,
         List<String> emails,
         List<ProfilePaper> papers,
-        List<InterestCluster> clusters,
         String modelId,
         Instant updatedAt) {
 
@@ -38,7 +36,6 @@ public record Profile(
         }
         emails = List.copyOf(emails);
         papers = List.copyOf(papers);
-        clusters = List.copyOf(clusters);
     }
 
     /**
@@ -48,7 +45,7 @@ public record Profile(
      * @param relativePath  the PDF's path inside the profile folder
      * @param sha256        hash of the PDF's bytes; an unchanged file is never embedded twice
      * @param title         title as extracted from the PDF
-     * @param embedding     the paper's combined vector - what clustering and scoring use
+     * @param embedding     the paper's combined vector - what scoring uses
      * @param abstractView  embedding of title + abstract (SPECTER2's native input)
      * @param structureView embedding of title + section headings; empty if none were recognized
      * @param bodyView      mean embedding of title + sampled body passages; empty if no body text
@@ -78,17 +75,6 @@ public record Profile(
         /** Whether the paper's text was kept, so M6 can match its words without reading the PDF again. */
         public boolean hasText() {
             return abstractText.isPresent();
-        }
-    }
-
-    /**
-     * @param centroid      unit-length mean of the members' combined embeddings
-     * @param memberSha256s the {@link ProfilePaper#sha256()} of each paper in this interest
-     */
-    public record InterestCluster(float[] centroid, List<String> memberSha256s) {
-
-        public InterestCluster {
-            memberSha256s = List.copyOf(memberSha256s);
         }
     }
 }

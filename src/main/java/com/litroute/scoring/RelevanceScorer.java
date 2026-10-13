@@ -3,7 +3,6 @@ package com.litroute.scoring;
 import com.litroute.embedding.EmbeddingProvider;
 import com.litroute.model.PaperCandidate;
 import com.litroute.model.Profile;
-import com.litroute.model.Profile.InterestCluster;
 import com.litroute.model.Profile.ProfilePaper;
 import com.litroute.model.ReviewStatus;
 import com.litroute.model.ScoredPaper;
@@ -43,8 +42,9 @@ import java.util.stream.IntStream;
  * it has: its PDF if M2 saved a readable one, otherwise its title and abstract, otherwise its title.
  * <ul>
  *   <li><b>Meaning</b>: SPECTER2 vectors, like for like (a PDF's full vector with the papers' full
- *       vectors, an abstract with their abstract views), blending the similarity to the nearest of the
- *       student's interests (M5's clusters) with the mean similarity to the three closest papers.
+ *       vectors, an abstract with their abstract views), blending the similarity to the student's
+ *       papers taken together (their mean vector) with the mean similarity to the three closest papers.
+ *       A profile is uniform: one body of work.
  *   <li><b>Wording</b>: the words and word pairs the candidate shares with the student's papers,
  *       weighted by TF-IDF ({@link LexicalIndex}), blended the same way.
  * </ul>
@@ -58,13 +58,12 @@ import java.util.stream.IntStream;
  * batch, the best-scored research papers that clear a relevance floor are recommended.
  *
  * Why both signals: the eight reference students all work in structural and hazard engineering, so
- * SPECTER2 puts nearly every paper 0.85-0.95 from every student. Of the 46 readable papers the
- * professor filed by student (~/.litroute/match-test), meaning alone assigned 42 to their student and
- * got 81% of the students' top three right; wording alone 42 and 94%; both together 45 (44 from title
- * and abstract only) and every top three right. Holding out each of the 283 reference papers in turn,
- * both together put 84.5% with their own student (meaning alone 82%). Keeping only words that are not
- * common English, or training SPECTER2's vectors on the students' folders with a triplet loss, did not
- * do better.
+ * SPECTER2 puts nearly every paper 0.85-0.95 from every student. Of the 48 papers the professor
+ * filed by student (~/.litroute/match-test), scored from their full PDFs, meaning alone assigned 43 to
+ * their student and got 81% of the students' top three right; wording alone 43 and 88%; both together
+ * 46 and every top three right (from title and abstract only: 44 of 46, every top three right).
+ * Keeping only words that are not common English, or training SPECTER2's vectors on the students'
+ * folders with a triplet loss, did not do better.
  *
  * The scorer remembers the evidence it read for each candidate, so scoring a candidate again - by
  * another strategy, say - neither reads nor embeds it twice. Thread-safe: {@link #match} scores
@@ -77,7 +76,7 @@ public final class RelevanceScorer {
     /** Papers recommended per student and batch, unless the caller asks for another number. */
     public static final int RECOMMENDED_PER_STUDENT = 3;
     /** Share of a blend given to the student's papers as a whole; the rest goes to the closest papers. */
-    static final double INTEREST_WEIGHT = 0.5;
+    static final double PROFILE_WEIGHT = 0.5;
     static final int CLOSEST_PAPERS = 3;
     /** Two files whose vectors are this close hold the same paper, saved twice. */
     static final double SAME_PAPER = 0.99;
@@ -617,7 +616,7 @@ public final class RelevanceScorer {
     private record Neighbor(ProfilePaper paper, double similarity) {
     }
 
-    /** @param similarity the blend: nearest interest and closest papers */
+    /** @param similarity the blend: the papers as a whole and the closest papers */
     private record Closeness(double similarity, List<Neighbor> closest) {
     }
 
@@ -634,7 +633,7 @@ public final class RelevanceScorer {
                     distinct.add(paper);
                 }
             }
-            return new Index(profile, Space.of(profile, distinct, true), Space.of(profile, distinct, false));
+            return new Index(profile, new Space(distinct, true), new Space(distinct, false));
         }
 
         /** Full vectors for a candidate read from its PDF; abstract views for one known by title (and abstract). */
@@ -647,84 +646,30 @@ public final class RelevanceScorer {
         }
     }
 
-    /** One profile's papers as vectors of one kind, grouped into the profile's interests. */
+    /** One profile's papers as vectors of one kind, and the profile as a whole: their mean. */
     private static final class Space {
 
         final List<ProfilePaper> papers;
         final List<float[]> vectors;
-        final List<float[]> centroids;
+        /** Unit-length mean of the vectors; null when there are no papers. */
+        final float[] centroid;
         private final boolean fullText;
-        private final List<List<Integer>> interests;
 
-        private Space(List<ProfilePaper> papers, List<List<Integer>> interests, boolean fullText) {
+        Space(List<ProfilePaper> papers, boolean fullText) {
             this.papers = papers;
             this.fullText = fullText;
-            this.interests = interests;
             this.vectors = papers.stream().map(paper -> fullText ? paper.embedding() : paper.abstractView()).toList();
-            List<float[]> centroids = new ArrayList<>();
-            for (List<Integer> members : interests) {
-                centroids.add(Vectors.normalize(Vectors.mean(members.stream().map(vectors::get).toList())));
-            }
-            this.centroids = centroids;
-        }
-
-        static Space of(Profile profile, List<ProfilePaper> papers, boolean fullText) {
-            Map<String, Integer> indexBySha = new HashMap<>();
-            for (int i = 0; i < papers.size(); i++) {
-                indexBySha.putIfAbsent(papers.get(i).sha256(), i);
-            }
-            List<List<Integer>> interests = new ArrayList<>();
-            boolean[] grouped = new boolean[papers.size()];
-            for (InterestCluster cluster : profile.clusters()) {
-                List<Integer> members = new ArrayList<>();
-                for (String sha256 : cluster.memberSha256s()) {
-                    Integer index = indexBySha.get(sha256);
-                    if (index != null && !grouped[index]) {
-                        members.add(index);
-                        grouped[index] = true;
-                    }
-                }
-                if (!members.isEmpty()) {
-                    interests.add(members);
-                }
-            }
-            // A paper the stored clusters leave out (a hand-edited store) counts as an interest of its own.
-            for (int i = 0; i < papers.size(); i++) {
-                if (!grouped[i]) {
-                    interests.add(List.of(i));
-                }
-            }
-            return new Space(papers, interests, fullText);
+            this.centroid = papers.isEmpty() ? null : Vectors.normalize(Vectors.mean(vectors));
         }
 
         /** This space without the paper and any copy of it saved under another name. */
         Space without(ProfilePaper left) {
-            List<ProfilePaper> kept = new ArrayList<>();
-            Map<Integer, Integer> newIndex = new HashMap<>();
-            for (int i = 0; i < papers.size(); i++) {
-                ProfilePaper paper = papers.get(i);
-                if (!sameAs(paper, left)) {
-                    newIndex.put(i, kept.size());
-                    kept.add(paper);
-                }
-            }
-            List<List<Integer>> keptInterests = new ArrayList<>();
-            for (List<Integer> members : interests) {
-                List<Integer> remaining = members.stream().filter(newIndex::containsKey).map(newIndex::get).toList();
-                if (!remaining.isEmpty()) {
-                    keptInterests.add(remaining);
-                }
-            }
-            return new Space(kept, keptInterests, fullText);
+            return new Space(papers.stream().filter(paper -> !sameAs(paper, left)).toList(), fullText);
         }
 
         Closeness closeness(float[] candidate) {
             if (papers.isEmpty()) {
                 return new Closeness(0, List.of());
-            }
-            double nearestInterest = Double.NEGATIVE_INFINITY;
-            for (float[] centroid : centroids) {
-                nearestInterest = Math.max(nearestInterest, Vectors.cosine(candidate, centroid));
             }
             List<Neighbor> neighbors = new ArrayList<>();
             for (int i = 0; i < papers.size(); i++) {
@@ -733,7 +678,7 @@ public final class RelevanceScorer {
             neighbors.sort(Comparator.comparingDouble(Neighbor::similarity).reversed());
             List<Neighbor> closest = List.copyOf(neighbors.subList(0, Math.min(CLOSEST_PAPERS, neighbors.size())));
             double closestMean = closest.stream().mapToDouble(Neighbor::similarity).average().orElse(0);
-            double similarity = INTEREST_WEIGHT * nearestInterest + (1 - INTEREST_WEIGHT) * closestMean;
+            double similarity = PROFILE_WEIGHT * Vectors.cosine(candidate, centroid) + (1 - PROFILE_WEIGHT) * closestMean;
             return new Closeness(similarity, closest);
         }
     }

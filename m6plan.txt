@@ -1,0 +1,251 @@
+M6 PLAN - RELEVANCE SCORER
+LitRoute (CS5013), package com.litroute.scoring
+Updated 2026-10-14 to match the code as built.
+
+
+1. PURPOSE
+----------
+M6 decides which student each new paper is for. It takes the deduplicated papers of a batch
+(M4's output) and the students' profiles (M5's output). It assigns every paper to the one
+student it suits best, and recommends each student's best 2-3 papers to the professor. This
+follows the professor's requirement in the proposal: "we need 2-3 papers personalised
+individually to multiple students".
+
+
+2. REQUIREMENTS
+---------------
+R1  Each paper goes to exactly one student: the one it is most relevant to. No paper is routed
+    to several students.
+R2  Of each student's papers in a batch, the best 2-3 are recommended (default 3).
+R3  No paper is hidden. Every paper is returned and queued for review (M7e). One that is not
+    recommended carries a note saying why.
+R4  Only research papers are recommended. Book reviews, discussions and closures, corrections
+    and errata, retractions, editorials, obituaries, letters and comments are queued but never
+    recommended.
+R5  A paper that does not look like any student's work is not recommended, even if it is the
+    best a student got in that batch.
+R6  Every score comes with a readable rationale the professor can check in M8.
+R7  Acceptance criterion from the proposal: the papers recommended to each student are at
+    least 80% theirs (per-student precision of the top 3, P@3 >= 0.8).
+
+
+3. INPUTS AND OUTPUTS
+---------------------
+Input   Every student's Profile from M7d: reference papers with SPECTER2 vectors and text
+        (see m5plan.txt). Profiles must be built with the same model as the provider.
+Input   EmbeddingProvider: SPECTER2, to embed candidates exactly as the profiles were embedded.
+Input   The batch: deduplicated PaperCandidates from M7c, or local PDFs (LocalPdfCandidates).
+Output  Exactly one ScoredPaper per candidate, in batch order: the assigned student, a score
+        from 0 to 1, the rationale, status PENDING and a recommended flag. The CLI adds them to
+        the M7e review queue.
+
+
+4. SCORING METHOD
+-----------------
+4.1 Evidence
+    A candidate is scored from the best evidence it has:
+      FULL_TEXT   its PDF, if M2 saved a readable one. It is extracted and embedded exactly like
+                  a reference paper (M5's PdfTextExtractor and PaperEmbedder), using the
+                  candidate's own title, which is more reliable than one read off the PDF.
+      ABSTRACT    otherwise its title and abstract
+      TITLE       otherwise its title alone; scores from a title alone are less certain
+    Comparisons are like for like: a full PDF against the reference papers' combined vectors;
+    an abstract or title against their abstract views. The evidence read for a candidate is
+    cached, so scoring it again (by another strategy, say) does not read or embed it twice.
+
+4.2 Meaning signal (SPECTER2)
+    The candidate's similarity to a student is
+        0.5 x cosine to the student's centroid (the normalised mean of all their papers)
+      + 0.5 x mean cosine to the student's 3 closest papers.
+    The centroid captures the student's work as a whole. The closest papers let a candidate
+    that matches only part of it still score well. Profiles are uniform: there are no
+    interest clusters (see section 6).
+
+4.3 Wording signal (TF-IDF)
+    LexicalIndex builds TF-IDF vectors over every reference paper's title, abstract and body.
+    Terms are stemmed words and pairs of adjacent words ("rank aggregation"), after dropping
+    words shorter than 3 letters, English function words and boilerplate such as figure, table
+    and results. A dropped word separates its neighbours, so no pair spans it. Terms used in only
+    one paper (often extraction noise) or in more than half of all papers carry no information
+    about who a paper belongs to, and are left out.
+        idf = ln((N + 1) / (df + 1)) + 1,   tf weight = 1 + ln(count),   vectors unit length
+    A candidate's wording similarity to a student is blended the same way as meaning: half its
+    similarity to the student's papers taken together, half the mean of the 3 closest papers.
+
+4.4 Fit and share: how much of the paper belongs to each student
+    Each signal is turned into z-scores across the students, and the two are averaged into the
+    paper's fit with each student. This means a paper close to every student, such as civil
+    engineering in general, stands out for nobody. The share is softmax(2 x fit): the fraction
+    of the paper's match that goes to each student. A sharpness of 2 gives a clear match most of
+    the share (0.6-0.85) without hiding the runner-up.
+
+4.5 Relevance: how much the paper looks like the student's own work
+    Relevance is absolute, not relative to the other students. For each signal and each kind of
+    evidence, two anchors are measured from the profiles themselves. Each reference paper is
+    held out in turn and compared, as a candidate would be, with what remains. The median
+    similarity to its own student is the "own" anchor; the median to other students is the
+    "other" anchor. Each signal's similarity is placed on the scale where "other" is 0 and
+    "own" is 1. The two positions are averaged and passed through a logistic curve, giving
+    about 0.9 at a typical own paper and about 0.1 at a typical other student's paper. Title
+    evidence is calibrated with the reference papers' titles embedded on their own. Fixed
+    fallback anchors, measured on the eight reference profiles, are used only when the loaded
+    profiles cannot provide their own (a single student, or students with one paper each).
+
+4.6 Score
+    score = relevance x share. A paper is assigned to the student with the highest score.
+
+4.7 Duplicates
+    Two reference files with the same SHA-256, or vectors at cosine >= 0.99, are the same
+    paper saved twice and count once, both when comparing and when calibrating.
+
+
+5. ASSIGNMENT AND RECOMMENDATION (RelevanceScorer.match)
+--------------------------------------------------------
+1. Score every candidate for every student, in parallel, and keep its best student (R1).
+2. Not recommended, with a note:
+     - a note rather than a research paper: recognised from the alert's section label (e.g.
+       ASCE's "Book Reviews", "Discussions and Closures", "Corrections") or from the title
+       ("Erratum for ...", "Discussion of ...", "Closure to ...") (R4);
+     - relevance below 0.50 - the paper looks no more like this student's papers than like
+       other students' papers (R5).
+3. Of each student's remaining papers, the 3 best-scored are recommended (R2). The rest get
+   the note "<student> has 3 better-scored papers in this batch".
+4. Return every paper, recommended or not (R3).
+
+Rationale (R6), in this form:
+    Best match: <share>% of the paper's match goes to <student> (next: <runner-up> <share>%).
+    Relevance <r> (a student's own papers typically 0.9, other students' 0.1).
+    Shared words: <up to 5>. Closest in <student>: "<title>" (<similarity>), ... (3 papers)
+    Scored from <its full PDF | its title and abstract | its title alone>.
+    [Not recommended: <reason>]
+
+Why the floor is a fixed 0.50: a floor set per kind of evidence (the 5th percentile of
+students' own held-out papers) was tried first. For title-only evidence it came to 0.25, and
+it let through a SpringerOpen paper on ceramic coatings that the professor had marked
+irrelevant (relevance 0.29 from its title alone). 0.50 is the midpoint between "like other
+students' papers" and "like this student's own".
+
+
+6. DESIGN DECISIONS, AS MEASURED
+--------------------------------
+Every choice below was measured on the professor's own data. The test set is
+~/.litroute/match-test: 48 new PDFs filed by the professor under the student each should reach
+(46 readable, 2 scans). They were scored against the eight full profiles (294 papers).
+"Correct" means assigned to the student the paper is filed under.
+
+Current code, by strategy:
+                                   correct      P@3
+    Full PDF (48 papers)
+        SPECTER2 meaning only      43 / 48      0.81
+        TF-IDF wording only        43 / 48      0.88
+        Both (what M6 uses)        46 / 48      1.00     20 recommended, all 20 correct
+    Title + abstract only (46 readable papers, as for a paywalled alert paper)
+        SPECTER2 meaning only      42 / 46      0.81
+        TF-IDF wording only        44 / 46      1.00
+        Both (what M6 uses)        44 / 46      1.00
+
+Decisions
+- Combine meaning and wording. The first M6 used SPECTER2 alone and routed papers to several
+  students. It placed 42 of 48 at the right student, sent each paper to 2.3 students on
+  average, and reached P@3 0.65, below the 0.8 criterion. The eight students all work in
+  structural and hazard engineering, so SPECTER2 puts nearly every paper 0.85-0.95 from every
+  student. Wording separates neighbouring fields better, and both together do best.
+- One student per paper (R1), on the professor's instruction.
+- Keyword-only wording (dropping all general English vocabulary) was tried and rejected. It
+  was no better than plain TF-IDF and worse on title-only alerts, because general-English word
+  lists also contain domain words such as earthquake, fire, flood and risk.
+- Fine-tuning SPECTER2 on the students' folders with a triplet loss (the transferable idea of
+  the SEMFormer paper, MM '24) was tried and rejected: 82.3% vs 81.6% in 5-fold
+  cross-validation, no real gain.
+- Interest clustering of profiles was removed on 2026-10-14. With and without it, the results
+  were identical: 46/48, P@3 1.00, 20 of 20 recommendations correct. Uniform profiles are
+  simpler.
+- A fixed relevance floor of 0.50 instead of a per-evidence percentile (section 5).
+
+
+7. COMPONENTS
+-------------
+RelevanceScorer     The matcher: evidence, both signals, calibration, scoring, match(). Thread-safe.
+                    Strategies: SEMANTIC, LEXICAL, HYBRID (the default); the other two exist for
+                    comparison.
+LexicalIndex        TF-IDF index over the reference papers; closeness of a text to each student;
+                    the shared terms quoted in rationales.
+Terms               Text -> countable terms: case and accent folding, stop words and boilerplate,
+                    stemming, adjacent-word pairs.
+LocalPdfCandidates  Turns a PDF that did not come from an alert into a candidate, to see where it
+                    would be routed.
+MatchEvaluation     Agreement with the professor's filing: papers assigned correctly, and P@3.
+                    A student's P@3 counts at most as many recommendations as papers filed for
+                    them, so a student with one filed paper is judged on one.
+RelevanceScorerCli  Command-line entry point (section 8).
+The constructor rejects profiles built with another model. When scoring uses wording, it also
+rejects profiles saved without their text (rebuild them with ProfileBuilderCli first).
+
+
+8. RUNNING IT
+-------------
+    mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli [-Dexec.args=--top=2]
+        Matches the deduplicated papers in M7c against the M7d profiles, adds the matches to the
+        M7e review queue, and lists each student's recommended papers.
+
+    mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli -Dexec.args="PDF_OR_FOLDER [--top=2]"
+        Scores each PDF for every student and changes nothing. If the subfolders are named
+        after students (FOLDER/RP3-mf-sim/x.pdf), it also compares the three strategies on
+        papers assigned correctly and P@3.
+
+
+9. TEST PLAN
+------------
+Real data only: the real SPECTER2 model, the students' real profiles, the papers the professor
+filed by student, and the client's six real alert emails run through M2-M4 offline from
+recorded HTTP replies.
+
+RelevanceScorerTest
+  - Every paper is matched to exactly one student.
+  - Filed papers reach their student: at least 95% of the readable ones and 90% of all.
+  - Title and abstract alone still find the student for at least 90%.
+  - Recommendations meet the proposal's target: P@3 >= 0.8, from full text and from title and
+    abstract.
+  - No student gets more than the requested number of recommendations (3, and 2 when asked).
+  - Words and meaning together do at least as well as SPECTER2 alone on both papers assigned
+    correctly and P@3, and better on at least one of them.
+  - Every score is between 0 and 1, best first, and explained.
+  - A student's own reference paper, offered as a candidate, scores best for that student.
+  - A blank profile scores zero instead of failing.
+  - Profiles from another model are rejected; profiles without text are rejected unless
+    scoring by meaning alone.
+  - The client's alert papers: each goes to one student; the SpringerOpen paper the professor
+    called irrelevant is not recommended, the SSI review the professor called highly relevant
+    is, and the ASCE issue's two book reviews, discussion, closure and erratum never are.
+LexicalIndexTest    A held-out reference paper is closest to its own student; shared terms name
+                    what a paper and a student have in common.
+TermsTest           Stop words and boilerplate dropped; hyphenated words kept whole; adjacent
+                    pairs formed but not across a dropped word; plurals and accents folded.
+
+Status: all pass on the full profiles (the whole suite, 199 tests).
+
+
+10. KNOWN WEAKNESSES
+--------------------
+- The two misses on the full profiles:
+    - "Adnan et al (2024) reportD2.2" (filed RP4) is a scan with no text, so only its file name
+      could be matched; it went to RP7.
+    - "Multi-hazard disaster scenario method and emergency management for urban resilience"
+      (filed RP4) went to RP1. It sits between multi-hazard characterisation and multi-hazard
+      risk.
+- Neighbouring students are where errors happen: RP5 wildfire risk vs RP6 wildfire emissions,
+  RP3 multi-fidelity simulation vs RP8 uncertainty quantification, and RP1 vs RP4. With only
+  5-7 papers per student these pairs were often mixed up (35 of 48 correct); with the full
+  folders only the RP4/RP1 paper above is.
+- Title-only alert papers are scored from much less evidence, so their scores are less
+  certain; the rationale says so, and they must still reach relevance 0.50 to be recommended.
+
+
+11. NEXT STEPS
+--------------
+- M9 to run match() on each new batch and add the results to M7e automatically, replacing the
+  manual CLI run.
+- M8 to show the rationale beside each paper so the professor can approve or drop it.
+- Use the professor's approve/drop decisions from M8 as labelled data to re-check the 0.50
+  floor and the share sharpness on real batches.
+- OCR for scanned PDFs, which today are matched by file name only.

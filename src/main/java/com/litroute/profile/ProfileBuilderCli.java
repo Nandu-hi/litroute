@@ -2,7 +2,6 @@ package com.litroute.profile;
 
 import com.litroute.embedding.Specter2EmbeddingProvider;
 import com.litroute.model.Profile;
-import com.litroute.model.Profile.InterestCluster;
 import com.litroute.model.Profile.ProfilePaper;
 import com.litroute.profile.ProfileBuilder.BuildReport;
 import com.litroute.profile.ProfileBuilder.ProfileReport;
@@ -10,6 +9,8 @@ import com.litroute.profile.ProfileBuilder.SkippedPdf;
 import com.litroute.store.ProfileStore;
 import com.litroute.util.Vectors;
 import java.nio.file.Path;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -21,8 +22,8 @@ import java.util.Map;
  * </pre>
  *
  * PROFILES_DIR defaults to ~/.litroute/profiles. Besides what changed, it prints how similar each
- * profile's papers are to one another and how they were grouped into interests, which is what
- * {@link EmbeddingClusterer#MERGE_SIMILARITY} is tuned from.
+ * profile's papers are to one another and how close each is to the profile as a whole (the mean of
+ * its papers' vectors), so a paper that does not fit its student stands out.
  */
 public final class ProfileBuilderCli {
 
@@ -52,7 +53,7 @@ public final class ProfileBuilderCli {
                 System.out.printf("  skipped %s: %s%n", skipped.relativePath(), skipped.reason());
             }
             if (profileReport.stored()) {
-                printClusters(profiles.get(profileReport.name()));
+                printPapers(profiles.get(profileReport.name()));
             } else {
                 System.out.println("  no readable PDF - profile not saved");
             }
@@ -62,7 +63,7 @@ public final class ProfileBuilderCli {
         }
     }
 
-    private static void printClusters(Profile profile) {
+    private static void printPapers(Profile profile) {
         var papers = profile.papers();
         double min = 1;
         double max = -1;
@@ -80,15 +81,14 @@ public final class ProfileBuilderCli {
         if (pairs > 0) {
             System.out.printf("  paper-to-paper similarity: min %.3f, mean %.3f, max %.3f%n", min, sum / pairs, max);
         }
-        System.out.printf("  %d interest(s) at merge threshold %.2f:%n", profile.clusters().size(),
-                EmbeddingClusterer.MERGE_SIMILARITY);
-        for (InterestCluster cluster : profile.clusters()) {
-            System.out.println("  -");
-            for (String sha256 : cluster.memberSha256s()) {
-                ProfilePaper paper = papers.stream().filter(p -> p.sha256().equals(sha256)).findFirst().orElseThrow();
-                System.out.printf("      %.3f  %s  (%s)%n", Vectors.cosine(paper.embedding(), cluster.centroid()),
-                        paper.title(), paper.relativePath());
-            }
+        float[] whole = Vectors.normalize(Vectors.mean(papers.stream().map(ProfilePaper::embedding).toList()));
+        System.out.println("  similarity of each paper to the profile as a whole:");
+        List<ProfilePaper> byFit = papers.stream()
+                .sorted(Comparator.comparingDouble((ProfilePaper paper) -> Vectors.cosine(paper.embedding(), whole)).reversed())
+                .toList();
+        for (ProfilePaper paper : byFit) {
+            System.out.printf("      %.3f  %s  (%s)%n", Vectors.cosine(paper.embedding(), whole), paper.title(),
+                    paper.relativePath());
         }
     }
 }

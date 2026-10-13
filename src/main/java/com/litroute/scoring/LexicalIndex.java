@@ -141,7 +141,7 @@ final class LexicalIndex {
             neighbors.sort(Comparator.comparingDouble(Neighbor::similarity).reversed());
             List<Neighbor> closest = List.copyOf(neighbors.subList(0, Math.min(RelevanceScorer.CLOSEST_PAPERS, neighbors.size())));
             double closestMean = closest.stream().mapToDouble(Neighbor::similarity).average().orElse(0);
-            double similarity = RelevanceScorer.INTEREST_WEIGHT * centroid + (1 - RelevanceScorer.INTEREST_WEIGHT) * closestMean;
+            double similarity = RelevanceScorer.PROFILE_WEIGHT * centroid + (1 - RelevanceScorer.PROFILE_WEIGHT) * closestMean;
             result.put(name, new Closeness(similarity, closest));
         });
         return result;
