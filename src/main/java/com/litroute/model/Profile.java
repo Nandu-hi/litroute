@@ -16,6 +16,9 @@ import java.util.Optional;
  * @param name      the profile folder's name
  * @param emails    addresses from the folder's email.txt, in file order; empty if there is none
  * @param papers    one entry per readable PDF in the folder; never empty
+ * @param keywords  what the student works on, in a few words: the author keywords of their papers that
+ *                  the most of their papers are about, most first (see {@code ProfileKeywords}); empty
+ *                  if none of the papers lists keywords, or the profile was saved before they were kept
  * @param modelId   the {@code EmbeddingProvider} that produced every vector here; vectors from
  *                  different models are not comparable
  * @param updatedAt when the profile last changed (papers, addresses or model)
@@ -24,6 +27,7 @@ public record Profile(
         String name,
         List<String> emails,
         List<ProfilePaper> papers,
+        List<String> keywords,
         String modelId,
         Instant updatedAt) {
 
@@ -36,6 +40,12 @@ public record Profile(
         }
         emails = List.copyOf(emails);
         papers = List.copyOf(papers);
+        keywords = List.copyOf(keywords);
+    }
+
+    /** A profile without keywords. */
+    public Profile(String name, List<String> emails, List<ProfilePaper> papers, String modelId, Instant updatedAt) {
+        this(name, emails, papers, List.of(), modelId, updatedAt);
     }
 
     /**
@@ -53,6 +63,8 @@ public record Profile(
      *                      matches its words. Empty if the profile was saved before text was kept.
      * @param bodyText      the headings and sampled body passages as read from the PDF (see
      *                      {@code PaperText#bodyText}), possibly blank; empty exactly when abstractText is
+     * @param keywords      the keywords its authors listed, possibly none; empty if the profile was saved
+     *                      before keywords were kept
      */
     public record ProfilePaper(
             String relativePath,
@@ -63,18 +75,48 @@ public record Profile(
             Optional<float[]> structureView,
             Optional<float[]> bodyView,
             Optional<String> abstractText,
-            Optional<String> bodyText) {
+            Optional<String> bodyText,
+            Optional<List<String>> keywords) {
+
+        public ProfilePaper {
+            keywords = keywords.map(List::copyOf);
+        }
+
+        /** A paper whose author keywords were not read. */
+        public ProfilePaper(String relativePath, String sha256, String title, float[] embedding, float[] abstractView,
+                Optional<float[]> structureView, Optional<float[]> bodyView, Optional<String> abstractText,
+                Optional<String> bodyText) {
+            this(relativePath, sha256, title, embedding, abstractView, structureView, bodyView, abstractText, bodyText,
+                    Optional.empty());
+        }
 
         /** A paper whose text was not kept: its vectors only. */
         public ProfilePaper(String relativePath, String sha256, String title, float[] embedding, float[] abstractView,
                 Optional<float[]> structureView, Optional<float[]> bodyView) {
             this(relativePath, sha256, title, embedding, abstractView, structureView, bodyView, Optional.empty(),
-                    Optional.empty());
+                    Optional.empty(), Optional.empty());
         }
 
         /** Whether the paper's text was kept, so M6 can match its words without reading the PDF again. */
         public boolean hasText() {
             return abstractText.isPresent();
+        }
+
+        /** Whether the PDF was read for its author keywords (it may have had none). */
+        public boolean hasKeywords() {
+            return keywords.isPresent();
+        }
+
+        /** The same paper with its text and author keywords as read from the PDF; the vectors are kept. */
+        public ProfilePaper withText(String abstractText, String bodyText, List<String> keywords) {
+            return new ProfilePaper(relativePath, sha256, title, embedding, abstractView, structureView, bodyView,
+                    Optional.of(abstractText), Optional.of(bodyText), Optional.of(keywords));
+        }
+
+        /** The same paper, found at another path in a profile folder. */
+        public ProfilePaper at(String relativePath) {
+            return new ProfilePaper(relativePath, sha256, title, embedding, abstractView, structureView, bodyView,
+                    abstractText, bodyText, keywords);
         }
     }
 }

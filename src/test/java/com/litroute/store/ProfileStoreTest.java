@@ -85,6 +85,31 @@ public class ProfileStoreTest {
     }
 
     /**
+     * A store written before keywords were kept still loads: its profiles have none, and its papers are
+     * marked as not yet read for them (M5 adds them), unlike a paper read for keywords that lists none.
+     */
+    @Test
+    public void storeSavedBeforeKeywordsWereKeptStillLoads() throws IOException {
+        Profile built = TestProfiles.profiles().values().iterator().next();
+        Path file = Files.createTempDirectory("litroute-test").resolve("profiles.json");
+        ProfileStore store = new ProfileStore(file);
+        store.save(built);
+        // What M5 wrote then: the same profile without its keywords or its papers' keywords.
+        ObjectMapper json = new ObjectMapper();
+        ObjectNode saved = (ObjectNode) json.readTree(file.toFile());
+        ObjectNode entry = (ObjectNode) saved.get(built.name());
+        entry.remove("keywords");
+        entry.path("papers").forEach(paper -> ((ObjectNode) paper).remove("keywords"));
+        json.writeValue(file.toFile(), saved);
+
+        Profile loaded = store.load(built.name()).orElseThrow();
+        assertTrue(loaded.keywords().isEmpty());
+        assertTrue(loaded.papers().stream().noneMatch(ProfilePaper::hasKeywords));
+        assertTrue("a real build reads every paper's keywords", built.papers().stream().allMatch(ProfilePaper::hasKeywords));
+        assertTrue("some real paper lists none", built.papers().stream().anyMatch(p -> p.keywords().orElseThrow().isEmpty()));
+    }
+
+    /**
      * A store written while M5 split profiles into interest clusters still loads, with nothing lost but
      * the clusters, and the next write leaves them out.
      */
@@ -117,12 +142,14 @@ public class ProfileStoreTest {
     }
 
     private static Profile renamed(Profile profile, String name) {
-        return new Profile(name, profile.emails(), profile.papers(), profile.modelId(), profile.updatedAt());
+        return new Profile(name, profile.emails(), profile.papers(), profile.keywords(), profile.modelId(),
+                profile.updatedAt());
     }
 
     private static void assertSameProfile(Profile expected, Profile actual) {
         assertEquals(expected.name(), actual.name());
         assertEquals(expected.emails(), actual.emails());
+        assertEquals(expected.keywords(), actual.keywords());
         assertEquals(expected.modelId(), actual.modelId());
         assertEquals(expected.updatedAt(), actual.updatedAt());
         assertEquals(expected.papers().size(), actual.papers().size());
@@ -140,6 +167,7 @@ public class ProfileStoreTest {
             e.bodyView().ifPresent(v -> assertArrayEquals(v, a.bodyView().get(), 0f));
             assertEquals(e.abstractText(), a.abstractText());
             assertEquals(e.bodyText(), a.bodyText());
+            assertEquals(e.keywords(), a.keywords());
         }
     }
 }

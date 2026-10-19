@@ -69,7 +69,7 @@ import java.util.stream.IntStream;
  * another strategy, say - neither reads nor embeds it twice. Thread-safe: {@link #match} scores
  * candidates in parallel.
  */
-public final class RelevanceScorer {
+public final class RelevanceScorer implements PaperMatcher {
 
     private static final Logger LOG = Logger.getLogger(RelevanceScorer.class.getName());
 
@@ -269,24 +269,28 @@ public final class RelevanceScorer {
      *
      * @see #match(List, int, Strategy)
      */
-    public List<ScoredPaper> match(List<PaperCandidate> batch) {
+    @Override
+    public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch) {
         return match(batch, RECOMMENDED_PER_STUDENT, strategy);
     }
 
     /** @see #match(List, int, Strategy) */
-    public List<ScoredPaper> match(List<PaperCandidate> batch, int perStudent) {
+    public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch, int perStudent) {
         return match(batch, perStudent, strategy);
     }
 
     /**
      * Matches a batch of deduplicated papers to students: exactly one {@link ScoredPaper} per candidate,
-     * in batch order, for the student it scores highest for. Of each student's papers, the
-     * {@code perStudent} best-scored are recommended - provided they are research papers (not book
-     * reviews, discussions, corrections and the like) whose relevance reaches {@link #RELEVANCE_FLOOR}.
-     * Every paper is returned either way, so none disappears before the professor has seen it once;
-     * the rationale of one that is not recommended says why.
+     * for the student it scores highest for. Of each student's papers, the {@code perStudent}
+     * best-scored are recommended - provided they are research papers (not book reviews, discussions,
+     * corrections and the like) whose relevance reaches {@link #RELEVANCE_FLOOR}. Every paper is
+     * returned either way, so none disappears before the professor has seen it once; the rationale of
+     * one that is not recommended says why.
+     *
+     * @return every student, in the order the profiles were given, mapped to the papers assigned to
+     *         them, highest score first (see {@link PaperMatcher#match})
      */
-    public List<ScoredPaper> match(List<PaperCandidate> batch, int perStudent, Strategy byStrategy) {
+    public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch, int perStudent, Strategy byStrategy) {
         if (perStudent < 1) {
             throw new IllegalArgumentException("perStudent must be at least 1, was " + perStudent);
         }
@@ -318,9 +322,15 @@ public final class RelevanceScorer {
                 }
             }
         });
-        return IntStream.range(0, best.size())
-                .mapToObj(i -> best.get(i).toScoredPaper(recommended[i], notes[i] == null ? "" : notes[i]))
-                .toList();
+        Map<String, List<ScoredPaper>> byStudent = new LinkedHashMap<>();
+        indexes.forEach(index -> byStudent.put(index.profile().name(), new ArrayList<>()));
+        for (int i = 0; i < best.size(); i++) {
+            ScoredPaper scored = best.get(i).toScoredPaper(recommended[i], notes[i] == null ? "" : notes[i]);
+            byStudent.get(scored.profileName()).add(scored);
+        }
+        byStudent.replaceAll((name, papers) -> papers.stream()
+                .sorted(Comparator.comparingDouble(ScoredPaper::score).reversed()).toList());
+        return byStudent;
     }
 
     /** Whether the candidate is a research paper rather than a note about one (a discussion, erratum, review of a book...). */

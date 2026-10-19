@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -72,13 +71,13 @@ public final class RelevanceScorerCli {
             System.out.println("No deduplicated papers in M7c yet: run the alert pipeline first.");
             return;
         }
-        List<ScoredPaper> matches = scorer.match(deduplicated, top);
-        List<ScoredPaper> queue = ScoredQueueStore.atDefaultLocation().addAll(matches);
+        Map<String, List<ScoredPaper>> matches = scorer.match(deduplicated, top);
+        ScoredQueueStore store = ScoredQueueStore.atDefaultLocation();
+        List<ScoredPaper> queue = store.addAll(matches);
         int recommended = 0;
-        for (String student : profiles.keySet()) {
-            List<ScoredPaper> own = matches.stream().filter(match -> match.profileName().equals(student))
-                    .sorted(Comparator.comparing(ScoredPaper::recommended).thenComparing(ScoredPaper::score).reversed())
-                    .toList();
+        for (Map.Entry<String, List<ScoredPaper>> entry : matches.entrySet()) {
+            String student = entry.getKey();
+            List<ScoredPaper> own = entry.getValue();
             long picked = own.stream().filter(ScoredPaper::recommended).count();
             recommended += (int) picked;
             System.out.printf("%n%s: %d recommended of %d matched%n", student, picked, own.size());
@@ -91,8 +90,9 @@ public final class RelevanceScorerCli {
                 System.out.printf("    (%d more queued, not recommended)%n", own.size() - picked);
             }
         }
-        System.out.printf("%n%d papers matched, each to one student; %d recommended; the review queue now holds %d.%n",
-                deduplicated.size(), recommended, queue.size());
+        System.out.printf("%n%d papers matched, each to one student; %d recommended; the review queue now holds %d.%n"
+                + "Matched PDFs are in %s%n", deduplicated.size(), recommended, queue.size(),
+                store.pdfRoot());
     }
 
     /**
@@ -137,7 +137,7 @@ public final class RelevanceScorerCli {
                 top);
         List<PaperCandidate> filed = new ArrayList<>(filedUnder.keySet());
         for (Strategy strategy : Strategy.values()) {
-            List<ScoredPaper> matches = scorer.match(filed, top, strategy);
+            Map<String, List<ScoredPaper>> matches = scorer.match(filed, top, strategy);
             System.out.printf(Locale.ROOT, "  %-8s %d of %d assigned to the student they are filed under; precision of "
                     + "the students' recommendations %.2f%n", strategy, MatchEvaluation.assignedCorrectly(matches, filedUnder),
                     filed.size(), MatchEvaluation.recommendationPrecision(matches, filedUnder, top));

@@ -14,15 +14,19 @@ import com.litroute.profile.ProfileBuilder.ProfileReport;
 import com.litroute.profile.ProfileBuilder.SkippedPdf;
 import com.litroute.testing.TestProfiles;
 import com.litroute.testing.TestProfiles.Workspace;
+import com.litroute.util.Titles;
 import com.litroute.util.Vectors;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 import org.junit.Test;
 
@@ -55,6 +59,7 @@ public class ProfileBuilderTest {
                 assertFalse(paper.title().isBlank());
                 assertTrue(paper.relativePath(), paper.hasText());
                 assertFalse(paper.relativePath(), paper.abstractText().orElseThrow().isBlank());
+                assertTrue(paper.relativePath(), paper.hasKeywords());
             }
         }
     }
@@ -217,6 +222,67 @@ public class ProfileBuilderTest {
         assertTrue(report.stored());
         assertEquals(0, report.embedded());
         assertEquals(source.papers().size(), report.reused());
+    }
+
+    /**
+     * Each profile keeps the keywords its papers list: only keywords one of them lists, at most
+     * {@value ProfileKeywords#MAX_KEYWORDS}, the one the most papers list first - and some for every
+     * student, since every test student has papers that list keywords.
+     */
+    @Test
+    public void eachProfileKeepsTheKeywordsItsPapersListMost() {
+        for (Profile profile : TestProfiles.profiles().values()) {
+            Map<String, Integer> lists = new HashMap<>();
+            Set<String> titles = new HashSet<>();
+            for (ProfilePaper paper : profile.papers()) {
+                if (titles.add(Titles.compact(paper.title()))) {
+                    paper.keywords().orElseThrow().stream().map(ProfileKeywords::key).distinct()
+                            .forEach(key -> lists.merge(key, 1, Integer::sum));
+                }
+            }
+            assumeTrue(profile.name() + " has no paper listing keywords", !lists.isEmpty());
+
+            List<String> keywords = profile.keywords();
+            assertFalse(profile.name(), keywords.isEmpty());
+            assertTrue(profile.name() + ": " + keywords, keywords.size() <= ProfileKeywords.MAX_KEYWORDS);
+            for (String keyword : keywords) {
+                assertTrue(profile.name() + ": " + keyword, lists.containsKey(ProfileKeywords.key(keyword)));
+            }
+            assertEquals(profile.name() + ": " + keywords, Collections.max(lists.values()),
+                    lists.get(ProfileKeywords.key(keywords.get(0))));
+            assertEquals(keywords.size(), keywords.stream().map(ProfileKeywords::key).distinct().count());
+        }
+    }
+
+    /**
+     * A store saved before keywords were kept gets them on the next sync, read from the PDFs, with the
+     * vectors and text reused rather than recomputed, and the same keywords as a fresh build.
+     */
+    @Test
+    public void keywordsMissingFromAnOlderStoreAreAddedWithoutReembedding() throws IOException {
+        Workspace workspace = TestProfiles.freshWorkspace();
+        Map<String, Profile> saved = workspace.store().loadAll();
+        Profile stored = saved.get(smallestProfile().name());
+        List<ProfilePaper> withoutKeywords = stored.papers().stream()
+                .map(p -> new ProfilePaper(p.relativePath(), p.sha256(), p.title(), p.embedding(), p.abstractView(),
+                        p.structureView(), p.bodyView(), p.abstractText(), p.bodyText()))
+                .toList();
+        workspace.store().save(new Profile(stored.name(), stored.emails(), withoutKeywords, stored.modelId(),
+                stored.updatedAt()));
+
+        ProfileReport report = reportFor(workspace.builder().syncAll(), stored.name());
+
+        assertEquals(0, report.embedded());
+        assertTrue(report.textAdded() > 0);
+        Profile updated = workspace.store().load(stored.name()).orElseThrow();
+        assertEquals(stored.keywords(), updated.keywords());
+        for (int i = 0; i < stored.papers().size(); i++) {
+            ProfilePaper before = stored.papers().get(i);
+            ProfilePaper after = updated.papers().get(i);
+            assertEquals(before.keywords(), after.keywords());
+            assertEquals(before.abstractText(), after.abstractText());
+            assertArrayEquals(before.embedding(), after.embedding(), 0f);
+        }
     }
 
     /**

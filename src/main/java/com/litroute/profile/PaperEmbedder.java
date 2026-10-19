@@ -57,12 +57,12 @@ public final class PaperEmbedder {
         return new Embedding(combine(abstractView, structureView, bodyView), abstractView, structureView, bodyView);
     }
 
-    /** A profile's reference paper: its views and text, plus where it came from. */
+    /** A profile's reference paper: its views, text and author keywords, plus where it came from. */
     public ProfilePaper embed(PaperText text, String relativePath, String sha256) {
         Embedding embedding = embed(text);
         return new ProfilePaper(relativePath, sha256, text.title(), embedding.combined(), embedding.abstractView(),
                 embedding.structureView(), embedding.bodyView(), Optional.of(text.abstractText()),
-                Optional.of(text.bodyText()));
+                Optional.of(text.bodyText()), Optional.of(text.keywords()));
     }
 
     /** Weighted blend of the views, unit length; a missing view's weight goes proportionally to the others. */

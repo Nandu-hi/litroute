@@ -14,8 +14,8 @@ The module's design and implementation plan, with the reasons for each decision,
 |---|---|---|
 | **Input** | The profiles folder (default `~/.litroute/profiles`, from [ProfileBuilder.defaultProfilesRoot()](ProfileBuilder.java#L95)) | One subfolder per student, named after the student. Inside: their reference PDFs (subfolders are read too) and an optional `email.txt` with the addresses M10 sends approved papers to. |
 | **Input** | [EmbeddingProvider](../embedding/EmbeddingProvider.java) | The embedding model (in practice [Specter2EmbeddingProvider](../embedding/Specter2EmbeddingProvider.java)): `embed(title, text)` and a `modelId()`. |
-| **Output** | [Profile](../model/Profile.java) per folder, saved in M7d (`~/.litroute/data/profiles.json`) | `name`, `emails`, `papers` (a [ProfilePaper](../model/Profile.java#L57) each: path, SHA-256, title, combined vector, the three view vectors, abstract and body text), `modelId`, `updatedAt`. |
-| **Output** | [BuildReport](ProfileBuilder.java#L79) | Per folder: how many PDFs were embedded, reused, given their text, skipped (and why), the addresses, and whether a profile was stored. Plus the profiles removed because their folder is gone. |
+| **Output** | [Profile](../model/Profile.java) per folder, saved in M7d (`~/.litroute/data/profiles.json`) | `name`, `emails`, `papers` (a [ProfilePaper](../model/Profile.java#L57) each: path, SHA-256, title, combined vector, the three view vectors, abstract and body text, author keywords), `keywords` (the student's, from [ProfileKeywords](ProfileKeywords.java)), `modelId`, `updatedAt`. |
+| **Output** | [BuildReport](ProfileBuilder.java#L79) | Per folder: how many PDFs were embedded, reused, read again for their text or keywords, skipped (and why), the addresses, and whether a profile was stored. Plus the profiles removed because their folder is gone. |
 
 **The folder is the source of truth.** Adding a folder adds a profile, adding or replacing a PDF updates it, deleting the folder removes the profile at the next sync.
 
@@ -53,8 +53,9 @@ Profile in M7d  +  BuildReport
    - read `email.txt` ([readEmails](ProfileBuilder.java#L238)): one or more addresses per line, comma/semicolon/space separated; `#` lines and blanks ignored; non-addresses logged and dropped; duplicates (ignoring case) kept once;
    - walk every non-hidden `*.pdf`, sorted, and hash it;
    - a duplicate within the folder is skipped; a known hash is reused (with its new relative path); an unknown one is extracted and embedded, with progress logged since this takes seconds per PDF;
-   - a known paper saved **before text was kept** has its PDF read again for the text, but its vectors are kept: nothing is re-embedded.
-4. **Save only real changes.** A profile is saved if it is new, gained text, or differs in model, addresses or files (path + hash). An unchanged profile keeps its `updatedAt`. Each changed profile is saved as soon as it is rebuilt, so an interrupted run keeps the finished ones.
+   - a known paper saved **before text or keywords were kept** has its PDF read again for them, but its vectors (and any text already kept) are kept: nothing is re-embedded;
+   - the student's **keywords** are ranked from the papers' author keywords ([ProfileKeywords](ProfileKeywords.java), below).
+4. **Save only real changes.** A profile is saved if it is new, gained text or keywords, or differs in model, addresses, files (path + hash) or keywords. An unchanged profile keeps its `updatedAt`. Each changed profile is saved as soon as it is rebuilt, so an interrupted run keeps the finished ones.
 5. **Remove orphans.** A saved profile whose folder no longer exists is deleted from the store.
 
 ### [PdfTextExtractor](PdfTextExtractor.java): PDF → `PaperText`
@@ -66,12 +67,13 @@ PDFs carry no structure, only positioned glyphs, so the parts of a paper are rec
 - **Title:** the PDF's metadata title, if it is a real title (not a file name or a tool leftover) and approximately appears on the first pages. Otherwise the largest-font run of lines on page 1 that is clearly larger than the body text and isn't journal branding or an Elsevier masthead. Falls back to the file name.
 - **Abstract:** the text after an "Abstract" (or "Executive Summary") heading, searched for in the first 10 pages, up to keywords, "Introduction" or the next numbered heading. Without one, the opening body text stands in for it.
 - **Headings:** short lines set in bold or larger than the body text, that are numbered or lead into a paragraph (bold labels inside figures and tables don't).
+- **Keywords:** the list after a "Keywords", "Author keywords", "Key words and phrases" or "Index Terms" label on the first two pages, in the three layouts journals use: run in and separated (`;`, `,`, `·`, `•`, `|`), wrapping over lines, even inside a keyword (ASCE: "...; Markov" / "chain Monte Carlo."), or the label alone and one keyword per line (Elsevier). The list stops at a sentence, the abstract, the introduction, a change of type size, or a line ending in a full stop; classification codes, "Corresponding author" footnotes and a glued "1. Introduction" are cut off. At most 12 per paper, each at most 6 words. About half of the students' PDFs list keywords (156 of 297); reports, theses and books don't.
 - **Body:** body-size text after the abstract up to the references, acknowledgements or other end matter (only looked for after the first 25% of the document). Captions, footnotes and tables are dropped, end-of-line hyphenation is undone, and the text is cut into ~1500-character passages (fits SPECTER2's 512 tokens with the title), of which up to **6 are kept, spread evenly** so a long paper is represented beyond its introduction.
 - Ligatures, zero-width characters and stray first-letter glyphs that some PDF producers draw separately ("ybrid" for "Hybrid") are repaired.
 
 ### [PaperText](PaperText.java): what was read from one PDF
 
-A record of `title`, `abstractText` (both never blank), `headings` and `bodyChunks`. [bodyText()](PaperText.java#L31) joins headings and chunks into the one text M6's word matching uses.
+A record of `title`, `abstractText` (both never blank), `headings`, `bodyChunks` and the author `keywords` (possibly none). [bodyText()](PaperText.java#L31) joins headings and chunks into the one text M6's word matching uses.
 
 ### [PaperEmbedder](PaperEmbedder.java): `PaperText` → vectors
 
@@ -122,6 +124,16 @@ similarity = ½ · cosine(candidate, centroid) + ½ · mean cosine to the studen
 ```
 The second half lets a candidate that matches only part of a student's work still score well. The [scoring readme](../scoring/readme.md#how-a-paper-is-scored) shows where this fits in scoring. `ProfileBuilderCli`'s "similarity of each paper to the profile as a whole" uses the same centroid of combined vectors ([ProfileBuilderCli.java:84](ProfileBuilderCli.java#L84)).
 
+### [ProfileKeywords](ProfileKeywords.java): the student's keywords
+
+What the student works on in a few words, for M6's language model ([AiPaperMatcher](../scoring/ai/AiPaperMatcher.java)): up to **10** of the author keywords of the student's papers.
+
+1. **One keyword however it is spelled.** Keywords are compared by their word stems run together (case, accents, hyphens and spaces folded; a plural "s", then "-ing"/"-ed" dropped), so "Multi-hazards" and "multihazard" are one keyword, as are "reduced-order models" and "Reduced order modeling". It is written as the first paper to list it wrote it. Two PDFs with the same title count as one paper.
+2. **Rank by how many papers list it**, so the keywords running through the student's work come first ("multi-hazard", "fragility").
+3. **Break ties by how many papers mention it** in their title, abstract or keywords. A keyword of up to 5 letters ("fire", "GIS") must appear as whole words, so "fire" is not found in "wildfire".
+
+From the real folders: RP1-mh-risk gets *Earthquake; multi-hazard; Resilience; Performance-based design; fragility; wind load; uncertainty; Hurricanes; Repair cost; Tall buildings*; RP7-kem-rap gets *rank aggregation; distance measures; Group decision-making; Kemeny method; ...*. General words some authors list ("Assessment", "impact") can still make the ten.
+
 ### [UnreadablePdfException](UnreadablePdfException.java)
 
 The checked exception `PdfTextExtractor` throws for a PDF that can't contribute: corrupt or truncated, password-protected, or with no usable text. Its message becomes the `reason` in the report's `SkippedPdf`.
@@ -132,7 +144,7 @@ The checked exception `PdfTextExtractor` throws for a PDF that can't contribute:
 mvn -q compile exec:java -Dexec.mainClass=com.litroute.profile.ProfileBuilderCli [-Dexec.args=PROFILES_DIR]
 ```
 
-Opens SPECTER2 and the default store, runs `syncAll()`, and prints per profile: counts embedded / unchanged / given text / skipped, the addresses, each skipped PDF with its reason, the min / mean / max paper-to-paper similarity, and every paper's similarity to the profile as a whole (the normalized mean of its vectors), most similar first, so a paper that doesn't fit the student stands out.
+Opens SPECTER2 and the default store, runs `syncAll()`, and prints per profile: counts embedded / unchanged / read again for text or keywords / skipped, the addresses, the keywords, each skipped PDF with its reason, the min / mean / max paper-to-paper similarity, and every paper's similarity to the profile as a whole (the normalized mean of its vectors), most similar first, so a paper that doesn't fit the student stands out.
 
 ## How it's tested
 
@@ -140,6 +152,6 @@ Following the project's rule, tests use the **real SPECTER2 model** and the real
 
 | Test class | What it covers |
 |---|---|
-| [PdfTextExtractorTest](../../../../../test/java/com/litroute/profile/PdfTextExtractorTest.java) | Truncated, password-protected and text-less PDFs are unreadable. Every readable test PDF yields a title, abstract and body. A metadata title matches the page text despite small differences. Extraction is deterministic. Body sampling keeps chunks spread across the text. |
+| [PdfTextExtractorTest](../../../../../test/java/com/litroute/profile/PdfTextExtractorTest.java) | Truncated, password-protected and text-less PDFs are unreadable. Every readable test PDF yields a title, abstract and body. A metadata title matches the page text despite small differences. Every keyword read is one keyword (no separators, at most 6 words), and at least a third of the PDFs give some. The keywords of three real papers come out exactly as listed, one per layout (ASCE run-in wrapping inside a keyword, Elsevier one per line, "Key words and phrases."). Extraction is deterministic. Body sampling keeps chunks spread across the text. |
 | [PaperEmbedderTest](../../../../../test/java/com/litroute/profile/PaperEmbedderTest.java) | A paper gets unit-length views for what its text has. Missing views leave the abstract view alone. |
-| [ProfileBuilderTest](../../../../../test/java/com/litroute/profile/ProfileBuilderTest.java) | Every folder with a readable PDF becomes a profile of dense vectors. `email.txt` parsing skips comments, blanks, duplicates and non-addresses. Held out, a paper is closer to its own profile as a whole than to the others (a clear majority first, nearly all in the top two). A second sync reuses every embedding and leaves unchanged profiles alone. Only a changed PDF is embedded again. Unreadable PDFs are reported and the rest of the profile is still built. A deleted folder removes its profile. A folder with no readable PDF is not saved. A new folder of known papers needs no embedding. Text missing from an older store is added without re-embedding. Vectors from another model are recomputed. |
+| [ProfileBuilderTest](../../../../../test/java/com/litroute/profile/ProfileBuilderTest.java) | Every folder with a readable PDF becomes a profile of dense vectors. `email.txt` parsing skips comments, blanks, duplicates and non-addresses. Held out, a paper is closer to its own profile as a whole than to the others (a clear majority first, nearly all in the top two). A second sync reuses every embedding and leaves unchanged profiles alone. Only a changed PDF is embedded again. Unreadable PDFs are reported and the rest of the profile is still built. A deleted folder removes its profile. A folder with no readable PDF is not saved. A new folder of known papers needs no embedding. Each profile keeps keywords its papers list, at most 10, distinct, the most-listed first. Text missing from an older store is added without re-embedding, and so are keywords (the same ones a fresh build gives). Vectors from another model are recomputed. |

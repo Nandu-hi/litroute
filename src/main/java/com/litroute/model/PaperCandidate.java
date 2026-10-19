@@ -45,4 +45,10 @@ public record PaperCandidate(
         }
         authors = List.copyOf(authors);
     }
+
+    /** The same paper with its PDF saved elsewhere (or not at all). */
+    public PaperCandidate withPdfPath(Optional<Path> newPdfPath) {
+        return new PaperCandidate(sourceMessageId, title, authors, venue, year, articleType, doi, url, abstractSnippet,
+                newPdfPath);
+    }
 }

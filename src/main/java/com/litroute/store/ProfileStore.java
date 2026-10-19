@@ -37,40 +37,45 @@ public final class ProfileStore {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonIgnoreProperties({"clusters"})
     private record StoredProfile(
-            String name, List<String> emails, List<StoredPaper> papers, String modelId, String updatedAt) {
+            String name, List<String> emails, List<StoredPaper> papers, List<String> keywords, String modelId,
+            String updatedAt) {
 
         static StoredProfile from(Profile profile) {
             return new StoredProfile(profile.name(), profile.emails(),
-                    profile.papers().stream().map(StoredPaper::from).toList(), profile.modelId(),
+                    profile.papers().stream().map(StoredPaper::from).toList(), profile.keywords(), profile.modelId(),
                     profile.updatedAt().toString());
         }
 
         Profile toProfile() throws IOException {
             try {
                 return new Profile(name, emails == null ? List.of() : emails,
-                        papers.stream().map(StoredPaper::toPaper).toList(), modelId, Instant.parse(updatedAt));
+                        papers.stream().map(StoredPaper::toPaper).toList(), keywords == null ? List.of() : keywords,
+                        modelId, Instant.parse(updatedAt));
             } catch (RuntimeException e) {
                 throw new IOException("Corrupt profile entry \"" + name + "\": " + e.getMessage(), e);
             }
         }
     }
 
-    /** Text is absent in stores written before it was kept; such papers load without it. */
+    /**
+     * Text and keywords are absent in stores written before they were kept; such papers load without them.
+     * A paper read for keywords that lists none stores an empty list.
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private record StoredPaper(
             String relativePath, String sha256, String title, float[] embedding, float[] abstractView,
-            float[] structureView, float[] bodyView, String abstractText, String bodyText) {
+            float[] structureView, float[] bodyView, String abstractText, String bodyText, List<String> keywords) {
 
         static StoredPaper from(ProfilePaper paper) {
             return new StoredPaper(paper.relativePath(), paper.sha256(), paper.title(), paper.embedding(),
                     paper.abstractView(), paper.structureView().orElse(null), paper.bodyView().orElse(null),
-                    paper.abstractText().orElse(null), paper.bodyText().orElse(null));
+                    paper.abstractText().orElse(null), paper.bodyText().orElse(null), paper.keywords().orElse(null));
         }
 
         ProfilePaper toPaper() {
             return new ProfilePaper(relativePath, sha256, title, embedding, abstractView,
                     Optional.ofNullable(structureView), Optional.ofNullable(bodyView), Optional.ofNullable(abstractText),
-                    Optional.ofNullable(bodyText));
+                    Optional.ofNullable(bodyText), Optional.ofNullable(keywords));
         }
     }
 

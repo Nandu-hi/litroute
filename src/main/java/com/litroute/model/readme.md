@@ -61,10 +61,11 @@ What one student works on, built from the PDFs in their profile folder. A profil
 | `name` | The folder's name. Must not be blank. |
 | `emails` | Addresses from the folder's `email.txt`, where M10 will send approved papers. |
 | `papers` | One [ProfilePaper](Profile.java#L57) per readable PDF. **Never empty.** |
+| `keywords` | Up to 10 of the author keywords of the student's papers, those running through the most of them first ([ProfileKeywords](../profile/ProfileKeywords.java)). M6's language model is told them. Empty if no paper lists keywords. |
 | `modelId` | The embedding model that produced every vector. Vectors from different models can't be compared. |
 | `updatedAt` | When the profile last actually changed. |
 
-- **`ProfilePaper`** holds one reference paper: its relative path, SHA-256 (so an unchanged file is never embedded twice), title, the **combined** `embedding` used for scoring, the three view vectors (`abstractView`, optional `structureView` and `bodyView`), and the extracted `abstractText` and `bodyText`. M6 matches words in that text without opening the PDF again. `hasText()` is false for papers saved before text was stored. The vector arrays are shared, not copied, so treat them as read-only.
+- **`ProfilePaper`** holds one reference paper: its relative path, SHA-256 (so an unchanged file is never embedded twice), title, the **combined** `embedding` used for scoring, the three view vectors (`abstractView`, optional `structureView` and `bodyView`), the extracted `abstractText` and `bodyText`, and the author `keywords` the PDF lists (possibly none). M6 matches words in that text without opening the PDF again. `hasText()` and `hasKeywords()` are false for papers saved before text or keywords were stored. The vector arrays are shared, not copied, so treat them as read-only.
 
 ### [ScoredPaper](ScoredPaper.java): output of M6, held in M7e, used by M8 and M10
 

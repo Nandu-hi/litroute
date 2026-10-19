@@ -21,6 +21,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.Test;
 
 public class ScoredQueueStoreTest {
@@ -156,6 +157,102 @@ public class ScoredQueueStoreTest {
         Files.write(file, json.writeValueAsBytes(entries));
 
         assertEquals(List.of(paper.withRecommended(false)), new ScoredQueueStore(file).load());
+    }
+
+    /** The recorded PDF of {@link Candidates#full()}'s paper, saved where M2 would: pdfs/<doi>.pdf. */
+    private static Path downloadedPdf(Path data) throws IOException {
+        return copyTo(data.resolve("pdfs").resolve("10.1186_s43065-024-00115-x.pdf"), "e502fdcc276fe9dbf272.pdf");
+    }
+
+    private static Path copyTo(Path target, String recordedPdf) throws IOException {
+        Files.createDirectories(target.getParent());
+        return Files.copy(Path.of("src/test/resources/http", recordedPdf), target);
+    }
+
+    @Test
+    public void aMatchedPapersPdfIsCopiedIntoItsStudentsFolder() throws IOException {
+        Path file = newFile();
+        Path pdf = downloadedPdf(file.getParent());
+        ScoredQueueStore store = new ScoredQueueStore(file);
+        ScoredPaper matched = scored(Candidates.full().withPdfPath(Optional.of(pdf)), "RP1-mh-risk", 0.8);
+
+        List<ScoredPaper> queue = store.addAll(Map.of("RP1-mh-risk", List.of(matched)));
+
+        Path copy = file.resolveSibling("matched").resolve("RP1-mh-risk").resolve(pdf.getFileName());
+        assertEquals(copy, store.pdfFolder("RP1-mh-risk").resolve(pdf.getFileName()));
+        assertEquals(-1, Files.mismatch(pdf, copy));
+        assertEquals(Optional.of(copy), queue.get(0).candidate().pdfPath());
+        assertEquals(queue, new ScoredQueueStore(file).load());
+        assertTrue("the download is left where M2 saved it", Files.exists(pdf));
+    }
+
+    /** A paper an AI matcher gives to two students is in both students' folders. */
+    @Test
+    public void aPaperMatchedToTwoStudentsIsInBothFolders() throws IOException {
+        Path file = newFile();
+        Path pdf = downloadedPdf(file.getParent());
+        PaperCandidate paper = Candidates.full().withPdfPath(Optional.of(pdf));
+        ScoredQueueStore store = new ScoredQueueStore(file);
+
+        store.addAll(Map.of("RP1-mh-risk", List.of(scored(paper, "RP1-mh-risk", 0.8)),
+                "RP4-mh-char", List.of(scored(paper, "RP4-mh-char", 0.6))));
+
+        for (String student : List.of("RP1-mh-risk", "RP4-mh-char")) {
+            assertEquals(-1, Files.mismatch(pdf, store.pdfFolder(student).resolve(pdf.getFileName())));
+        }
+    }
+
+    @Test
+    public void queuingAPaperAgainDoesNotCopyItsPdfTwice() throws IOException {
+        Path file = newFile();
+        Path pdf = downloadedPdf(file.getParent());
+        ScoredQueueStore store = new ScoredQueueStore(file);
+        PaperCandidate paper = Candidates.full().withPdfPath(Optional.of(pdf));
+        store.addAll(List.of(scored(paper, "RP1-mh-risk", 0.6)));
+
+        List<ScoredPaper> queue = store.addAll(List.of(scored(paper, "RP1-mh-risk", 0.9)));
+        store.addAll(queue); // entries read back from the queue point at the copy already
+
+        try (Stream<Path> files = Files.list(store.pdfFolder("RP1-mh-risk"))) {
+            assertEquals(List.of(pdf.getFileName().toString()), files.map(f -> f.getFileName().toString()).toList());
+        }
+        assertEquals(1, store.load().size());
+    }
+
+    /** Two papers whose PDFs share a file name (local PDFs, say) are both kept. */
+    @Test
+    public void anotherPapersPdfWithTheSameNameGetsANumberedName() throws IOException {
+        Path file = newFile();
+        Path first = copyTo(file.resolveSibling("a").resolve("paper.pdf"), "e502fdcc276fe9dbf272.pdf");
+        Path second = copyTo(file.resolveSibling("b").resolve("paper.pdf"), "8d0d08f9b152568722f5.pdf");
+        ScoredQueueStore store = new ScoredQueueStore(file);
+
+        List<ScoredPaper> queue = store.addAll(List.of(
+                scored(Candidates.full().withPdfPath(Optional.of(first)), "RP1-mh-risk", 0.8),
+                scored(Candidates.ssiReview(second), "RP1-mh-risk", 0.7)));
+
+        Path folder = store.pdfFolder("RP1-mh-risk");
+        assertEquals(Optional.of(folder.resolve("paper.pdf")), queue.get(0).candidate().pdfPath());
+        assertEquals(Optional.of(folder.resolve("paper-2.pdf")), queue.get(1).candidate().pdfPath());
+        assertEquals(-1, Files.mismatch(first, folder.resolve("paper.pdf")));
+        assertEquals(-1, Files.mismatch(second, folder.resolve("paper-2.pdf")));
+    }
+
+    /** A paywalled paper, or one whose download has since been deleted, is still queued. */
+    @Test
+    public void aPaperWithoutAPdfIsQueuedWithoutAFile() throws IOException {
+        Path file = newFile();
+        ScoredQueueStore store = new ScoredQueueStore(file);
+        ScoredPaper noPdf = scored(Candidates.sparse(), "RP1-mh-risk", 0.5);
+        ScoredPaper gone = scored(Candidates.full(), "RP1-mh-risk", 0.7); // its pdfPath does not exist here
+
+        assertEquals(List.of(noPdf, gone), store.addAll(List.of(noPdf, gone)));
+        assertFalse(Files.exists(store.pdfFolder("RP1-mh-risk")));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void aProfileNameCannotPointOutsideTheMatchedFolder() throws IOException {
+        new ScoredQueueStore(newFile()).pdfFolder("../elsewhere");
     }
 
     @Test(expected = IOException.class)

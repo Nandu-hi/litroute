@@ -10,6 +10,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -17,6 +18,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -44,6 +46,8 @@ import org.apache.pdfbox.text.TextPosition;
  *   <li>abstract: the text after an "Abstract" (or a report's "Executive Summary") heading, up to
  *       keywords or the next heading; if there is none, the opening text stands in for it;
  *   <li>headings: short lines set in bold, or larger than the body text;
+ *   <li>keywords: the list after a "Keywords" (or "Index Terms") label on the first two pages, split at
+ *       its separators (";", ",", "·") or, when it has none, one keyword per line;
  *   <li>body: everything after the abstract up to the references or other end matter, cut into
  *       passages and sampled evenly so long papers are represented beyond their introduction.
  * </ul>
@@ -95,6 +99,11 @@ public final class PdfTextExtractor {
     private static final float TITLE_MIN_SIZE_GAIN = 1.5f;
     private static final float BOLD_TITLE_MIN_SIZE_GAIN = 0.5f;
     private static final int MAX_HEADING_WORDS = 12;
+    /** Author keywords kept per paper; journals ask for three to ten. */
+    static final int MAX_KEYWORDS = 12;
+    static final int MAX_KEYWORD_WORDS = 6;
+    private static final int MAX_KEYWORD_CHARS = 80;
+    private static final int MAX_KEYWORD_LINES = 12;
     /** Font sizes within this many points count as the same text style (sizes jitter within a paragraph). */
     private static final float SIZE_TOLERANCE = 1.1f;
 
@@ -106,6 +115,23 @@ public final class PdfTextExtractor {
             + "|bibliography|literature cited|works cited|reference list|acknowledge?ments?|declarations?|funding"
             + "|author(?:s'|s)? contributions?|competing interests?|conflicts? of interests?"
             + "|data availability(?: statement)?|availability of data and materials?)\\s*:?$");
+    private static final Pattern KEYWORDS_START = Pattern.compile(
+            "(?i)^(?:additional\\s+)?(?:author\\s+)?(?:k\\s?e\\s?y\\s?[-\\s]?w\\s?o\\s?r\\s?d\\s?s?(?:\\s+and\\s+phrases)?"
+            + "|index\\s+terms)(?![a-z])[\\s.:\\-–—]*");
+    /** What authors separate keywords with: "a; b", "a, b", Springer's "a · b", "a • b", "a | b". */
+    private static final Pattern KEYWORD_SEPARATOR = Pattern.compile("\\s*[;,·•|]\\s*");
+    /**
+     * What a keyword list can run into on the same line: classification codes, a footnote ("riskAuthor for
+     * correspondence"), or the first section ("change1. Introduction").
+     */
+    private static final Pattern KEYWORDS_END = Pattern.compile("(?i)\\*?\\s*(?:\\b(?:ams|mathematics|jel)\\s+"
+            + "(?:subject\\s+)?classifications?|corresponding\\s+author|author\\s+for\\s+correspondence"
+            + "|\\d*\\.?\\s*\\bintroduction\\b)");
+    /** A footnote or section number run into the last word: "RC frames1". */
+    private static final Pattern GLUED_NUMBER = Pattern.compile("(?<=\\p{Ll})\\d$");
+    /** Words that make a line a sentence, which a keyword list never is. */
+    private static final Pattern SENTENCE_WORD = Pattern.compile(
+            "(?i)\\b(?:the|we|our|this|these|is|are|was|were|has|have|which|that)\\b");
     private static final Pattern CAPTION = Pattern.compile("(?i)^(?:fig\\.?|figure|table|algorithm|eq\\.)\\s*[\\dIVX]");
     private static final Pattern BRANDING = Pattern.compile(
             "(?i)journal|open access|research article|original (?:article|paper)|review article|https?:|www\\.|doi"
@@ -192,7 +218,116 @@ public final class PdfTextExtractor {
             List<String> headings = new ArrayList<>(new LinkedHashSet<>(headings(end)));
             String body = joinLines(bodyLines(end));
             String summary = abstractText != null ? abstractText : openingText();
-            return new PaperText(title, summary, headings, sampleChunks(body));
+            return new PaperText(title, summary, headings, sampleChunks(body), keywords());
+        }
+
+        /**
+         * The author keywords: the list after the first "Keywords" label on pages 1-2 that is followed by
+         * one. The list runs on over the following lines of the same page and type size while they read
+         * like a list - no sentence words, no piece longer than {@value #MAX_KEYWORD_WORDS} words - and
+         * ends at a line ending in a full stop, the abstract, or the introduction. A list with separators
+         * may wrap mid-keyword, so a further line belongs to it only if it continues the list: it has a
+         * separator, starts in lower case, or the line before ended in a separator or a hyphen.
+         */
+        private List<String> keywords() {
+            for (int i = 0; i < lines.size() && lines.get(i).page() <= 2; i++) {
+                Line label = lines.get(i);
+                Matcher start = KEYWORDS_START.matcher(label.text());
+                if (!start.lookingAt()) {
+                    continue;
+                }
+                List<Line> taken = new ArrayList<>();
+                String rest = label.text().substring(start.end());
+                Line first = !rest.isBlank() ? new Line(label.page(), rest, label.size(), label.bold())
+                        : i + 1 < lines.size() ? lines.get(i + 1) : null;
+                if (first == null || first.page() != label.page()) {
+                    continue;
+                }
+                boolean separated = KEYWORD_SEPARATOR.matcher(first.text()).find();
+                if (!rest.isBlank()) {
+                    taken.add(first);
+                }
+                for (int j = i + 1; j < lines.size() && taken.size() < MAX_KEYWORD_LINES; j++) {
+                    if (!taken.isEmpty() && taken.get(taken.size() - 1).text().endsWith(".")) {
+                        break;
+                    }
+                    if (!continuesKeywords(j, label.page(), taken, separated)) {
+                        break;
+                    }
+                    taken.add(lines.get(j));
+                }
+                if (taken.isEmpty() || !readsAsList(taken.get(0).text(), separated)) {
+                    continue;
+                }
+                // One keyword per line, unless a later line shows the list was separated after all.
+                boolean split = separated || taken.stream().anyMatch(line -> KEYWORD_SEPARATOR.matcher(line.text()).find());
+                List<String> written = split
+                        ? Arrays.asList(KEYWORD_SEPARATOR.split(joinLines(taken)))
+                        : taken.stream().map(Line::text).toList();
+                Map<String, String> keywords = new LinkedHashMap<>();
+                for (String keyword : written) {
+                    Matcher end = KEYWORDS_END.matcher(keyword);
+                    boolean last = end.find();
+                    String cleaned = last ? keyword.substring(0, end.start()) : keyword;
+                    cleaned = GLUED_NUMBER.matcher(cleaned.replaceAll("^[\\s\\-–—.:]+|[\\s.;,:]+$", "")).replaceAll("");
+                    if (isKeyword(cleaned)) {
+                        keywords.putIfAbsent(Titles.compact(cleaned), cleaned);
+                    }
+                    if (last) {
+                        break;
+                    }
+                }
+                if (!keywords.isEmpty()) {
+                    return keywords.values().stream().limit(MAX_KEYWORDS).toList();
+                }
+            }
+            return List.of();
+        }
+
+        /** Whether line {@code j} goes on with the keyword list {@code taken}. */
+        private boolean continuesKeywords(int j, int page, List<Line> taken, boolean separated) {
+            Line line = lines.get(j);
+            String text = line.text();
+            if (line.page() != page || titleLines.contains(j) || ABSTRACT_START.matcher(text).lookingAt()
+                    || ABSTRACT_END.matcher(text).find() || KEYWORDS_START.matcher(text).lookingAt()
+                    || BRANDING.matcher(text).find() || !readsAsList(text, separated)) {
+                return false;
+            }
+            if (taken.isEmpty()) {
+                return true;
+            }
+            Line previous = taken.get(taken.size() - 1);
+            if (taken.size() > 1 || previous != lines.get(j - 1)) {
+                // the label's own line may be set larger or bolder than the keywords after it
+                if (Math.abs(line.size() - previous.size()) > SIZE_TOLERANCE || line.bold() != previous.bold()) {
+                    return false;
+                }
+            }
+            if (!separated) {
+                return true;
+            }
+            String before = previous.text().strip();
+            return KEYWORD_SEPARATOR.matcher(text).find() || before.endsWith("-")
+                    || KEYWORD_SEPARATOR.matcher(before.substring(before.length() - 1)).matches()
+                    || Character.isLowerCase(text.charAt(0)); // "Machine" + "learning": a keyword wrapped
+        }
+
+        /** No sentence words, and every piece between separators (or the line, if none) keyword-sized. */
+        private static boolean readsAsList(String text, boolean separated) {
+            if (SENTENCE_WORD.matcher(text).find()) {
+                return false;
+            }
+            String[] pieces = separated ? KEYWORD_SEPARATOR.split(text) : new String[] {text};
+            return Arrays.stream(pieces).allMatch(piece -> piece.isBlank() || words(piece) <= MAX_KEYWORD_WORDS);
+        }
+
+        private static boolean isKeyword(String text) {
+            return text.chars().filter(Character::isLetter).count() >= 2 && words(text) <= MAX_KEYWORD_WORDS
+                    && text.length() <= MAX_KEYWORD_CHARS && text.indexOf(':') < 0 && !BRANDING.matcher(text).find();
+        }
+
+        private static int words(String text) {
+            return text.strip().split("\\s+").length;
         }
 
         private String findTitle(String metadataTitle, String fileStem) {
