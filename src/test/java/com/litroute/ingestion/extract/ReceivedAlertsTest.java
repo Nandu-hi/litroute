@@ -90,20 +90,25 @@ public class ReceivedAlertsTest {
         assertEquals("Technical Papers", byTitleStart(types, "Mapping and Prioritizing Barriers"));
         assertEquals("Technical Papers", byTitleStart(types, "Urban Waterlogging Risk Measurement"));
         assertEquals("Case Studies", byTitleStart(types, "Climate-Adaptive Cost–Benefit Analysis"));
-        assertEquals("Discussions and Closures", byTitleStart(types, "Discussion of “Revisions"));
+        assertEquals("Technical Notes", byTitleStart(types, "Preparing for Inevitable Surprise"));
     }
 
-    /** ASCE links a paper's authors to their profiles; a sole linked author is still the author. */
+    /**
+     * The issue's discussion, closure, book reviews and erratum are notes, not papers: they never leave
+     * M2, whether their section says so or only their title does. Footer menu links are not papers either.
+     */
     @Test
-    public void asceLinkedSoleAuthorsKeepTheirPapers() throws IOException {
-        Map<String, List<String>> authors = received(SampleMails.ASCE).stream()
-                .collect(Collectors.toMap(PaperCandidate::title, PaperCandidate::authors));
+    public void asceNotesNeverLeaveExtraction() throws IOException {
+        List<PaperCandidate> papers = received(SampleMails.ASCE);
 
-        assertEquals(List.of("Ishwor Thapa"), byTitleStart(authors, "Discussion of “Revisions"));
-        assertEquals(List.of("Samantha Montano"), byTitleStart(authors, "Review of U.S. Emergency Management"));
-        assertEquals(List.of("Michelle A. Ritchie"), byTitleStart(authors, "Review of Fire and Flood"));
-        assertTrue("footer menu links are not authors",
-                authors.keySet().stream().noneMatch(title -> title.equals("ACCESSIBILITY & DEI")));
+        assertEquals(17, papers.size());
+        assertTrue(papers.stream().allMatch(PaperCandidate::isResearch));
+        for (String note : List.of("Discussion of “Revisions", "Closure to “Revisions", "Review of U.S. Emergency Management",
+                "Review of Fire and Flood", "Erratum for “Advances")) {
+            assertTrue(note, papers.stream().noneMatch(paper -> paper.title().startsWith(note)));
+        }
+        assertTrue("footer menu links are not papers",
+                papers.stream().noneMatch(paper -> paper.title().equals("ACCESSIBILITY & DEI")));
     }
 
     /** Google Scholar sets "[PDF]" in a span of its own before the title link. */

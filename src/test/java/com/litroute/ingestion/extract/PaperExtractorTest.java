@@ -203,7 +203,7 @@ public class PaperExtractorTest {
         }
     }
 
-    // ---------------------------------------------------------------- ASCE Library (22 papers in one mail)
+    // ---------------------------------------------------------------- ASCE Library (22 entries, 17 research papers, in one mail)
 
     private static final List<String> ASCE_TITLES = List.of(
             "Research Hotspots and Evolutionary Trends ofEarthquake-Induced Landslides: A BibliometricAnalysis Based on Web of Science",
@@ -222,14 +222,9 @@ public class PaperExtractorTest {
             "Testing Flood-Resilience Measures with Indices: Case Studies in Lower Kelani Basin, Sri Lanka, and Applicability to the Developing World",
             "Hope for Education Remains in the Aftermath of Destructive Earthquakes: Postdisaster Experiences of Volunteer Teachers in Türkiye",
             "Climate-Adaptive Cost–Benefit Analysis Framework for Flood Protection Investment in Australia",
-            "Preparing for Inevitable Surprise: Managing Unexpected Interinfrastructural Connectivities in Post-Disaster Infrastructure Service Restoration",
-            "Discussion of “Revisions to the Nepalese Building Code(NBC 105:2020): New Seismic Hazard Provisions”",
-            "Closure to “Revisions to the Nepalese Building Code (NBC 105:2020): New Seismic Hazard Provisions”",
-            "Review of U.S. Emergency Management in the 21st Century: From Disaster to Catastrophe edited by Susan L. Cutter, Melanie Gall, and Claire B. Rubin",
-            "Review of Fire and Flood: Extreme Events and Social Change Past, Present, Future by Thomas Princen",
-            "Erratum for “Advances in Landslide Detection through Google Earth Engine: A Comprehensive Review”");
+            "Preparing for Inevitable Surprise: Managing Unexpected Interinfrastructural Connectivities in Post-Disaster Infrastructure Service Restoration");
 
-    /** The issue's 22 DOIs in email order, as Crossref holds them for Natural Hazards Review 27(4). */
+    /** The issue's research papers' 17 DOIs in email order, as Crossref holds them for Natural Hazards Review 27(4). */
     private static final List<String> ASCE_DOIS = List.of(
             "10.1061/nhrefo.nheng-2717", "10.1061/nhrefo.nheng-2673",
             "10.1061/nhrefo.nheng-2760", "10.1061/nhrefo.nheng-2770",
@@ -239,21 +234,16 @@ public class PaperExtractorTest {
             "10.1061/nhrefo.nheng-2752", "10.1061/nhrefo.nheng-2686",
             "10.1061/nhrefo.nheng-2753", "10.1061/nhrefo.nheng-2721",
             "10.1061/nhrefo.nheng-2496", "10.1061/nhrefo.nheng-2859",
-            "10.1061/nhrefo.nheng-2711", "10.1061/nhrefo.nheng-2818",
-            "10.1061/nhrefo.nheng-2950", "10.1061/nhrefo.nheng-2979",
-            "10.1061/nhrefo.nheng-3008", "10.1061/nhrefo.nheng-2953");
+            "10.1061/nhrefo.nheng-2711");
 
-    /** Section heading each of the 22 papers sits under, in the same order as ASCE_TITLES. */
+    /** Section heading each of the 17 research papers sits under, in the same order as ASCE_TITLES. */
     private static final List<String> ASCE_SECTIONS = List.of(
             "State-of-the-Art Reviews",
             "Technical Papers", "Technical Papers", "Technical Papers", "Technical Papers", "Technical Papers",
             "Technical Papers", "Technical Papers", "Technical Papers", "Technical Papers", "Technical Papers",
             "Technical Papers", "Technical Papers",
             "Case Studies", "Case Studies", "Case Studies",
-            "Technical Notes",
-            "Discussions and Closures", "Discussions and Closures",
-            "Book Reviews", "Book Reviews",
-            "Corrections");
+            "Technical Notes");
 
     private List<PaperCandidate> extractAsce() {
         return extract("asce_natural_hazards_review.html",
@@ -261,14 +251,14 @@ public class PaperExtractorTest {
     }
 
     /**
-     * A table-of-contents mail: 22 papers. Discussions, closures, book reviews and an erratum are
-     * extracted like any other entry - deciding they are unwanted is a scoring/relevance question,
-     * not an extraction one - and titles are kept exactly as the publisher wrote them, including the
-     * missing spaces in "ofEarthquake-Induced", "BibliometricAnalysis" and "Code(NBC" (M3's Crossref
-     * lookup returns the corrected title).
+     * A table-of-contents mail of 22 entries: the 17 research papers come out in order. Its discussion,
+     * closure, two book reviews and erratum are notes, not papers, and never leave M2 - a book review can
+     * read exactly like a student's work. Titles are kept exactly as the publisher wrote them, including
+     * the missing spaces in "ofEarthquake-Induced" and "BibliometricAnalysis" (M3's Crossref lookup
+     * returns the corrected title).
      */
     @Test
-    public void asceMailYieldsEveryTableOfContentsEntryInOrder() {
+    public void asceMailYieldsEveryResearchPaperInOrderAndNoNotes() {
         List<PaperCandidate> papers = extractAsce();
 
         assertEquals(ASCE_TITLES, papers.stream().map(PaperCandidate::title).toList());
@@ -297,7 +287,7 @@ public class PaperExtractorTest {
             assertEquals("entry #" + (i + 1), Optional.of(ASCE_DOIS.get(i)), papers.get(i).doi());
             dois.add(papers.get(i).doi().orElseThrow());
         }
-        assertEquals(22, dois.size());
+        assertEquals(17, dois.size());
     }
 
     /** ORCID icons sit between names (rendering as "Chong Xu , Yuandong"), and last names wrap onto "and ...". */
@@ -311,24 +301,6 @@ public class PaperExtractorTest {
                 papers.get(3).authors());
         assertEquals(List.of("H. G. D. Sanduni Ashvini", "N. K. Gunasekara", "W. C. D. K. Fernando", "R. Prasanna"),
                 papers.get(13).authors());
-        assertEquals(List.of("Rama M. Pokhrel", "Raffaele De Risi", "Flavia De Luca", "Charlotte E. L. Gilder",
-                "Maximilian J. Werner", "Anastasios Sextos", "Paul J. Vardanega"), papers.get(18).authors());
-        assertEquals(List.of("Mir Mujtaba Laghari", "Surih Sibaghatullah Jagirani", "Nirandoal Cheng", "Muhammad Irfan",
-                "Irshad Ali Zardari", "Uwizeyimana David", "Zohaib Akbar", "Yang Zewen", "Muhammad Abu Bakar"),
-                papers.get(21).authors());
-    }
-
-    /**
-     * The title of a book review itself contains "edited by A, B, and C" - that must stay in the title, and
-     * the line underneath (the reviewer) is the only author.
-     */
-    @Test
-    public void asceBookReviewKeepsTheEditorsInTheTitleAndTheReviewerAsAuthor() {
-        List<PaperCandidate> papers = extractAsce();
-
-        assertTrue(papers.get(19).title().endsWith("edited by Susan L. Cutter, Melanie Gall, and Claire B. Rubin"));
-        assertEquals(List.of("Samantha Montano"), papers.get(19).authors());
-        assertEquals(List.of("Michelle A. Ritchie"), papers.get(20).authors());
     }
 
     // ---------------------------------------------------------------- Across all six mails

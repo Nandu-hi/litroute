@@ -3,6 +3,7 @@ package com.litroute.model;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * Output of M2 PaperExtractor: one paper mentioned in an alert email. Anything the alert doesn't
@@ -44,6 +45,28 @@ public record PaperCandidate(
             throw new IllegalArgumentException("title must not be blank");
         }
         authors = List.copyOf(authors);
+    }
+
+    /**
+     * Alert sections that hold notes rather than research papers, as publishers label them (ASCE's
+     * "Discussions and Closures", "Book Reviews", "Corrections", ...).
+     */
+    private static final Pattern NON_RESEARCH_TYPE = Pattern.compile("(?i)^(?:book reviews?|discussions?(?: and closures?)?"
+            + "|closures?|errat(?:a|um)|corrections?|corrigend(?:a|um)|retractions?(?: notes?)?|editorials?"
+            + "|obituar(?:y|ies)|letters? to the editor|comments?(?: and repl(?:y|ies))?|repl(?:y|ies))$");
+    /** The same notes recognized by their titles, for alerts that do not label their sections. */
+    private static final Pattern NON_RESEARCH_TITLE = Pattern.compile("(?i)^\\s*(?:errat(?:a|um)\\b|corrigend(?:a|um)\\b"
+            + "|correction(?:\\s+to\\b|\\s*:)|retraction\\b|discussion\\s+of\\b|closure\\s+to\\b|comment\\s+on\\b"
+            + "|reply\\s+to\\b)");
+
+    /**
+     * Whether this is a research paper rather than a note about one: a book review, a discussion or its
+     * closure, an erratum or correction, an editorial and the like, by the alert's section label or by
+     * the title. A book review can read exactly like a student's papers, so notes never reach M6.
+     */
+    public boolean isResearch() {
+        boolean noteSection = articleType.map(type -> NON_RESEARCH_TYPE.matcher(type.strip()).matches()).orElse(false);
+        return !noteSection && !NON_RESEARCH_TITLE.matcher(title).find();
     }
 
     /** The same paper with its PDF saved elsewhere (or not at all). */

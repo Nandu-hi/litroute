@@ -20,7 +20,7 @@ import com.litroute.model.ScoredPaper;
 import com.litroute.pipeline.PipelineRunner.MatcherFactory;
 import com.litroute.pipeline.PipelineRunner.MatcherKind;
 import com.litroute.pipeline.PipelineRunner.Report;
-import com.litroute.scoring.RelevanceScorer;
+import com.litroute.pipeline.PipelineRunner.ResetReport;
 import com.litroute.security.GmailCredentials;
 import com.litroute.store.EmailCacheStore;
 import com.litroute.store.EnrichmentCacheStore;
@@ -58,6 +58,7 @@ public class PipelineRunnerTest {
     private final class SampleInbox implements EmailSource {
 
         final Set<String> read = new LinkedHashSet<>();
+        boolean unreachable;
 
         @Override
         public List<RawEmail> fetchNewAlerts(GmailCredentials credentials, Set<String> processed) {
@@ -77,6 +78,17 @@ public class PipelineRunnerTest {
             int before = read.size();
             read.addAll(messageIds);
             return read.size() - before;
+        }
+
+        @Override
+        public int markUnread(GmailCredentials credentials, Collection<String> messageIds) throws IOException {
+            if (unreachable) {
+                throw new IOException("simulated: Gmail unreachable");
+            }
+            Set<String> inInbox = SampleMails.ALL.stream().map(sample -> sample.email().messageId())
+                    .collect(Collectors.toSet());
+            read.removeAll(messageIds);
+            return (int) messageIds.stream().filter(inInbox::contains).count();
         }
     }
 
@@ -123,7 +135,7 @@ public class PipelineRunnerTest {
     }
 
     @Test
-    public void firstRunQueuesEveryAlertPaperForExactlyOneStudent() throws IOException {
+    public void firstRunScoresEveryAlertPaperAndQueuesTheCloseOnesForOneStudentEach() throws IOException {
         Report report = runner().run(CREDENTIALS, progress::add);
 
         List<ScoredPaper> queued = queue.load();
@@ -131,15 +143,16 @@ public class PipelineRunnerTest {
         assertTrue(report.papersHeld() > 0);
         assertEquals(report.papersHeld(), report.papersScored());
         assertEquals(0, report.unscored());
-        assertEquals(report.papersHeld(), report.matches());
+        assertTrue(report.matches() > 0 && report.matches() < report.papersHeld());
         assertEquals(queued.size(), report.queueSize());
-        // RelevanceScorer gives each paper to one student, so the queue holds each held paper once.
-        assertEquals(report.papersHeld(), queued.size());
-        assertEquals(heldPaperKeys(), queued.stream().map(p -> ScoredPaper.paperKey(p.candidate())).collect(Collectors.toSet()));
+        // RelevanceScorer gives a paper to at most one student, so the queue holds each match once.
+        assertEquals(report.matches(), queued.size());
+        assertEquals(queued.size(), queued.stream().map(p -> ScoredPaper.paperKey(p.candidate())).distinct().count());
+        assertTrue(heldPaperKeys().containsAll(queued.stream().map(p -> ScoredPaper.paperKey(p.candidate())).toList()));
         assertTrue(queued.stream().allMatch(p -> p.status() == ReviewStatus.PENDING));
-        long students = queued.stream().map(ScoredPaper::profileName).distinct().count();
-        assertTrue(report.recommended() <= students * RelevanceScorer.RECOMMENDED_PER_STUDENT);
         assertEquals(report.recommended(), queued.stream().filter(ScoredPaper::recommended).count());
+        assertTrue(progress.contains((report.papersHeld() - report.matches())
+                + " paper(s) were not close enough to any student's work and were not queued."));
         assertTrue(progress.stream().anyMatch(line -> line.startsWith(SampleMails.ALL.size() + " new alert")));
     }
 
@@ -172,6 +185,56 @@ public class PipelineRunnerTest {
         assertEquals("M7a still keeps them from being processed twice", 0, again.newAlerts());
     }
 
+    /**
+     * Clear and re-run: the processed alerts are unread again and every store is emptied, so the next run
+     * processes the same six emails and queues the same papers afresh, pending, then marks the alerts read.
+     */
+    @Test
+    public void afterAResetTheNextRunProcessesTheSameEmailsAgainFromScratch() throws IOException {
+        Report first = runner().run(CREDENTIALS, progress::add);
+        List<ScoredPaper> firstQueue = queue.load();
+        assertTrue(queue.setStatus(firstQueue.get(0), ReviewStatus.APPROVED));
+
+        ResetReport reset = runner().reset(CREDENTIALS, progress::add);
+
+        assertEquals(new ResetReport(SampleMails.ALL.size(), SampleMails.ALL.size(), firstQueue.size()), reset);
+        assertTrue(inbox.read.isEmpty());
+        assertTrue(queue.load().isEmpty());
+        assertTrue(new EmailCacheStore(data.resolve("email_cache.json")).load().isEmpty());
+        assertTrue(new ScoredPaperLog(data.resolve("scored_papers.json")).load().isEmpty());
+        assertTrue(heldPaperKeys().isEmpty());
+
+        Report again = runner().run(CREDENTIALS, progress::add);
+
+        assertEquals(first.newAlerts(), again.newAlerts());
+        assertEquals(first.papersHeld(), again.papersHeld());
+        assertEquals(first.matches(), again.matches());
+        assertEquals(firstQueue.stream().map(ScoredPaper::queueKey).toList(),
+                queue.load().stream().map(ScoredPaper::queueKey).toList());
+        assertTrue("decisions were discarded", queue.load().stream().allMatch(p -> p.status() == ReviewStatus.PENDING));
+        assertEquals(SampleMails.ALL.size(), inbox.read.size());
+    }
+
+    /** If Gmail can't mark the alerts unread, nothing is cleared: clearing would lose them for good. */
+    @Test
+    public void aResetThatCannotReachGmailClearsNothing() throws IOException {
+        runner().run(CREDENTIALS, progress::add);
+        List<ScoredPaper> queued = queue.load();
+        Set<String> processed = new EmailCacheStore(data.resolve("email_cache.json")).load();
+        inbox.unreachable = true;
+
+        try {
+            runner().reset(CREDENTIALS, progress::add);
+            fail("the Gmail failure should reach the caller");
+        } catch (IOException expected) {
+            assertEquals("simulated: Gmail unreachable", expected.getMessage());
+        }
+
+        assertEquals(queued, queue.load());
+        assertEquals(processed, new EmailCacheStore(data.resolve("email_cache.json")).load());
+        assertEquals(SampleMails.ALL.size(), inbox.read.size());
+    }
+
     @Test
     public void aSecondRunFindsNothingNewAndKeepsTheProfessorsDecisions() throws IOException {
         runner().run(CREDENTIALS, progress::add);
@@ -201,8 +264,8 @@ public class PipelineRunnerTest {
 
         assertEquals(0, withProfiles.newAlerts());
         assertEquals(withoutProfiles.papersHeld(), withProfiles.papersScored());
-        assertEquals(heldPaperKeys(), queue.load().stream().map(p -> ScoredPaper.paperKey(p.candidate()))
-                .collect(Collectors.toSet()));
+        assertEquals(withProfiles.matches(), queue.load().size());
+        assertTrue(withProfiles.matches() > 0);
     }
 
     @Test
@@ -224,6 +287,7 @@ public class PipelineRunnerTest {
 
         assertEquals(0, retried.newAlerts());
         assertEquals(retried.papersHeld(), retried.papersScored());
-        assertEquals(retried.papersHeld(), queue.load().size());
+        assertEquals(retried.matches(), queue.load().size());
+        assertTrue(retried.matches() > 0);
     }
 }

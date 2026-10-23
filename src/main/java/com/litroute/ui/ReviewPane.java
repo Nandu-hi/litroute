@@ -6,6 +6,7 @@ import com.litroute.delivery.GmailSmtpSender;
 import com.litroute.model.PaperCandidate;
 import com.litroute.model.ReviewStatus;
 import com.litroute.model.ScoredPaper;
+import com.litroute.scoring.RelevanceScorer;
 import com.litroute.security.GmailCredentials;
 import com.litroute.store.ProfileStore;
 import com.litroute.store.ScoredQueueStore;
@@ -19,7 +20,6 @@ import java.util.Optional;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import javafx.application.Platform;
-import javafx.beans.binding.Bindings;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
 import javafx.beans.property.SimpleBooleanProperty;
@@ -39,12 +39,14 @@ import javafx.scene.control.ListCell;
 import javafx.scene.control.ListView;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.SplitPane;
+import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.Tooltip;
 import javafx.scene.input.KeyCode;
+import javafx.util.Duration;
 import javafx.scene.layout.BorderPane;
 import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
@@ -53,7 +55,7 @@ import javafx.scene.layout.VBox;
 
 /**
  * M8's review screen over the M7e queue: the students on the left with how many of their papers wait
- * for a decision, their matched papers in the middle (recommended first, then by score), and the chosen
+ * for a decision, their matched papers in the middle (always best score first), and the chosen
  * paper's details and M6's rationale below. Approve, Drop and Back to pending (or the A, D and P keys)
  * record the decision for every selected paper; the queue file is written off the UI thread. Send approved
  * emails every approved paper to its student (M10) and marks it sent; it needs the Gmail credentials unlocked.
@@ -159,7 +161,11 @@ final class ReviewPane extends BorderPane {
 
     private void buildTable() {
         table.getColumns().add(column("", 32, paper -> paper.recommended() ? "★" : ""));
-        table.getColumns().add(column("Score", 60, paper -> String.format(Locale.ROOT, "%.2f", paper.score())));
+        table.getColumns().add(explained(column("Score", 60, paper -> String.format(Locale.ROOT, "%.2f", paper.score())),
+                SCORE_HELP, ReviewPane::scoreHelp));
+        table.getColumns().add(explained(column("Relevance", 80,
+                paper -> paper.relevance().map(r -> String.format(Locale.ROOT, "%.2f", r)).orElse("–")),
+                RELEVANCE_HELP, ReviewPane::relevanceHelp));
         TableColumn<ScoredPaper, String> title = column("Title", 520, paper -> paper.candidate().title());
         table.getColumns().add(title);
         table.getColumns().add(column("Student", 160, ScoredPaper::profileName));
@@ -168,12 +174,10 @@ final class ReviewPane extends BorderPane {
         table.getColumns().add(column("PDF", 45, paper -> paper.candidate().pdfPath().isPresent() ? "yes" : ""));
         table.getColumns().add(column("Status", 85, paper -> paper.status().name().toLowerCase(Locale.ROOT)));
 
-        // Recommended first, then best score, until the professor sorts by a column.
-        Comparator<ScoredPaper> byDefault = Comparator.comparing(ScoredPaper::recommended).reversed()
-                .thenComparing(Comparator.comparingDouble(ScoredPaper::score).reversed());
-        SortedList<ScoredPaper> sorted = new SortedList<>(shown);
-        sorted.comparatorProperty().bind(Bindings.createObjectBinding(
-                () -> table.getComparator() != null ? table.getComparator() : byDefault, table.comparatorProperty()));
+        // Always best score first, whatever the papers' status or star; the columns don't re-sort.
+        table.getColumns().forEach(column -> column.setSortable(false));
+        SortedList<ScoredPaper> sorted = new SortedList<>(shown,
+                Comparator.comparingDouble(ScoredPaper::score).reversed());
         table.setItems(sorted);
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         table.setPlaceholder(new Label("No papers here. Run the pipeline to fetch and score new alerts."));
@@ -198,6 +202,78 @@ final class ReviewPane extends BorderPane {
                 Optional.ofNullable(table.getSelectionModel().getSelectedItem()).ifPresent(this::open);
             }
         });
+    }
+
+    private static final String SCORE_HELP = "Score = relevance × share. The table is sorted by it, best first.\n\n"
+            + "Share: how much of the paper's fit belongs to this student rather than to the other students "
+            + "(the shares of all students add up to 1). A paper that suits two students splits its share, so it "
+            + "can score low and still be a strong match - check its relevance.\n\n"
+            + "Papers matched by the AI matcher show its own 0-100 score, divided by 100.";
+    private static final String RELEVANCE_HELP = String.format(Locale.ROOT, "How close the paper is to this student's "
+            + "own papers, whoever else it suits.\n\n0.9: as close as the student's own papers typically are to each "
+            + "other.\n0.5: halfway - no closer to this student than to the others.\n0.1: as close as another "
+            + "student's papers.\n\nA paper is matched only at %.2f or more, or %.2f when only its title is known (a "
+            + "title alone seldom scores high). A paper's title can lift the relevance of its abstract when it looks "
+            + "closer still. \"–\" means the matcher did not measure it (the AI matcher).",
+            RelevanceScorer.RELEVANCE_FLOOR, RelevanceScorer.TITLE_FLOOR);
+
+    /** Puts the column's explanation on its header and a paper-specific one on each of its cells. */
+    private static TableColumn<ScoredPaper, String> explained(TableColumn<ScoredPaper, String> column, String help,
+            Function<ScoredPaper, String> cellHelp) {
+        Label header = new Label(column.getText());
+        header.setTooltip(tooltip(help));
+        column.setText("");
+        column.setGraphic(header);
+        column.setCellFactory(view -> new TableCell<>() {
+            @Override
+            protected void updateItem(String value, boolean empty) {
+                super.updateItem(value, empty);
+                ScoredPaper paper = empty || getTableRow() == null ? null : getTableRow().getItem();
+                setText(empty ? null : value);
+                setTooltip(paper == null ? null : tooltip(cellHelp.apply(paper)));
+            }
+        });
+        return column;
+    }
+
+    private static Tooltip tooltip(String text) {
+        Tooltip tooltip = new Tooltip(text);
+        tooltip.setWrapText(true);
+        tooltip.setMaxWidth(420);
+        tooltip.setShowDelay(Duration.millis(250));
+        tooltip.setShowDuration(Duration.seconds(30));
+        return tooltip;
+    }
+
+    private static String scoreHelp(ScoredPaper paper) {
+        if (paper.relevance().isEmpty()) {
+            return String.format(Locale.ROOT, "%.2f: the AI matcher's score for %s (0-100, divided by 100).", paper.score(),
+                    paper.profileName());
+        }
+        double relevance = paper.relevance().get();
+        double share = relevance > 0 ? paper.score() / relevance : 0;
+        return String.format(Locale.ROOT, "%.2f = relevance %.2f × share %.2f\n\n%.0f%% of this paper's fit goes to %s; "
+                + "the rest is spread over the other students.%s", paper.score(), relevance, share, 100 * share,
+                paper.profileName(), share < 0.5
+                        ? " Below half: another student's work is also close to this paper, which lowers the score."
+                        : "");
+    }
+
+    private static String relevanceHelp(ScoredPaper paper) {
+        if (paper.relevance().isEmpty()) {
+            return "Not measured: the AI matcher scores papers without comparing them with the students' papers.";
+        }
+        double relevance = paper.relevance().get();
+        double floor = paper.rationale().contains("title alone") ? RelevanceScorer.TITLE_FLOOR : RelevanceScorer.RELEVANCE_FLOOR;
+        String meaning = relevance >= 0.8 ? "about as close as the student's own papers are to each other"
+                : relevance >= floor ? String.format(Locale.ROOT, "close enough to match (at least %.2f for this evidence)", floor)
+                : relevance >= 0.5 ? "only somewhat closer to this student's papers than to others' - below the match floor"
+                : "no closer to this student's papers than to other students' papers";
+        String basis = paper.rationale().contains("full PDF") ? "its full PDF"
+                : paper.rationale().contains("title and abstract") ? "its title and abstract"
+                : paper.rationale().contains("title alone") ? "its title alone, so it is less certain" : null;
+        return String.format(Locale.ROOT, "%.2f for %s: %s.%s", relevance, paper.profileName(), meaning,
+                basis == null ? "" : "\n\nMeasured from " + basis + ".");
     }
 
     private static TableColumn<ScoredPaper, String> column(String name, double width,
@@ -407,9 +483,9 @@ final class ReviewPane extends BorderPane {
             Optional<String> url = link(candidate);
             link.setText(url.orElse(""));
             link.setVisible(url.isPresent());
-            match.setText(String.format(Locale.ROOT, "Matched to %s, score %.2f%s, %s", chosen.profileName(),
-                    chosen.score(), chosen.recommended() ? ", recommended" : "",
-                    chosen.status().name().toLowerCase(Locale.ROOT)));
+            match.setText(String.format(Locale.ROOT, "Matched to %s, score %.2f%s%s, %s", chosen.profileName(),
+                    chosen.score(), chosen.relevance().map(r -> String.format(Locale.ROOT, ", relevance %.2f", r)).orElse(""),
+                    chosen.recommended() ? ", recommended" : "", chosen.status().name().toLowerCase(Locale.ROOT)));
             rationale.setText(chosen.rationale()
                     + candidate.abstractSnippet().map(text -> "\n\nAbstract: " + text).orElse(""));
             openPdf.setDisable(candidate.pdfPath().isEmpty());

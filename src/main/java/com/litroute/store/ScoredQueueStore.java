@@ -8,6 +8,7 @@ import com.litroute.model.ScoredPaper;
 import com.litroute.util.AtomicFiles;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -17,6 +18,9 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 
 /**
  * M7e: the M6-to-M8/M9 boundary - the professor's review queue, kept across restarts. Holds every
@@ -39,23 +43,27 @@ public final class ScoredQueueStore {
     };
     private static final Map<Path, Object> LOCKS = new ConcurrentHashMap<>();
     private static final Logger LOG = Logger.getLogger(ScoredQueueStore.class.getName());
+    /** How M6's rationale states the relevance, for entries queued before it was stored on its own. */
+    private static final Pattern STATED_RELEVANCE = Pattern.compile("\\bRelevance (\\d(?:\\.\\d+)?) \\(");
 
     /**
      * JSON shape of one queue entry; the candidate is stored as M7c stores it. {@code recommended} is
-     * absent in queues written before recommendations existed, and reads as false.
+     * absent in queues written before recommendations existed, and reads as false. {@code relevance} is
+     * null when the matcher did not measure it; in queues written before it was stored, it is read from
+     * the rationale, which states it.
      */
     private record StoredScoredPaper(StoredCandidate candidate, String profileName, double score, String rationale,
-            ReviewStatus status, Boolean recommended) {
+            ReviewStatus status, Boolean recommended, Double relevance) {
 
         static StoredScoredPaper from(ScoredPaper scored) {
             return new StoredScoredPaper(StoredCandidate.from(scored.candidate()), scored.profileName(), scored.score(),
-                    scored.rationale(), scored.status(), scored.recommended());
+                    scored.rationale(), scored.status(), scored.recommended(), scored.relevance().orElse(null));
         }
 
         ScoredPaper toScoredPaper() throws IOException {
             try {
                 return new ScoredPaper(candidate.toCandidate(), profileName, score, rationale, status,
-                        Boolean.TRUE.equals(recommended));
+                        Boolean.TRUE.equals(recommended), Optional.ofNullable(relevance).or(() -> statedIn(rationale)));
             } catch (IllegalArgumentException | NullPointerException e) {
                 throw new IOException("Corrupt queue entry for " + profileName + ": " + e.getMessage(), e);
             }
@@ -143,6 +151,35 @@ public final class ScoredQueueStore {
     }
 
     /**
+     * Empties the queue, discarding every decision in it, and deletes the PDF copies its entries point
+     * to in the students' folders (then any student folder left empty). Nothing else is touched: a file
+     * an entry points to outside {@link #pdfRoot()} is not this store's copy.
+     *
+     * @return how many entries the queue held
+     */
+    public int clear() throws IOException {
+        synchronized (lock) {
+            List<ScoredPaper> queue = read();
+            write(List.of());
+            for (ScoredPaper paper : queue) {
+                Optional<Path> copy = paper.candidate().pdfPath().map(Path::normalize).filter(path -> path.startsWith(pdfRoot));
+                if (copy.isPresent()) {
+                    Files.deleteIfExists(copy.get());
+                    Path folder = copy.get().getParent();
+                    try (Stream<Path> left = Files.list(folder)) {
+                        if (left.findAny().isEmpty()) {
+                            Files.delete(folder);
+                        }
+                    } catch (NoSuchFileException gone) {
+                        // removed with an earlier entry's copy
+                    }
+                }
+            }
+            return queue.size();
+        }
+    }
+
+    /**
      * Records the professor's decision on one queued paper.
      *
      * @return false if that paper is not queued for that student
@@ -194,7 +231,12 @@ public final class ScoredQueueStore {
         }
         PaperCandidate filed = paper.candidate().withPdfPath(Optional.of(target));
         return new ScoredPaper(filed, paper.profileName(), paper.score(), paper.rationale(), paper.status(),
-                paper.recommended());
+                paper.recommended(), paper.relevance());
+    }
+
+    private static Optional<Double> statedIn(String rationale) {
+        Matcher stated = rationale == null ? null : STATED_RELEVANCE.matcher(rationale);
+        return stated != null && stated.find() ? Optional.of(Double.parseDouble(stated.group(1))) : Optional.empty();
     }
 
     private List<ScoredPaper> read() throws IOException {

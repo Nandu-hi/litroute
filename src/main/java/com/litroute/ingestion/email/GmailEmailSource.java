@@ -15,11 +15,15 @@ import jakarta.mail.Session;
 import jakarta.mail.Store;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.search.FlagTerm;
+import jakarta.mail.search.HeaderTerm;
+import jakarta.mail.search.OrTerm;
+import jakarta.mail.search.SearchTerm;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
@@ -54,6 +58,8 @@ public final class GmailEmailSource implements EmailSource {
 
     /** How many unread messages a run examines unless told otherwise. */
     public static final int DEFAULT_MAX_UNREAD = 50;
+    /** Message-IDs looked up per IMAP search when marking mail unread. */
+    private static final int SEARCH_GROUP = 50;
 
     /**
      * Input: none.
@@ -161,6 +167,51 @@ public final class GmailEmailSource implements EmailSource {
         } catch (MessagingException e) {
             LOG.log(Level.WARNING, "Failed to mark processed alerts as read in Gmail; they stay unread", e);
             return 0;
+        }
+    }
+
+    /**
+     * Input: credentials and the Message-IDs of alerts the pipeline has processed.
+     * Output: how many of them were found in the INBOX; each is unread afterwards.
+     *
+     * Opens the INBOX read-write, lets the server find the messages by their Message-ID header (in groups of
+     * {@value #SEARCH_GROUP}, so no search command grows unbounded), and clears their \Seen flag. Unlike
+     * {@link #markRead}, a failure is thrown: the caller is about to forget these messages and must know.
+     */
+    @Override
+    public int markUnread(GmailCredentials credentials, Collection<String> messageIds) throws IOException {
+        if (messageIds.isEmpty()) {
+            return 0;
+        }
+        List<String> wanted = List.copyOf(Set.copyOf(messageIds));
+        try {
+            return withStore(credentials, store -> {
+                Folder inbox = store.getFolder("INBOX");
+                inbox.open(Folder.READ_WRITE);
+                try {
+                    List<Message> found = new ArrayList<>();
+                    Set<Integer> foundNumbers = new HashSet<>();
+                    for (int from = 0; from < wanted.size(); from += SEARCH_GROUP) {
+                        SearchTerm[] terms = wanted.subList(from, Math.min(wanted.size(), from + SEARCH_GROUP)).stream()
+                                .map(id -> new HeaderTerm("Message-ID", id)).toArray(SearchTerm[]::new);
+                        for (Message message : inbox.search(terms.length == 1 ? terms[0] : new OrTerm(terms))) {
+                            // The server matches a header substring; keep exact matches, each message once.
+                            if (wanted.contains(firstHeaderOrNull(message, "Message-ID"))
+                                    && foundNumbers.add(message.getMessageNumber())) {
+                                found.add(message);
+                            }
+                        }
+                    }
+                    if (!found.isEmpty()) {
+                        inbox.setFlags(found.toArray(Message[]::new), new Flags(Flags.Flag.SEEN), false);
+                    }
+                    return found.size();
+                } finally {
+                    inbox.close(false);
+                }
+            });
+        } catch (MessagingException e) {
+            throw new IOException("Could not mark the processed alerts unread in Gmail: " + e.getMessage(), e);
         }
     }
 

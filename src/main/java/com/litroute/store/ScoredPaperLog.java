@@ -45,6 +45,11 @@ public final class ScoredPaperLog {
         return new LinkedHashSet<>(JSON.readValue(Files.readAllBytes(storeFile), KEY_SET));
     }
 
+    /** Forgets every paper recorded, so the next run scores them all again. */
+    public void clear() throws IOException {
+        Files.deleteIfExists(storeFile);
+    }
+
     /** Records these paper keys as scored, keeping the ones already recorded. */
     public void addAll(Collection<String> paperKeys) throws IOException {
         Set<String> keys = load();

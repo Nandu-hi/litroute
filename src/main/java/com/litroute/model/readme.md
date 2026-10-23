@@ -49,7 +49,8 @@ One Gmail message that looked like a publication alert, **before** any HTML pars
 One paper mentioned in an alert email.
 
 - **`title` is the only required field.** Everything else is `Optional` and stays empty when it can't be found. Nothing is guessed.
-- **The email's text takes priority.** Values taken from the email are never overwritten. Data looked up from Crossref, OpenAlex or the publisher's page only fills fields the email left empty.
+- **The email's text takes priority.** Values taken from the email are never overwritten. Data looked up from Crossref, OpenAlex or the publisher's page only fills fields the email left empty. The one exception is an abstract the alert cut short: a looked-up abstract that begins with the same text completes it.
+- **[isResearch()](PaperCandidate.java)** is false for notes about papers rather than papers: book reviews, discussions and closures, errata and corrections, editorials, letters, comments and replies. They are recognized by the alert's section label or, for alerts without labels, by the title ("Erratum for …", "Discussion of …"). M2 drops them, so they never reach enrichment or matching.
 - Fields: `sourceMessageId`, `title`, `authors` (placeholders like "others" or "…" removed), `venue`, `year` (the paper's year, never the email's date), `articleType` (the alert's own section label, e.g. "Research article"), `doi` (bare, no URL prefix), `url` (redirect wrappers removed), `abstractSnippet`, and `pdfPath` (where the PDF was saved locally, if one could be downloaded).
 
 ### [Profile](Profile.java): output of M5, input of M6 and M10
@@ -78,7 +79,8 @@ How relevant one candidate is to one student, and why.
 | `score` | 0.0–1.0: *relevance* times *share*. The constructor rejects values outside this range. |
 | `rationale` | Readable evidence: the share, the relevance, shared words, the closest of the student's papers, and what the paper was scored from. |
 | `status` | The professor's decision so far ([ReviewStatus](ReviewStatus.java)). |
-| `recommended` | Whether M6 picked it as one of the student's top 2–3 papers in its batch. The professor still decides. |
+| `recommended` | Whether M6 recommends it to the professor (★ in the review screen). The words-and-meaning matcher only returns papers it recommends; the AI matcher recommends one focus paper per student. The professor still decides. |
+| `relevance` | 0.0–1.0, optional: how close the paper is to the student's own work whoever else it suits (0.9 as close as their own papers, 0.1 as close as another student's). Empty when the matcher doesn't measure it (the AI matcher). |
 
 - `withStatus(...)` and `withRecommended(...)` return changed copies; the record itself never changes.
 - **[queueKey()](ScoredPaper.java#L57)** identifies an entry in the review queue: the student plus the paper, identified by `doi:<lowercased DOI>` or, without a DOI, `title:<compacted title>` (the same way M4 identifies papers). M7e uses it to update a re-scored paper instead of adding it twice.

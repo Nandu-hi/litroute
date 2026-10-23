@@ -124,4 +124,17 @@ public final class AlertBatchProcessor {
         processedEmails.save(processedIds);
         return deduplicated;
     }
+
+    /**
+     * Forgets every batch processed so far: M7c's papers and lookup cache, then M7a's record of which
+     * emails were processed, in that order, so a crash in between leaves the emails recorded (skipped,
+     * not lost) rather than papers held for emails no longer recorded. Run again, the same emails are
+     * extracted and enriched afresh.
+     *
+     * @throws IOException if a store can't be written
+     */
+    public void forgetAll() throws IOException {
+        enrichmentCache.save(Contents.empty());
+        processedEmails.save(Set.of());
+    }
 }

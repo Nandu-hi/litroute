@@ -24,7 +24,8 @@ import org.jsoup.Jsoup;
  * Between them they cover every shape the pipeline has to handle: a readable DOI link
  * (SpringerOpen relevant), opaque tracking tokens only (SpringerOpen irrelevant), a redirect
  * wrapper carrying the real URL (Google Scholar), a mix of decodable and encrypted wrappers
- * (ScienceDirect), and a 22-paper table of contents (ASCE).
+ * (ScienceDirect), and a 22-entry table of contents (ASCE) whose 17 research papers are extracted; its
+ * discussion, closure, two book reviews and erratum are notes, which M2 drops.
  */
 public final class SampleMails {
 
@@ -76,7 +77,7 @@ public final class SampleMails {
 
     public static final Sample ASCE = new Sample("asce_natural_hazards_review.html",
             "Fwd: New articles have been published Natural Hazards Review, Volume 27, Issue 4",
-            "ascelibrary@asce.org", 22, SEP_4.plusSeconds(7 * 3600 + 14 * 60));
+            "ascelibrary@asce.org", 17, SEP_4.plusSeconds(7 * 3600 + 14 * 60));
 
     public static final List<Sample> ALL = List.of(SPRINGER_RELEVANT, SPRINGER_IRRELEVANT, TANDFONLINE,
             GOOGLE_SCHOLAR, SCIENCEDIRECT, ASCE);

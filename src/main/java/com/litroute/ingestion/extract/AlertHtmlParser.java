@@ -102,8 +102,9 @@ final class AlertHtmlParser {
      * turbines", READABLE); an email with only a plain-text body -> [].
      *
      * @param email the alert email; only its HTML body is read
-     * @return the papers in email order, one per title line that has an author or venue line under it,
-     *         skipping repeats of a title already seen; a link that is the journal's own name (from the
+     * @return the research papers in email order, one per title line that has an author or venue line
+     *         under it, skipping repeats of a title already seen and notes (book reviews, discussions,
+     *         closures, errata...; {@link PaperCandidate#isResearch}); a link that is the journal's own name (from the
      *         issue header) or a linked author name right under a title is not a title; empty if the
      *         email has no HTML body
      */
@@ -130,7 +131,8 @@ final class AlertHtmlParser {
                 continue;
             }
             Optional<ParsedPaper> paper = paperAt(email, lines, titles, issue, i);
-            if (paper.isPresent() && seenTitles.add(compact(paper.get().candidate().title()))) {
+            if (paper.isPresent() && paper.get().candidate().isResearch()
+                    && seenTitles.add(compact(paper.get().candidate().title()))) {
                 papers.add(paper.get());
             }
         }

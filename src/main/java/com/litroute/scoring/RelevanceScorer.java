@@ -29,14 +29,13 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 import java.util.logging.Level;
 import java.util.logging.Logger;
-import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 /**
- * M6: matches deduplicated papers (M4's output) to the students' profiles (M7d). Each paper goes to
- * the one student it suits best, and each student's best two or three papers of a batch are
- * recommended to the professor.
+ * M6: matches deduplicated papers (M4's output) to the students' profiles (M7d). A paper goes to
+ * the one student it suits best, and only if it is a research paper close to that student's own work;
+ * the rest of a batch matches no one and never reaches the professor's queue.
  *
  * A candidate is compared with every student's reference papers in two ways, from the best evidence
  * it has: its PDF if M2 saved a readable one, otherwise its title and abstract, otherwise its title.
@@ -54,8 +53,10 @@ import java.util.stream.IntStream;
  * paper belongs to that student rather than the others. Its <em>relevance</em> is absolute: 0.9 when it
  * is as close to the student's papers as their own papers typically are, 0.1 when it is as close as
  * other students' papers are, measured for each signal and kind of evidence. The score is relevance
- * times share. A paper is assigned to its highest-scoring student; of each student's papers in a
- * batch, the best-scored research papers that clear a relevance floor are recommended.
+ * times share. A paper's title can lift the relevance of its abstract or PDF ({@link #TITLE_LIFT}), and a
+ * paper known by its title alone weighs meaning above words ({@link #TITLE_MEANING_WEIGHT}). A paper is
+ * assigned to its highest-scoring student, and matched only if its relevance for that student reaches
+ * {@link #RELEVANCE_FLOOR}, or {@link #TITLE_FLOOR} from a title alone; there is no quota per student.
  *
  * Why both signals: the eight reference students all work in structural and hazard engineering, so
  * SPECTER2 puts nearly every paper 0.85-0.95 from every student. Of the 48 papers the professor
@@ -73,8 +74,6 @@ public final class RelevanceScorer implements PaperMatcher {
 
     private static final Logger LOG = Logger.getLogger(RelevanceScorer.class.getName());
 
-    /** Papers recommended per student and batch, unless the caller asks for another number. */
-    public static final int RECOMMENDED_PER_STUDENT = 3;
     /** Share of a blend given to the student's papers as a whole; the rest goes to the closest papers. */
     static final double PROFILE_WEIGHT = 0.5;
     static final int CLOSEST_PAPERS = 3;
@@ -87,14 +86,43 @@ public final class RelevanceScorer implements PaperMatcher {
      */
     static final double SHARE_SHARPNESS = 2.0;
     /**
-     * A paper is recommended only if its relevance reaches this: closer to the student's own papers
-     * than to other students' papers (0.9 and 0.1 being typical of those). On the reference profiles,
-     * 95% of a student's own papers, held out, reach 0.45 from a full PDF and 0.51 from a title and
-     * abstract - about this floor - but only 0.25 from a title alone, and the SpringerOpen paper on
-     * ceramic coatings the professor marked irrelevant reaches 0.29 from its title alone (its alert
-     * carries no abstract). So the floor is this one midpoint for every kind of evidence.
+     * A paper is matched only if its relevance reaches this: about 70% of the way from looking like
+     * other students' papers (relevance 0.1) to looking like the student's own (0.9). The midpoint, 0.5,
+     * matched 17 of the 31 papers in the professor's first reviewed batch (October 2026); he approved 11
+     * and dropped 6, all from generic hazard and disaster-management papers that every hazard profile
+     * half fits. At 0.7, 11 were matched: 9 he approved, plus one he dropped and one (a rainstorm
+     * hazard-chain paper) a per-student quota of three had pushed out. Of the papers he filed by
+     * student (~/.litroute/match-test), 41 of 46 still reach their student from a full PDF or a title and
+     * abstract (43 at 0.5); from a title alone, 33 (35 at 0.5). The floor is the same for every kind of
+     * evidence: a title-only alert is less certain, not more forgiving.
      */
-    static final double RELEVANCE_FLOOR = 0.5;
+    public static final double RELEVANCE_FLOOR = 0.7;
+    /**
+     * The floor for a paper known by its title alone (no abstract, no readable PDF - Elsevier deposits no
+     * abstracts with Crossref or OpenAlex). A title is a dozen words, so its relevance stays near the
+     * middle of the scale even when it plainly belongs to a student: of the professor's October 2026
+     * batch, the flood fragility of bridge piers (RP1) reached 0.61 and the compound geohazards of the
+     * Greater Bay Area (RP4) 0.44, while the out-of-scope review of steels under impact reached 0.41
+     * (with {@link #TITLE_MEANING_WEIGHT}). 0.43 takes the first two and leaves the third. On the papers he
+     * filed by student, judged by their titles alone, 34 of 46 then reach their student (32 at 0.7) and 5
+     * reach another (3 at 0.7).
+     */
+    public static final double TITLE_FLOOR = 0.43;
+    /**
+     * For a title, how much of its relevance comes from its meaning (SPECTER2) rather than its words:
+     * a dozen words share few terms with anyone's papers, so the words count for less than in an abstract
+     * (where the two count equally). This is what keeps the steel review (words 0.59, meaning 0.32) below
+     * the compound-geohazards paper (words 0.43, meaning 0.45).
+     */
+    static final double TITLE_MEANING_WEIGHT = 0.65;
+    /**
+     * How far a paper's title may lift the relevance of its abstract or PDF: by this fraction of the gap
+     * when the title alone looks closer to the student, never lowering it. An abstract can bury what the
+     * title says outright: the ground-motion orientation paper (RP8) reaches 0.59 from its abstract and
+     * 0.85 from its title, so 0.70 with the lift. 0.6 is the least that matches it; on the professor's
+     * filed papers known by title and abstract, it changes no match.
+     */
+    static final double TITLE_LIFT = 0.6;
     /**
      * Anchors measured on the eight reference profiles, for when the loaded profiles cannot provide
      * their own: a single student, or students with a single paper each.
@@ -105,18 +133,6 @@ public final class RelevanceScorer implements PaperMatcher {
     static final Anchors LEXICAL_FULL_TEXT_FALLBACK = new Anchors(0.238, 0.113);
     static final Anchors LEXICAL_ABSTRACT_FALLBACK = new Anchors(0.164, 0.064);
     static final Anchors LEXICAL_TITLE_FALLBACK = new Anchors(0.089, 0.025);
-    /**
-     * Alert sections that hold notes rather than research papers, as publishers label them (ASCE's
-     * "Discussions and Closures", "Book Reviews", "Corrections", ...). Such items are matched and
-     * queued like any paper, but never recommended.
-     */
-    private static final Pattern NON_RESEARCH_TYPE = Pattern.compile("(?i)^(?:book reviews?|discussions?(?: and closures?)?"
-            + "|closures?|errat(?:a|um)|corrections?|corrigend(?:a|um)|retractions?(?: notes?)?|editorials?"
-            + "|obituar(?:y|ies)|letters? to the editor|comments?(?: and repl(?:y|ies))?|repl(?:y|ies))$");
-    /** The same notes recognized by their titles, for alerts that do not label their sections. */
-    private static final Pattern NON_RESEARCH_TITLE = Pattern.compile("(?i)^\\s*(?:errat(?:a|um)\\b|corrigend(?:a|um)\\b"
-            + "|correction(?:\\s+to\\b|\\s*:)|retraction\\b|discussion\\s+of\\b|closure\\s+to\\b|comment\\s+on\\b"
-            + "|reply\\s+to\\b)");
     private static final double LOG_9 = Math.log(9);
     private static final int RATIONALE_TITLE_CHARS = 90;
     private static final int RATIONALE_TERMS = 5;
@@ -183,7 +199,8 @@ public final class RelevanceScorer implements PaperMatcher {
             String explanation) {
 
         ScoredPaper toScoredPaper(boolean recommended, String note) {
-            return new ScoredPaper(candidate, profileName, score, explanation + note, ReviewStatus.PENDING, recommended);
+            return new ScoredPaper(candidate, profileName, score, explanation + note, ReviewStatus.PENDING, recommended,
+                    Optional.of(relevance));
         }
     }
 
@@ -199,6 +216,7 @@ public final class RelevanceScorer implements PaperMatcher {
     /** Measured on first use: it needs every profile paper's title embedded on its own. */
     private Calibration titleCalibration;
     private final Map<PaperCandidate, Evidence> evidence = new ConcurrentHashMap<>();
+    private final Map<PaperCandidate, Evidence> titleEvidence = new ConcurrentHashMap<>();
 
     /** A scorer using both signals ({@link Strategy#HYBRID}). */
     public RelevanceScorer(EmbeddingProvider provider, Collection<Profile> profiles) {
@@ -264,80 +282,38 @@ public final class RelevanceScorer implements PaperMatcher {
     }
 
     /**
-     * Matches a batch of deduplicated papers (M4's output) to students, recommending up to
-     * {@link #RECOMMENDED_PER_STUDENT} per student.
+     * Matches a batch of deduplicated papers (M4's output) to students.
      *
-     * @see #match(List, int, Strategy)
+     * @see #match(List, Strategy)
      */
     @Override
     public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch) {
-        return match(batch, RECOMMENDED_PER_STUDENT, strategy);
-    }
-
-    /** @see #match(List, int, Strategy) */
-    public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch, int perStudent) {
-        return match(batch, perStudent, strategy);
+        return match(batch, strategy);
     }
 
     /**
-     * Matches a batch of deduplicated papers to students: exactly one {@link ScoredPaper} per candidate,
-     * for the student it scores highest for. Of each student's papers, the {@code perStudent}
-     * best-scored are recommended - provided they are research papers (not book reviews, discussions,
-     * corrections and the like) whose relevance reaches {@link #RELEVANCE_FLOOR}. Every paper is
-     * returned either way, so none disappears before the professor has seen it once; the rationale of
-     * one that is not recommended says why.
+     * Matches a batch of deduplicated papers to students: each candidate is scored for every student and
+     * goes to the one it scores highest for, but only if it is a research paper (not a book review,
+     * discussion, correction or the like) whose relevance for that student reaches
+     * {@link #RELEVANCE_FLOOR}. Such a paper is returned once, recommended; any other is not returned.
+     * A student gets as many papers as qualify, however many or few.
      *
-     * @return every student, in the order the profiles were given, mapped to the papers assigned to
+     * @return every student, in the order the profiles were given, mapped to the papers matched to
      *         them, highest score first (see {@link PaperMatcher#match})
      */
-    public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch, int perStudent, Strategy byStrategy) {
-        if (perStudent < 1) {
-            throw new IllegalArgumentException("perStudent must be at least 1, was " + perStudent);
-        }
+    public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch, Strategy byStrategy) {
         // Papers are independent and one with a PDF takes seconds to embed, so they are scored in parallel.
         List<Assessment> best = batch.parallelStream().map(candidate -> assess(candidate, byStrategy).get(0)).toList();
-        String[] notes = new String[best.size()];
-        boolean[] recommended = new boolean[best.size()];
-        Map<String, List<Integer>> eligible = new LinkedHashMap<>();
-        for (int i = 0; i < best.size(); i++) {
-            Assessment assessment = best.get(i);
-            if (!isResearch(assessment.candidate())) {
-                notes[i] = " Not recommended: a book review, discussion, correction or similar note, not a research paper.";
-            } else if (assessment.relevance() < RELEVANCE_FLOOR) {
-                notes[i] = String.format(Locale.ROOT, " Not recommended: relevance %.2f is below %.2f - scored from %s, the "
-                        + "paper looks no more like %s's papers than like other students' papers.", assessment.relevance(),
-                        RELEVANCE_FLOOR, assessment.basis().label, assessment.profileName());
-            } else {
-                eligible.computeIfAbsent(assessment.profileName(), name -> new ArrayList<>()).add(i);
-            }
-        }
-        eligible.forEach((name, papers) -> {
-            papers.sort(Comparator.comparingDouble((Integer i) -> best.get(i).score()).reversed());
-            for (int rank = 0; rank < papers.size(); rank++) {
-                int i = papers.get(rank);
-                if (rank < perStudent) {
-                    recommended[i] = true;
-                } else {
-                    notes[i] = " Not recommended: " + name + " has " + perStudent + " better-scored papers in this batch.";
-                }
-            }
-        });
         Map<String, List<ScoredPaper>> byStudent = new LinkedHashMap<>();
         indexes.forEach(index -> byStudent.put(index.profile().name(), new ArrayList<>()));
-        for (int i = 0; i < best.size(); i++) {
-            ScoredPaper scored = best.get(i).toScoredPaper(recommended[i], notes[i] == null ? "" : notes[i]);
-            byStudent.get(scored.profileName()).add(scored);
+        for (Assessment assessment : best) {
+            if (assessment.candidate().isResearch() && assessment.relevance() >= floor(assessment.basis())) {
+                byStudent.get(assessment.profileName()).add(assessment.toScoredPaper(true, ""));
+            }
         }
         byStudent.replaceAll((name, papers) -> papers.stream()
                 .sorted(Comparator.comparingDouble(ScoredPaper::score).reversed()).toList());
         return byStudent;
-    }
-
-    /** Whether the candidate is a research paper rather than a note about one (a discussion, erratum, review of a book...). */
-    static boolean isResearch(PaperCandidate candidate) {
-        boolean noteSection = candidate.articleType().map(type -> NON_RESEARCH_TYPE.matcher(type.strip()).matches())
-                .orElse(false);
-        return !noteSection && !NON_RESEARCH_TITLE.matcher(candidate.title()).find();
     }
 
     /** The candidate scored for every student by the given strategy, best first. */
@@ -365,9 +341,16 @@ public final class RelevanceScorer implements PaperMatcher {
         double[] fit = fit(byStrategy, semanticSimilarity, lexicalSimilarity);
         double[] share = softmax(fit);
         double[] relevance = new double[n];
+        double[] fromTitle = evidence.basis() == Basis.TITLE ? null : titleRelevance(candidate, byStrategy);
+        boolean[] lifted = new boolean[n];
         double[] score = new double[n];
         for (int i = 0; i < n; i++) {
-            relevance[i] = relevance(byStrategy, calibration, semanticSimilarity[i], lexicalSimilarity[i]);
+            relevance[i] = relevance(byStrategy, calibration, semanticSimilarity[i], lexicalSimilarity[i],
+                    evidence.basis() == Basis.TITLE ? TITLE_MEANING_WEIGHT : 0.5);
+            lifted[i] = fromTitle != null && fromTitle[i] > relevance[i];
+            if (lifted[i]) {
+                relevance[i] += TITLE_LIFT * (fromTitle[i] - relevance[i]);
+            }
             score[i] = relevance[i] * share[i];
         }
         List<Integer> order = IntStream.range(0, n).boxed()
@@ -386,6 +369,10 @@ public final class RelevanceScorer implements PaperMatcher {
             }
             explanation.append(String.format(Locale.ROOT, "Relevance %.2f (a student's own papers typically 0.9, other "
                     + "students' 0.1). ", relevance[i]));
+            if (lifted[i]) {
+                explanation.append(String.format(Locale.ROOT, "Its title alone looks closer still (%.2f), which lifted "
+                        + "it. ", fromTitle[i]));
+            }
             if (byStrategy.lexical) {
                 List<String> shared = lexical.sharedTerms(wording, names.get(i), RATIONALE_TERMS).stream()
                         .map(term -> "\"" + surfaces.getOrDefault(term, term.replace(Terms.PAIR, " ")) + "\"").toList();
@@ -462,18 +449,40 @@ public final class RelevanceScorer implements PaperMatcher {
         return share;
     }
 
-    private static double relevance(Strategy byStrategy, Calibration calibration, double semantic, double lexical) {
-        double normalized = 0;
-        int signals = 0;
-        if (byStrategy.semantic) {
-            normalized += calibration.semantic().normalized(semantic);
-            signals++;
+    /** The least relevance a paper known from this evidence needs to be matched. */
+    public static double floor(Basis basis) {
+        return basis == Basis.TITLE ? TITLE_FLOOR : RELEVANCE_FLOOR;
+    }
+
+    /**
+     * @param meaningWeight with both signals, the share of the relevance taken from meaning; the rest
+     *                      comes from the words
+     */
+    private static double relevance(Strategy byStrategy, Calibration calibration, double semantic, double lexical,
+            double meaningWeight) {
+        if (byStrategy.semantic && byStrategy.lexical) {
+            return Anchors.relevance(meaningWeight * calibration.semantic().normalized(semantic)
+                    + (1 - meaningWeight) * calibration.lexical().normalized(lexical));
         }
-        if (byStrategy.lexical) {
-            normalized += calibration.lexical().normalized(lexical);
-            signals++;
+        return Anchors.relevance(byStrategy.semantic ? calibration.semantic().normalized(semantic)
+                : calibration.lexical().normalized(lexical));
+    }
+
+    /** Each student's relevance for the candidate's title alone, measured as a title-only candidate's would be. */
+    private double[] titleRelevance(PaperCandidate candidate, Strategy byStrategy) {
+        Evidence title = titleEvidence.computeIfAbsent(candidate,
+                paper -> new Evidence(Basis.TITLE, provider.embed(paper.title(), ""), paper.title()));
+        Calibration calibration = titleCalibration();
+        Map<String, LexicalIndex.Closeness> wording = byStrategy.lexical
+                ? lexical.closeness(lexical.vector(title.text()), paper -> false) : Map.of();
+        double[] relevance = new double[indexes.size()];
+        for (int i = 0; i < indexes.size(); i++) {
+            Index index = indexes.get(i);
+            double semantic = index.space(Basis.TITLE).closeness(title.vector()).similarity();
+            double lexicalSimilarity = byStrategy.lexical ? wording.get(index.profile().name()).similarity() : 0;
+            relevance[i] = relevance(byStrategy, calibration, semantic, lexicalSimilarity, TITLE_MEANING_WEIGHT);
         }
-        return Anchors.relevance(normalized / signals);
+        return relevance;
     }
 
     private Calibration calibration(Basis basis) {

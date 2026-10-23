@@ -1,17 +1,26 @@
 package com.litroute.ui;
 
 import com.litroute.ingestion.email.GmailEmailSource;
+import com.litroute.model.ReviewStatus;
+import com.litroute.model.ScoredPaper;
 import com.litroute.pipeline.PipelineRunner;
 import com.litroute.pipeline.PipelineRunner.MatcherKind;
 import com.litroute.pipeline.PipelineRunner.Report;
 import com.litroute.scoring.ai.GroqClient;
 import com.litroute.security.GmailCredentials;
+import com.litroute.store.EmailCacheStore;
+import com.litroute.store.ScoredQueueStore;
+import java.io.IOException;
+import java.util.List;
 import java.util.prefs.Preferences;
+import javafx.application.Platform;
 import javafx.collections.FXCollections;
 import javafx.concurrent.Task;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
+import javafx.scene.control.Alert;
 import javafx.scene.control.Button;
+import javafx.scene.control.ButtonType;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.ComboBox;
 import javafx.scene.control.Label;
@@ -23,7 +32,8 @@ import javafx.scene.layout.HBox;
  * Runs M9 on demand: profile sync, Gmail, extraction, enrichment, deduplication, matching and the review
  * queue, with a live log. The matcher is chosen here, the AI one needing {@value GroqClient#KEY_VARIABLE}
  * in LitRoute's environment, and so is how many unread Gmail messages a run examines and whether the
- * processed alerts are left unread (for testing); both are remembered between sessions.
+ * processed alerts are left unread (for testing); both are remembered between sessions. Clear and re-run
+ * undoes every run so far (see {@link PipelineRunner#reset}) and runs again over the same emails.
  */
 final class PipelinePane extends BorderPane {
 
@@ -65,11 +75,14 @@ final class PipelinePane extends BorderPane {
         Button run = new Button("Run pipeline");
         run.setDefaultButton(true);
         run.disableProperty().bind(session.busyProperty());
-        run.setOnAction(event -> run());
+        run.setOnAction(event -> run(false));
+        Button rerun = new Button("Clear and re-run…");
+        rerun.disableProperty().bind(session.busyProperty());
+        rerun.setOnAction(event -> clearAndRerun());
         hint.setStyle("-fx-text-fill: #8a6d00;");
         updateHint();
 
-        HBox bar = new HBox(10, new Label("Matcher:"), matcher, new Label("Max unread emails:"), maxUnread, keepUnread, run, hint);
+        HBox bar = new HBox(10, new Label("Matcher:"), matcher, new Label("Max unread emails:"), maxUnread, keepUnread, run, rerun, hint);
         bar.setAlignment(Pos.CENTER_LEFT);
         bar.setPadding(new Insets(8));
         summary.setPadding(new Insets(8));
@@ -85,7 +98,42 @@ final class PipelinePane extends BorderPane {
         hint.setText(missingKey ? "Set " + GroqClient.KEY_VARIABLE + " before starting LitRoute to use the AI matcher." : "");
     }
 
-    private void run() {
+    /** Asks before discarding anything, saying exactly what will go, then resets and runs. */
+    private void clearAndRerun() {
+        if (!session.unlocked()) {
+            summary.setText("Not run: unlock the Gmail credentials first (Gmail tab).");
+            showCredentials.run();
+            return;
+        }
+        List<ScoredPaper> queued;
+        int processed;
+        try {
+            queued = ScoredQueueStore.atDefaultLocation().load();
+            processed = EmailCacheStore.atDefaultLocation().load().size();
+        } catch (IOException e) {
+            summary.setText("Could not read the stores: " + e.getMessage());
+            return;
+        }
+        long decided = queued.stream().filter(paper -> paper.status() != ReviewStatus.PENDING).count();
+        Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, String.format("This undoes every run so far and runs "
+                + "the pipeline again over the same alert emails:%n%n"
+                + "• the %d processed alert email(s) are marked unread in Gmail;%n"
+                + "• the review queue is emptied: %d paper(s), %d of them approved, dropped or sent - those decisions "
+                + "are lost;%n"
+                + "• the matched PDF copies in the students' folders, the scored papers and the extracted papers are "
+                + "cleared.%n%n"
+                + "If Gmail can't be reached, nothing is cleared.", processed, queued.size(), decided),
+                ButtonType.CANCEL, ButtonType.OK);
+        confirm.setTitle("Clear and re-run");
+        confirm.setHeaderText("Clear all matches and re-run the pipeline?");
+        confirm.getDialogPane().setMinWidth(560);
+        if (confirm.showAndWait().filter(ButtonType.OK::equals).isPresent()) {
+            run(true);
+        }
+    }
+
+    /** @param resetFirst undo every run so far before running (see {@link PipelineRunner#reset}) */
+    private void run(boolean resetFirst) {
         if (!session.unlocked()) {
             summary.setText("Not run: unlock the Gmail credentials first (Gmail tab).");
             showCredentials.run();
@@ -105,6 +153,11 @@ final class PipelinePane extends BorderPane {
                     PipelineRunner runner = PipelineRunner.atDefaultLocations(session.model(), kind, limit, markRead);
                     GmailCredentials gmail = session.gmail();
                     try {
+                        if (resetFirst) {
+                            runner.reset(gmail, log::line);
+                            // Show the emptied queue now, not only once the re-run has finished.
+                            Platform.runLater(queueChanged);
+                        }
                         return runner.run(gmail, log::line);
                     } finally {
                         gmail.clear();

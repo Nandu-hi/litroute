@@ -12,6 +12,7 @@ All files live in `~/.litroute/data/` by default (each class has `atDefaultLocat
 | **M7c** [EnrichmentCacheStore](EnrichmentCacheStore.java) | `enrichment_cache.json` | M3/M4 → M6 | The enriched, deduplicated candidates, plus the lookup cache |
 | **M7d** [ProfileStore](ProfileStore.java) | `profiles.json` | M5 → M6 | Every student's [Profile](../model/Profile.java) (vectors, text and keywords) |
 | **M7e** [ScoredQueueStore](ScoredQueueStore.java) | `scored_queue.json` + `matched/<profile>/` | M6 → M8/M9 | The professor's review queue of [ScoredPaper](../model/ScoredPaper.java)s, and each student's matched PDFs |
+| [ScoredPaperLog](ScoredPaperLog.java) | `scored_papers.json` | M6 → M9 | The papers M6 has already scored, matched or not, so a run scores only new ones |
 
 There is no M7b: candidates are written only once they are enriched and deduplicated, straight into M7c, so no half-finished snapshot is ever stored.
 
@@ -72,9 +73,15 @@ The review queue: a JSON list of scored (paper, student) pairs in the order they
   - Queuing a paper again finds its copy (same bytes) instead of copying it twice; another paper's PDF with the same file name is saved as `name-2.pdf`.
   - A paper without a PDF (paywalled), or whose download has since gone, is still queued, with no file; a gone PDF is logged.
   - A profile name that would lead outside the folder (`../x`) is refused.
-- **[setStatus(paper, status)](ScoredQueueStore.java#L150):** records the professor's decision. Returns `false` if that paper isn't queued for that student.
+- **[setStatus(paper, status)](ScoredQueueStore.java):** records the professor's decision. Returns `false` if that paper isn't queued for that student.
+- **[clear()](ScoredQueueStore.java):** empties the queue, decisions included, and deletes the PDF copies its entries point to in the students' folders (and any folder left empty). A file outside `matched/` is never touched. Used by M9's **Clear and re-run**.
 - **Concurrency:** the GUI (M8) changes statuses while the pipeline (M9) adds papers. Every change is a read-modify-write inside `synchronized` on **one lock per file path**, shared by all store objects for that file, so neither side can lose the other's update.
 - Queues saved before recommendations existed load with `recommended = false`.
+- Each entry stores its `relevance` (null when the matcher didn't measure it). Entries queued before relevance was stored take it from their rationale, which states it ("Relevance 0.82 (…").
+
+### [ScoredPaperLog](ScoredPaperLog.java)
+
+The paper keys ([ScoredPaper.paperKey](../model/ScoredPaper.java)) M6 has scored, whether or not they were matched. M9 records a batch here only after its matches are in the queue, so a crash in between scores the batch again rather than losing it. [clear()](ScoredPaperLog.java) forgets them all, for **Clear and re-run**.
 
 ### [StoredCandidate](StoredCandidate.java): the shared JSON shape of a `PaperCandidate`
 
@@ -89,4 +96,4 @@ The store fixtures use real papers' metadata (DOI, title, authors and venue as C
 | [EmailCacheStoreTest](../../../../../test/java/com/litroute/store/EmailCacheStoreTest.java) | A missing file loads as an empty set. Saved IDs load back unchanged. Saving overwrites the previous contents atomically. |
 | [EnrichmentCacheStoreTest](../../../../../test/java/com/litroute/store/EnrichmentCacheStoreTest.java) | A missing file loads as empty contents. Enriched records and the lookup cache load back equal. Loaded contents can be added to and saved again. Saving replaces the previous contents. A file missing one section still loads. An unreadable file, or an entry that lost its title, is reported as an `IOException`. |
 | [ProfileStoreTest](../../../../../test/java/com/litroute/store/ProfileStoreTest.java) | A missing file means no profile yet. Built profiles load back with identical vectors. Saving replaces a profile by name, and removing deletes only that one. A store saved before text was kept still loads. A corrupt file is reported, not treated as empty. |
-| [ScoredQueueStoreTest](../../../../../test/java/com/litroute/store/ScoredQueueStoreTest.java) | An empty queue when nothing is queued. Review statuses load back correctly. Re-scoring a queued paper keeps the professor's decision. The same paper for another student is queued separately. An unknown paper can't change status. Concurrent status changes and additions are all kept. The recommendation survives reloading, and older queues load as not recommended. A matched PDF is copied into the student's folder and the entry points to it; a paper matched to two students is in both folders; queuing it again doesn't copy it twice; another paper's PDF with the same name gets a numbered name; a paper without a PDF is queued without a file; a profile name can't lead outside the folder. A corrupt file is reported, not treated as empty. |
+| [ScoredQueueStoreTest](../../../../../test/java/com/litroute/store/ScoredQueueStoreTest.java) | An empty queue when nothing is queued. Review statuses load back correctly. Re-scoring a queued paper keeps the professor's decision. The same paper for another student is queued separately. An unknown paper can't change status. Concurrent status changes and additions are all kept. The recommendation survives reloading, and older queues load as not recommended. Relevance survives reloading, and older entries read it from their rationale. Clearing empties the queue and deletes only its own PDF copies. A matched PDF is copied into the student's folder and the entry points to it; a paper matched to two students is in both folders; queuing it again doesn't copy it twice; another paper's PDF with the same name gets a numbered name; a paper without a PDF is queued without a file; a profile name can't lead outside the folder. A corrupt file is reported, not treated as empty. |

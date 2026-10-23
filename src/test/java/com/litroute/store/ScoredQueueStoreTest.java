@@ -63,6 +63,48 @@ public class ScoredQueueStoreTest {
                 reloaded);
     }
 
+    /**
+     * Relevance survives a save and reload, an AI match without one stays without, and an entry queued
+     * before relevance was stored takes it from its rationale, which states it.
+     */
+    @Test
+    public void relevanceLoadsBackAndOlderEntriesReadItFromTheirRationale() throws IOException {
+        Path file = newFile();
+        ScoredPaper measured = new ScoredPaper(Candidates.full(), "RP1-mh-risk", 0.29, "Closest in RP1-mh-risk: ...",
+                ReviewStatus.PENDING, true, Optional.of(0.82));
+        ScoredPaper unmeasured = scored(Candidates.sparse(), "RP4-mh-char", 0.70);
+        new ScoredQueueStore(file).addAll(List.of(measured, unmeasured));
+        assertEquals(List.of(measured, unmeasured), new ScoredQueueStore(file).load());
+
+        ScoredPaper older = new ScoredPaper(Candidates.full(), "RP2-pbee-res-recov", 0.26, "Best match: 29% of the "
+                + "paper's match goes to RP2-pbee-res-recov (next: RP1-mh-risk 26%). Relevance 0.91 (a student's own "
+                + "papers typically 0.9, other students' 0.1). Closest in RP2-pbee-res-recov: ...", ReviewStatus.PENDING);
+        Path olderFile = newFile();
+        new ScoredQueueStore(olderFile).addAll(List.of(older));
+        assertEquals(Optional.of(0.91), new ScoredQueueStore(olderFile).load().get(0).relevance());
+    }
+
+    /** Clearing empties the queue and deletes the students' PDF copies, and only those. */
+    @Test
+    public void clearingEmptiesTheQueueAndDeletesOnlyItsPdfCopies() throws IOException {
+        Path data = Files.createTempDirectory("litroute-test");
+        Path pdf = Files.write(data.resolve("downloaded.pdf"), "%PDF-1.4 test".getBytes());
+        ScoredQueueStore store = new ScoredQueueStore(data.resolve("scored_queue.json"), data.resolve("matched"));
+        PaperCandidate withPdf = Candidates.full().withPdfPath(Optional.of(pdf));
+        List<ScoredPaper> queued = store.addAll(List.of(scored(withPdf, "RP1-mh-risk", 0.9),
+                scored(Candidates.sparse(), "RP4-mh-char", 0.8)));
+        Path copy = queued.get(0).candidate().pdfPath().orElseThrow();
+        assertTrue(copy.startsWith(data.resolve("matched")) && Files.exists(copy));
+        store.setStatus(queued.get(0), ReviewStatus.APPROVED);
+
+        assertEquals(2, store.clear());
+
+        assertTrue(store.load().isEmpty());
+        assertFalse(Files.exists(copy));
+        assertFalse("the emptied student folder goes too", Files.exists(copy.getParent()));
+        assertTrue("M2's download is not the queue's to delete", Files.exists(pdf));
+    }
+
     @Test
     public void rescoringAQueuedPaperKeepsTheProfessorsDecision() throws IOException {
         ScoredQueueStore store = new ScoredQueueStore(newFile());

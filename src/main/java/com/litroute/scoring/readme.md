@@ -34,8 +34,8 @@ Profiles (M7d)                                   Candidate (M7c or a local PDF)
         └─ score     = relevance × share  + rationale
                                 │
                                 ▼
-  match(batch):  best student per paper ─▶ per student, rank by score
-                 recommend top N (default 3) that are research papers and have relevance ≥ 0.5
+  match(batch):  best student per paper ─▶ keep it only if it is a research paper
+                 with relevance ≥ 0.7; no quota per student, the rest match no one
                                 │
                                 ▼
        Map<student, List<ScoredPaper>> ──▶ ScoredQueueStore.addAll (M7e) ──▶ M8 review
@@ -67,7 +67,27 @@ Profiles (M7d)                                   Candidate (M7c or a local PDF)
 
 ## Assigning and recommending
 
-[match](RelevanceScorer.java#L293) gives each paper to its highest-scoring student. Each student's top 3 are recommended if they are research papers (not book reviews, discussions, errata and the like; [isResearch](RelevanceScorer.java#L337)) with relevance ≥ 0.5 ([RELEVANCE_FLOOR](RelevanceScorer.java#L97)).
+[match](RelevanceScorer.java#L287) gives each paper to its highest-scoring student, but only if it is a research paper (not a book review, discussion, erratum and the like; [PaperCandidate.isResearch](../model/PaperCandidate.java), which M2 already applies) with relevance ≥ 0.7 ([RELEVANCE_FLOOR](RelevanceScorer.java#L98)). Any other paper matches no one and is not queued. There is no quota per student: a student gets every paper that qualifies, however many or few.
+
+**Why 0.7 and no quota** (October 2026, the professor's first reviewed batch of 31 alert papers): with the old rule every paper was queued and each student's top 3 above 0.5 recommended, so 20 of the 31 queued papers were dropped, 15 of them landing on RP4-mh-char, the broadest hazard profile. Five were book reviews, a discussion, a closure and an erratum (one book review scored relevance 0.96); nine were below 0.5. Above 0.5, six of the 17 research papers were generic hazard or disaster-management papers he dropped, and the quota of 3 had cut a rainstorm hazard-chain paper (relevance 0.91) from RP4. Raising the floor while queuing only what clears it:
+
+| Rule | Queued | Approved by the professor | Dropped by him |
+|---|---|---|---|
+| old: everything, top 3 per student ★ | 31 | 11 (all ★) | 20 |
+| research, relevance ≥ 0.5 | 17 | 11 | 6 |
+| research, relevance ≥ 0.6 | 15 | 10 | 5 |
+| research, relevance ≥ 0.7 | 11 | 9 (+ the hazard-chain paper) | 1 |
+| research, relevance ≥ 0.75 | 9 | 8 (+ the hazard-chain paper) | 0 |
+
+On the papers the professor filed by student, 0.7 still matches 41 of 46 to their student from a full PDF or from a title and abstract (43 at 0.5), and 33 of 46 from a title alone (35 at 0.5). 0.75 would buy one fewer wrong paper in the alerts for a lower recall on everything, so 0.7 was chosen.
+
+**Titles weigh more** (October 2026, after the professor ruled that three papers left out may not be missed: the flood fragility of bridge piers for RP1 and the compound geohazards of the Greater Bay Area for RP4, both known by title only because Elsevier deposits no abstracts, and the ground-motion orientation paper for RP8, whose title says more than its abstract):
+
+- **Title lift** ([TITLE_LIFT](RelevanceScorer.java) = 0.6): a paper with an abstract or PDF is also scored from its title alone; when the title looks closer to a student, the relevance rises by 0.6 of the gap, and it is never lowered. Ground-motion orientation: 0.59 from its abstract, 0.85 from its title, 0.70 lifted. 0.45 would leave it at 0.68.
+- **Titles weigh meaning above words** ([TITLE_MEANING_WEIGHT](RelevanceScorer.java) = 0.65): a dozen words share few terms with anyone's papers.
+- **Title-only floor** ([TITLE_FLOOR](RelevanceScorer.java) = 0.43): a title's relevance stays near the middle of the scale even when it plainly belongs to a student. Bridge piers 0.61 and compound geohazards 0.44 are in; the out-of-scope review of steels under impact, 0.41, is out.
+
+On the batch: 16 of 26 matched, the 14 the professor wants plus the flood cost–benefit and drought–flood papers (one out of scope, one borderline). On his filed papers known by title and abstract, no match changes; judged by title alone, 34 of 46 reach their student (32 before) and 5 reach another (3 before).
 
 **Result** on the 48 papers the professor filed by student, from full PDFs: `HYBRID` (the default) assigns 46 correctly and gets every top 3 right. `SEMANTIC` alone gets 43 and P@3 0.81; `LEXICAL` alone gets 43 and 0.88.
 
@@ -141,13 +161,13 @@ mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCl
 Real data only: the real model, the real profiles, the professor's filed papers, the client's real alert emails, and a real Groq reply.
 
 - [RelevanceScorerTest](../../../../../test/java/com/litroute/scoring/RelevanceScorerTest.java):
-  - each paper goes to one student; every student is listed, in profile order, papers best first;
-  - filed papers reach their student: ≥ 95% of the readable ones, ≥ 90% from title + abstract alone;
-  - P@3 ≥ 0.8, and at most 3 recommendations per student;
+  - a paper goes to at most one student, its best, and only with relevance ≥ 0.7; every student is listed, in profile order, papers best first;
+  - filed papers reach their student: ≥ 85% of the readable ones, from the PDF and from title + abstract alone, with ≥ 90% of matches right;
+  - P@3 ≥ 0.8;
   - hybrid beats SPECTER2 alone;
   - every score is in 0–1 and explained;
   - blank, other-model and text-less profiles are handled;
-  - from the client's alerts, only relevant research is recommended.
+  - from the client's alerts, the relevant SSI review is matched; the irrelevant ceramic-coating paper is not (M2 has already dropped the discussion, closure, book reviews and erratum).
 - [AiPaperMatcherTest](../../../../../test/java/com/litroute/scoring/ai/AiPaperMatcherTest.java), on Groq's recorded answer: every student listed in order, papers best first and only from the batch; one focus paper per matched student with a one-line reason; the prompt names every student and paper; invented students and paper ids are dropped; a stray focus gives way to the best match; an empty batch asks nothing; each student is described by at most 6 titles and their keywords; the sample batch fits the token window in one request, and a batch too long for a smaller window goes in as few requests as fit, each within it, naming every paper once and in order, with still one focus paper per student.
 - [GroqClientTest](../../../../../test/java/com/litroute/scoring/ai/GroqClientTest.java): the request (endpoint, key only in a header, strict JSON schema, low reasoning, answer budget); the strict-mode rewrite; the recorded answer parses; a per-minute rate limit is waited out and a used-up daily one reported at once; the wait is read from Groq's message; a lasting outage, a refused or too-large request and a truncated answer are errors; key and model from the environment; the prompt budget is the tokens a minute (free tier, or `GROQ_TOKENS_PER_MINUTE`) less the answer.
 - [LexicalIndexTest](../../../../../test/java/com/litroute/scoring/LexicalIndexTest.java), [TermsTest](../../../../../test/java/com/litroute/scoring/TermsTest.java): held-out papers are closest to their own student; term folding, stems and pairs.

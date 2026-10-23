@@ -75,6 +75,9 @@ Every source follows the same contract:
 
 - A 404 or other 4xx means "no such record" (empty).
 - A 429 or 5xx throws.
+- **Preprints:** a journal article and its preprint (SSRN, Research Square) share a title, and Crossref may list the preprint first. Among title-search hits whose titles match, [CrossrefSource](CrossrefSource.java) prefers one in the journal the alert names, then any published version over a preprint (`type: posted-content`). So "Drought-flood coexistence…" gets its International Journal of Disaster Risk Reduction DOI, not `10.2139/ssrn.4681645`.
+- **Truncated abstracts:** some alerts cut the abstract off after a dozen words (Wiley's "Recommended articles": "…ground motion recordings are"). When a looked-up abstract begins with the alert's text and goes on, it replaces it ([OnlinePaperEnricher.completed](OnlinePaperEnricher.java)); otherwise the alert's abstract is kept.
+- **Rate limits:** the live fetcher is a [PacedFetcher](PacedFetcher.java). It starts Crossref requests at least 250 ms apart (Crossref's public pool allows 5 a second, one at a time) and OpenAlex requests 125 ms apart (10 a second). A 429 asking for a wait of up to 5 s (or stating none, taken as 1 s) is waited out and retried once. A longer wait, such as OpenAlex's spent daily budget (hours), is returned at once as an outage.
 - Bodies are capped at 4 MiB.
 - HTML in API text (`&amp;`, `<i>`, `<sub>`) is turned into plain text, and a leading "Abstract" heading is stripped.
 

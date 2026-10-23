@@ -45,7 +45,7 @@ import java.util.function.Consumer;
  *       testing, the runner can be told to leave the alerts unread; M7a still keeps them from being
  *       processed twice;
  *   <li>match the papers no matcher has seen yet against the profiles (M6) and add the matches to the
- *       review queue (M7e), then record those papers as scored ({@link ScoredPaperLog}).
+ *       review queue (M7e), then record those papers as scored ({@link ScoredPaperLog}), matched or not.
  * </ol>
  *
  * The batch M6 sees is every deduplicated paper not yet scored, not just this run's emails, so papers
@@ -94,6 +94,17 @@ public final class PipelineRunner {
      */
     public record Report(BuildReport profiles, int newAlerts, int papersHeld, int papersScored, int unscored,
             int matches, int recommended, int queueSize) {
+    }
+
+    /**
+     * What a reset undid.
+     *
+     * @param processedEmails alert emails M7a had recorded as processed
+     * @param markedUnread    of those, how many were found in the inbox and are unread again; the rest
+     *                        are no longer in the inbox and will not be fetched again
+     * @param queued          review-queue entries discarded, with the professor's decisions on them
+     */
+    public record ResetReport(int processedEmails, int markedUnread, int queued) {
     }
 
     private final ProfileBuilder profileBuilder;
@@ -171,6 +182,32 @@ public final class PipelineRunner {
     }
 
     /**
+     * Undoes every run so far, so the next run processes the same alert emails from scratch: extracted,
+     * enriched, matched and queued again. First the emails M7a has recorded are marked unread in Gmail;
+     * only if that worked are the review queue (with the professor's decisions and the students' PDF
+     * copies), the record of scored papers, M7c and finally M7a cleared. So a Gmail failure changes
+     * nothing, and a crash part-way leaves M7a for last: its emails are skipped, never lost. Downloaded
+     * PDFs stay where M2 saved them.
+     *
+     * @param credentials the Gmail account the emails were read from; not cleared
+     * @param progress    told what each step is doing
+     * @throws IOException if Gmail could not be reached (nothing was cleared) or a store could not be written
+     */
+    public ResetReport reset(GmailCredentials credentials, Consumer<String> progress) throws IOException {
+        Set<String> processed = processedEmails.load();
+        progress.accept("Marking the " + processed.size() + " processed alert email(s) unread in Gmail ("
+                + credentials.emailAddress() + ")...");
+        int unread = emails.markUnread(credentials, processed);
+        progress.accept(unread + " of " + processed.size() + " are unread again"
+                + (unread < processed.size() ? "; the rest are no longer in the inbox and won't be fetched again." : "."));
+        int queued = queue.clear();
+        scored.clear();
+        batches.forgetAll();
+        progress.accept("Cleared the review queue (" + queued + " paper(s)), the scored papers and the processed emails.");
+        return new ResetReport(processed.size(), unread, queued);
+    }
+
+    /**
      * Runs the pipeline once.
      *
      * @param credentials the Gmail account to read; not cleared
@@ -225,6 +262,10 @@ public final class PipelineRunner {
             progress.accept("  " + entry.getKey() + ": " + entry.getValue().size() + " matched, " + picked + " recommended");
         }
         progress.accept(matched.size() + " match(es) queued for review; the queue holds " + updated.size() + ".");
+        if (matched.size() < fresh.size()) {
+            progress.accept((fresh.size() - matched.size()) + " paper(s) were not close enough to any student's work "
+                    + "and were not queued.");
+        }
         return new Report(built, alerts.size(), held.size(), fresh.size(), 0, matched.size(), recommended, updated.size());
     }
 

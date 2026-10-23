@@ -60,7 +60,7 @@ public final class JdkHttpFetcher implements HttpFetcher {
                 }
                 return new HttpReply(response.statusCode(),
                         response.headers().firstValue("content-type").orElse(""),
-                        out.toByteArray(), response.uri(), truncated);
+                        out.toByteArray(), response.uri(), truncated, response.headers().firstValue("retry-after"));
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
