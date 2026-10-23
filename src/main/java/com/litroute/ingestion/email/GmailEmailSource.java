@@ -4,6 +4,8 @@ import com.litroute.model.RawEmail;
 import com.litroute.security.GmailCredentials;
 import jakarta.mail.Address;
 import jakarta.mail.BodyPart;
+import jakarta.mail.FetchProfile;
+import jakarta.mail.Flags;
 import jakarta.mail.Folder;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
@@ -12,10 +14,12 @@ import jakarta.mail.Part;
 import jakarta.mail.Session;
 import jakarta.mail.Store;
 import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.search.FlagTerm;
 import java.io.IOException;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.Properties;
@@ -24,8 +28,13 @@ import java.util.logging.Level;
 import java.util.logging.Logger;
 
 /**
- * IMAP-backed M1 EmailSource. Scans the whole INBOX (no dedicated Gmail
- * label required) and skips anything already in M7a's cache. Bodies are
+ * IMAP-backed M1 EmailSource. Scans the INBOX's unread messages (no dedicated
+ * Gmail label required), newest first and at most {@code maxUnread} of them per
+ * run, skipping anything already in M7a's cache. Messages already processed do
+ * not count against the limit, so a backlog larger than the limit is worked
+ * through over successive runs. The INBOX is opened read-only, so fetching
+ * leaves every message unread; once the pipeline has recorded the alerts in
+ * M7a, {@link #markRead} marks just those read. Bodies are
  * extracted before the final accept/reject decision because AlertClassifier
  * needs the plain-text body to recognize a forwarded alert by its quoted
  * original headers (see AlertClassifier's javadoc) - classification can no
@@ -41,6 +50,10 @@ public final class GmailEmailSource implements EmailSource {
     private final String imapHost;
     private final int imapPort;
     private final boolean trustAnyServerCertificate;
+    private final int maxUnread;
+
+    /** How many unread messages a run examines unless told otherwise. */
+    public static final int DEFAULT_MAX_UNREAD = 50;
 
     /**
      * Input: none.
@@ -50,6 +63,14 @@ public final class GmailEmailSource implements EmailSource {
      */
     public GmailEmailSource() {
         this(new AlertClassifier());
+    }
+
+    /**
+     * Input: maxUnread - how many unread, not yet processed messages one run examines, at least 1.
+     * Output: a new GmailEmailSource using a default AlertClassifier and real Gmail IMAP settings.
+     */
+    public GmailEmailSource(int maxUnread) {
+        this(new AlertClassifier(), GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, false, maxUnread);
     }
 
     /**
@@ -73,6 +94,16 @@ public final class GmailEmailSource implements EmailSource {
      * appropriate against a local test server's self-signed certificate - never for real Gmail.
      */
     GmailEmailSource(AlertClassifier alertClassifier, String imapHost, int imapPort, boolean trustAnyServerCertificate) {
+        this(alertClassifier, imapHost, imapPort, trustAnyServerCertificate, DEFAULT_MAX_UNREAD);
+    }
+
+    /** As above, examining at most {@code maxUnread} unread, not yet processed messages per run. */
+    GmailEmailSource(AlertClassifier alertClassifier, String imapHost, int imapPort, boolean trustAnyServerCertificate,
+            int maxUnread) {
+        if (maxUnread < 1) {
+            throw new IllegalArgumentException("maxUnread must be at least 1, was " + maxUnread);
+        }
+        this.maxUnread = maxUnread;
         this.alertClassifier = alertClassifier;
         this.imapHost = imapHost;
         this.imapPort = imapPort;
@@ -87,39 +118,120 @@ public final class GmailEmailSource implements EmailSource {
      */
     @Override
     public List<RawEmail> fetchNewAlerts(GmailCredentials credentials, Set<String> alreadyProcessedMessageIds) {
+        try {
+            return withStore(credentials, store -> readInbox(store, alreadyProcessedMessageIds));
+        } catch (MessagingException e) {
+            LOG.log(Level.WARNING, "Failed to fetch mail from Gmail; returning no new alerts for this run", e);
+            return List.of();
+        }
+    }
+
+    /**
+     * Input: credentials and the Message-IDs of alerts the pipeline has recorded in M7a.
+     * Output: how many of them were found unread in the INBOX and marked read; 0 if Gmail could not be reached.
+     *
+     * Opens the INBOX read-write, finds the unread messages by their Message-ID header alone, and sets the
+     * \Seen flag on those in the list; every other message is left as it was.
+     */
+    @Override
+    public int markRead(GmailCredentials credentials, Collection<String> messageIds) {
+        if (messageIds.isEmpty()) {
+            return 0;
+        }
+        Set<String> wanted = Set.copyOf(messageIds);
+        try {
+            return withStore(credentials, store -> {
+                Folder inbox = store.getFolder("INBOX");
+                inbox.open(Folder.READ_WRITE);
+                try {
+                    List<Message> processed = new ArrayList<>();
+                    for (Message message : unreadWithIds(inbox)) {
+                        if (wanted.contains(firstHeaderOrNull(message, "Message-ID"))) {
+                            processed.add(message);
+                        }
+                    }
+                    if (!processed.isEmpty()) {
+                        inbox.setFlags(processed.toArray(Message[]::new), new Flags(Flags.Flag.SEEN), true);
+                    }
+                    return processed.size();
+                } finally {
+                    inbox.close(false);
+                }
+            });
+        } catch (MessagingException e) {
+            LOG.log(Level.WARNING, "Failed to mark processed alerts as read in Gmail; they stay unread", e);
+            return 0;
+        }
+    }
+
+    /** What to do with a connected Store. */
+    @FunctionalInterface
+    private interface StoreWork<T> {
+        T run(Store store) throws MessagingException;
+    }
+
+    /**
+     * Input: credentials and the work to do while connected.
+     * Output: the work's result; throws MessagingException if connecting or the work fails.
+     *
+     * Logs in over IMAP, runs the work, and always closes the connection and wipes the password copy.
+     */
+    private <T> T withStore(GmailCredentials credentials, StoreWork<T> work) throws MessagingException {
         char[] appPassword = credentials.appPassword();
         try {
             Session session = Session.getInstance(imapProperties());
             Store store = session.getStore("imaps");
             try {
                 store.connect(imapHost, imapPort, credentials.emailAddress(), new String(appPassword));
-                return readInbox(store, alreadyProcessedMessageIds);
+                return work.run(store);
             } finally {
                 if (store.isConnected()) {
                     store.close();
                 }
             }
-        } catch (MessagingException e) {
-            LOG.log(Level.WARNING, "Failed to fetch mail from Gmail; returning no new alerts for this run", e);
-            return List.of();
         } finally {
             Arrays.fill(appPassword, '\0');
         }
     }
 
     /**
+     * Input: an open folder.
+     * Output: its unread messages, oldest first, with only their Message-ID header fetched.
+     */
+    private static Message[] unreadWithIds(Folder folder) throws MessagingException {
+        Message[] unread = folder.search(new FlagTerm(new Flags(Flags.Flag.SEEN), false));
+        FetchProfile ids = new FetchProfile();
+        ids.add("Message-ID");
+        folder.fetch(unread, ids);
+        return unread;
+    }
+
+    /**
      * Input: a connected Store and the message IDs already processed.
-     * Output: the new alert emails in the INBOX; throws MessagingException if the folder cannot be read.
+     * Output: the new alert emails among the newest maxUnread unread, unprocessed messages, oldest first;
+     * throws MessagingException if the folder cannot be read.
      *
-     * Opens the INBOX read-only and converts each new alert message into a RawEmail.
+     * Opens the INBOX read-only, picks the unread messages by their Message-ID header alone, and converts
+     * each new alert among them into a RawEmail.
      */
     private List<RawEmail> readInbox(Store store, Set<String> alreadyProcessedMessageIds) throws MessagingException {
         List<RawEmail> alerts = new ArrayList<>();
         Folder inbox = store.getFolder("INBOX");
         inbox.open(Folder.READ_ONLY);
         try {
-            for (Message message : inbox.getMessages()) {
-                Optional<RawEmail> rawEmail = toRawEmailIfNewAlert(message, alreadyProcessedMessageIds);
+            Message[] unread = unreadWithIds(inbox);
+            // Newest first, so the limit keeps the latest alerts; only the chosen ones are downloaded in full.
+            List<Message> chosen = new ArrayList<>();
+            for (int i = unread.length - 1; i >= 0 && chosen.size() < maxUnread; i--) {
+                String messageId = firstHeaderOrNull(unread[i], "Message-ID");
+                if (messageId != null && !alreadyProcessedMessageIds.contains(messageId)) {
+                    chosen.add(unread[i]);
+                }
+            }
+            LOG.info("Examining " + chosen.size() + " of " + unread.length + " unread messages (limit " + maxUnread
+                    + ", already processed ones skipped)");
+            for (int i = chosen.size() - 1; i >= 0; i--) {
+                Optional<RawEmail> rawEmail = toRawEmailIfNewAlert(chosen.get(i), alreadyProcessedMessageIds);
                 rawEmail.ifPresent(alerts::add);
             }
         } finally {
@@ -242,6 +354,8 @@ public final class GmailEmailSource implements EmailSource {
         properties.put("mail.imaps.ssl.enable", "true");
         properties.put("mail.imaps.connectiontimeout", "10000");
         properties.put("mail.imaps.timeout", "10000");
+        // BODY.PEEK: reading a message must leave it unread, whether or not the server honours read-only mode.
+        properties.put("mail.imaps.peek", "true");
         if (trustAnyServerCertificate) {
             properties.put("mail.imaps.ssl.trust", "*");
             properties.put("mail.imaps.ssl.checkserveridentity", "false");

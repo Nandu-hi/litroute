@@ -26,7 +26,7 @@ PaperCandidate (deduplicated, in M7c)
 ScoredPaper  (status = ReviewStatus.PENDING)              in M7e review queue
    │  M8 professor approves / drops
    ▼
-ScoredPaper  (status = APPROVED ─▶ M10 sends to the student, or DROPPED)
+ScoredPaper  (status = APPROVED ─▶ M10 sends to the student ─▶ SENT, or DROPPED)
 ```
 
 ## The records
@@ -85,7 +85,7 @@ How relevant one candidate is to one student, and why.
 
 ### [ReviewStatus](ReviewStatus.java)
 
-An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10) or `DROPPED` (not to be sent).
+An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10), `DROPPED` (not to be sent) or `SENT` (emailed to the student by M10; approving it again sends it again).
 
 ## How it's tested
 

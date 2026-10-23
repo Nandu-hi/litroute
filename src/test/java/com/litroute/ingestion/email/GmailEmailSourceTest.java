@@ -3,6 +3,7 @@ package com.litroute.ingestion.email;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertTrue;
 
+import com.icegreen.greenmail.store.MailFolder;
 import com.icegreen.greenmail.util.GreenMail;
 import com.icegreen.greenmail.util.GreenMailUtil;
 import com.icegreen.greenmail.util.ServerSetup;
@@ -12,6 +13,7 @@ import com.litroute.model.RawEmail;
 import com.litroute.security.GmailCredentials;
 import com.litroute.testing.SampleMails;
 import com.litroute.testing.SampleMails.Sample;
+import jakarta.mail.Flags;
 import jakarta.mail.Message;
 import jakarta.mail.Session;
 import jakarta.mail.internet.InternetAddress;
@@ -166,7 +168,103 @@ public class GmailEmailSourceTest {
         assertTrue(unreachable.fetchNewAlerts(credentials(), Set.of()).isEmpty());
     }
 
+    /** The limit keeps the newest unread messages, and hands them on oldest first like any batch. */
+    @Test
+    public void onlyTheNewestUnreadMessagesUpToTheLimitAreExamined() throws Exception {
+        deliverInOrder(SampleMails.ASCE, SampleMails.SCIENCEDIRECT, SampleMails.TANDFONLINE);
+        GmailEmailSource limited = limitedTo(2);
+
+        List<RawEmail> fetched = limited.fetchNewAlerts(credentials(), Set.of());
+
+        assertEquals(List.of(SampleMails.SCIENCEDIRECT.subject(), SampleMails.TANDFONLINE.subject()),
+                fetched.stream().map(RawEmail::subject).toList());
+    }
+
+    /** A backlog larger than the limit is worked through: processed messages do not use up the limit. */
+    @Test
+    public void messagesAlreadyProcessedDoNotCountAgainstTheLimit() throws Exception {
+        deliverInOrder(SampleMails.ASCE, SampleMails.SCIENCEDIRECT, SampleMails.TANDFONLINE);
+        GmailEmailSource limited = limitedTo(2);
+
+        Set<String> processed = limited.fetchNewAlerts(credentials(), Set.of()).stream()
+                .map(RawEmail::messageId).collect(Collectors.toSet());
+        List<RawEmail> next = limited.fetchNewAlerts(credentials(), processed);
+
+        assertEquals(List.of(SampleMails.ASCE.subject()), next.stream().map(RawEmail::subject).toList());
+    }
+
+    /** Mail the professor has already read is left alone, and fetching marks nothing as read. */
+    @Test
+    public void readMessagesAreSkippedAndFetchingLeavesTheRestUnread() throws Exception {
+        deliverInOrder(SampleMails.ASCE, SampleMails.GOOGLE_SCHOLAR);
+        MailFolder inbox = greenMail.getManagers().getImapHostManager()
+                .getInbox(greenMail.getUserManager().getUser(TEST_USER));
+        inbox.getMessages().get(0).setFlag(Flags.Flag.SEEN, true);
+
+        List<RawEmail> first = emailSource.fetchNewAlerts(credentials(), Set.of());
+        List<RawEmail> again = emailSource.fetchNewAlerts(credentials(), Set.of());
+
+        assertEquals(List.of(SampleMails.GOOGLE_SCHOLAR.subject()), first.stream().map(RawEmail::subject).toList());
+        assertEquals("still unread after being fetched", first.stream().map(RawEmail::messageId).toList(),
+                again.stream().map(RawEmail::messageId).toList());
+        assertEquals("only the message read beforehand is marked read", 1,
+                inbox.getMessages().stream().filter(stored -> stored.getFlags().contains(Flags.Flag.SEEN)).count());
+    }
+
+    /** Once the pipeline has recorded them, the alerts it read are marked read; the professor's other mail is not. */
+    @Test
+    public void markingProcessedAlertsReadLeavesOtherUnreadMailAlone() throws Exception {
+        deliverInOrder(SampleMails.ASCE, SampleMails.GOOGLE_SCHOLAR);
+        GreenMailUtil.sendMimeMessage(message(SampleMails.FORWARDER, "Re: research profiles",
+                "I will send the research profiles later today.", "<div>I will send the research profiles later today.</div>"));
+        greenMail.waitForIncomingEmail(3);
+        MailFolder inbox = greenMail.getManagers().getImapHostManager()
+                .getInbox(greenMail.getUserManager().getUser(TEST_USER));
+
+        List<String> fetched = emailSource.fetchNewAlerts(credentials(), Set.of()).stream()
+                .map(RawEmail::messageId).toList();
+        int marked = emailSource.markRead(credentials(), fetched);
+
+        assertEquals(2, fetched.size());
+        assertEquals(2, marked);
+        assertEquals(List.of(true, true, false), inbox.getMessages().stream()
+                .map(stored -> stored.getFlags().contains(Flags.Flag.SEEN)).toList());
+        assertTrue("read alerts are not fetched again", emailSource.fetchNewAlerts(credentials(), Set.of()).isEmpty());
+        assertEquals("marking them again finds nothing unread", 0, emailSource.markRead(credentials(), fetched));
+    }
+
+    /** Failing to mark mail read must not take the run down either; the alerts simply stay unread. */
+    @Test
+    public void markingReadWithRejectedCredentialsMarksNothingRatherThanThrowing() throws Exception {
+        deliver(SampleMails.ASCE);
+        greenMail.waitForIncomingEmail(1);
+        List<String> fetched = emailSource.fetchNewAlerts(credentials(), Set.of()).stream()
+                .map(RawEmail::messageId).toList();
+
+        int marked = emailSource.markRead(new GmailCredentials(TEST_USER, "wrong-password".toCharArray()), fetched);
+
+        assertEquals(0, marked);
+        assertEquals(fetched, emailSource.fetchNewAlerts(credentials(), Set.of()).stream().map(RawEmail::messageId).toList());
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void aLimitBelowOneIsRejected() {
+        limitedTo(0);
+    }
+
+    private GmailEmailSource limitedTo(int maxUnread) {
+        return new GmailEmailSource(new AlertClassifier(), "127.0.0.1", greenMail.getImaps().getPort(), true, maxUnread);
+    }
+
     // ---- delivery helpers: Gmail sends multipart/alternative, so that is what arrives here too
+
+    /** Delivers the samples one at a time, so the inbox holds them in this order, the last newest. */
+    private void deliverInOrder(Sample... samples) throws Exception {
+        for (int i = 0; i < samples.length; i++) {
+            deliver(samples[i]);
+            greenMail.waitForIncomingEmail(i + 1);
+        }
+    }
 
     private void deliver(Sample sample) throws Exception {
         deliver(SampleMails.FORWARDER, sample.subject(), sample);

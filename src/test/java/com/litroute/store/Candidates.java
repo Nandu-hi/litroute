@@ -10,12 +10,12 @@ import java.util.Optional;
  * The full one is a real paper (DOI, title, authors and venue as Crossref holds them), so the
  * fixture exercises the field shapes the pipeline actually produces rather than invented ones.
  */
-final class Candidates {
+public final class Candidates {
 
     private Candidates() {
     }
 
-    static PaperCandidate full() {
+    public static PaperCandidate full() {
         return new PaperCandidate("<m1@mail.gmail.com>",
                 "Hygrothermal analysis of ceramic coating durability under thermal fluctuations "
                         + "on building facades in Brasília",
@@ -33,7 +33,7 @@ final class Candidates {
      * Another real paper from the client's SpringerOpen alert, as Crossref holds it; its PDF (the first
      * 8 KB, as recorded) is {@code src/test/resources/http/8d0d08f9b152568722f5.pdf}.
      */
-    static PaperCandidate ssiReview(Path pdf) {
+    public static PaperCandidate ssiReview(Path pdf) {
         return new PaperCandidate("<m1@mail.gmail.com>",
                 "Advancing soil-structure interaction (SSI): a comprehensive review of current practices, challenges, "
                         + "and future directions",
@@ -44,7 +44,7 @@ final class Candidates {
                 Optional.of("https://doi.org/10.1186/s43065-025-00118-2"), Optional.empty(), Optional.of(pdf));
     }
 
-    static PaperCandidate sparse() {
+    public static PaperCandidate sparse() {
         return new PaperCandidate("<m2@mail.gmail.com>", "A paper the email told us almost nothing about",
                 List.of(), Optional.empty(), Optional.empty(), Optional.empty(), Optional.empty(),
                 Optional.empty(), Optional.empty(), Optional.empty());

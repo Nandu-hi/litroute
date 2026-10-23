@@ -6,7 +6,7 @@ import java.util.Locale;
 /**
  * Output of M6 RelevanceScorer: how relevant one candidate paper is to one student, and why. The
  * review queue (M7e) holds these; the professor approves or drops each one (M8), and approved ones
- * are sent to the student (M10).
+ * are sent to the student (M10), which marks them sent.
  *
  * @param candidate   the deduplicated paper
  * @param profileName the student's profile, as M7d names it
@@ -55,9 +55,13 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
      * way M4 identifies it - by DOI when it has one, otherwise by its title.
      */
     public String queueKey() {
-        String paper = candidate.doi()
+        return profileName + "\n" + paperKey(candidate);
+    }
+
+    /** A paper's identity whichever student it is matched to: by DOI when it has one, otherwise by title. */
+    public static String paperKey(PaperCandidate candidate) {
+        return candidate.doi()
                 .map(doi -> "doi:" + doi.toLowerCase(Locale.ROOT))
                 .orElseGet(() -> "title:" + Titles.compact(candidate.title()));
-        return profileName + "\n" + paper;
     }
 }

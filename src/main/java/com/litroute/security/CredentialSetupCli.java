@@ -4,8 +4,8 @@ import java.io.Console;
 import java.util.Arrays;
 
 /**
- * One-time onboarding / "change credentials" entry point until M8's JavaFX
- * UI exists. Run it whenever the Gmail App Password needs to be set for the
+ * One-time onboarding / "change credentials" entry point from a terminal; the
+ * M8 UI's File > Gmail credentials does the same. Run it whenever the Gmail App Password needs to be set for the
  * first time or rotated (e.g. after revoking the old one in the Google
  * Account security settings) - it simply overwrites the encrypted file.
  *

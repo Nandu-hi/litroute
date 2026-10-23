@@ -25,8 +25,11 @@ import java.util.regex.Pattern;
  * ({@link AlertLines}) and a paper is: a line that is nothing but one link with title-like text,
  * followed - before the next title, heading or rule - by at least an author list or a venue line.
  * That last requirement is what keeps "Read article", "Unsubscribe" and footer address links from
- * being mistaken for papers. Anything the lines don't state (journal in a header, an unreadable
- * link) is left empty for the enrichment stage.
+ * being mistaken for papers; a copyright line or the issue header never counts as a venue line, so a
+ * footer link above "© 2025 ..." or the journal's own name above "VOLUME: 27" is not a paper either.
+ * An article-type label ("Technical Papers") heads every paper below it until the next label, as in a
+ * table of contents. Anything the lines don't state (journal in a header, an unreadable link) is left
+ * empty for the enrichment stage.
  *
  * Example input (HTML body of one alert email):
  * <pre>{@code
@@ -63,7 +66,7 @@ final class AlertHtmlParser {
             + "|cancel alert|sign in|log ?in|click here|here|your profile)$");
     private static final Pattern TYPE_LINE = Pattern.compile("(?i)^(?:[\\w\\-]+\\s+){0,3}(?:articles?|papers?"
             + "|reviews?|research|notes?|letters?|communications?|stud(?:y|ies)|reports?|erratum|editorial"
-            + "|perspective|commentary|corrections?)$");
+            + "|perspective|commentary|corrections?|discussions?|closures?)$");
     private static final Pattern YEAR = Pattern.compile("\\b(?:19|20)\\d{2}\\b");
     private static final Pattern VOLUME = Pattern.compile("(?i)\\bvol(?:ume|\\.)?\\s*\\d+");
     private static final Pattern VENUE_CUT =
@@ -71,6 +74,10 @@ final class AlertHtmlParser {
     private static final Pattern AUTHORS_THEN_VENUE =
             Pattern.compile("^(?<authors>.+?)\\s+[-–—‐]\\s+(?<rest>.+)$");
     private static final Pattern VOLUME_HEADER = Pattern.compile("(?i)^volume:?\\s*\\d+");
+    private static final Pattern COPYRIGHT = Pattern.compile("(?i)^(?:©|\\(c\\)|copyright\\b)");
+    /** Links Gmail adds itself when a message is forwarded: a street address becomes a Google Maps search. */
+    private static final Pattern GMAIL_ADDED_LINK =
+            Pattern.compile("(?i)^https?://(?:(?:www\\.)?google\\.[a-z.]+/maps\\b|maps\\.google\\.)");
     private static final Pattern VENUE_PREFIX = Pattern.compile(
             "(?i)(?:new articles (?:for|in|from)|published in|latest (?:articles|issue) (?:of|from|in)|new issue of)\\s*$");
 
@@ -96,7 +103,9 @@ final class AlertHtmlParser {
      *
      * @param email the alert email; only its HTML body is read
      * @return the papers in email order, one per title line that has an author or venue line under it,
-     *         skipping repeats of a title already seen; empty if the email has no HTML body
+     *         skipping repeats of a title already seen; a link that is the journal's own name (from the
+     *         issue header) or a linked author name right under a title is not a title; empty if the
+     *         email has no HTML body
      */
     List<ParsedPaper> parse(RawEmail email) {
         if (email.htmlBody().isEmpty()) {
@@ -106,7 +115,12 @@ final class AlertHtmlParser {
         Issue issue = issueOf(lines);
         String[] titles = new String[lines.size()];
         for (int i = 0; i < lines.size(); i++) {
-            titles[i] = titleOf(lines.get(i)).orElse(null);
+            titles[i] = titleOf(lines.get(i))
+                    .filter(title -> !issue.venue().map(title::equalsIgnoreCase).orElse(false))
+                    .orElse(null);
+            if (titles[i] != null && i > 0 && titles[i - 1] != null && !linkedAuthors(titles[i]).isEmpty()) {
+                titles[i] = null; // a linked author name under its paper's title, not a title of its own
+            }
         }
 
         List<ParsedPaper> papers = new ArrayList<>();
@@ -143,14 +157,18 @@ final class AlertHtmlParser {
      * @param titles the title read from each line, or null where the line is not a title
      * @param issue journal/year from the email header, used where the block does not state them
      * @param titleIndex index of the title line
-     * @return the paper, or empty if the block (lines up to the next title, heading, rule or 12 lines) has
-     *         neither authors nor venue; the URL is the first readable link, the DOI is searched in URL, links, then text
+     * @return the paper, or empty if the block (lines up to the next title, heading, rule or 12 lines, less a
+     *         type label directly above the next title) has neither authors nor venue; the URL is the first
+     *         readable link, the DOI is searched in URL, links, then text
      */
     private Optional<ParsedPaper> paperAt(RawEmail email, List<Line> lines, String[] titles, Issue issue, int titleIndex) {
         int end = titleIndex + 1;
         while (end < lines.size() && end - titleIndex <= MAX_BLOCK_LINES && titles[end] == null
                 && !lines.get(end).heading() && !lines.get(end).rule()) {
             end++;
+        }
+        if (end < lines.size() && titles[end] != null && end - 1 > titleIndex && isTypeLabel(lines.get(end - 1))) {
+            end--; // a label right above the next title heads that paper, not this one
         }
         Block block = readBlock(lines.subList(titleIndex + 1, end));
         if (block.authors.isEmpty() && block.venue.isEmpty()) {
@@ -184,7 +202,7 @@ final class AlertHtmlParser {
                 block.authors,
                 block.venue.or(issue::venue),
                 block.year.or(issue::year),
-                Optional.ofNullable(articleType(lines, titles, titleIndex, block, issue)),
+                Optional.ofNullable(articleType(lines, titles, titleIndex, block)),
                 doi,
                 url,
                 Optional.ofNullable(block.abstractSnippet),
@@ -205,8 +223,9 @@ final class AlertHtmlParser {
      * }</pre>
      *
      * @param blockLines the lines after the title, up to the end of its block
-     * @return the block's parts; each line goes to the first part it fits (link-only lines are skipped),
-     *         and an "authors - venue" line fills both authors and venue
+     * @return the block's parts; each line goes to the first part it fits (link-only lines are skipped
+     *         unless they are the author list, which ASCE links to the authors' profiles), and an
+     *         "authors - venue" line fills both authors and venue
      */
     private Block readBlock(List<Line> blockLines) {
         Block block = new Block();
@@ -215,6 +234,11 @@ final class AlertHtmlParser {
             String text = line.text();
             block.texts.add(text);
             if (line.soleAnchor().isPresent()) {
+                List<String> linkedNames = haveAuthors ? List.of() : linkedAuthors(text);
+                if (!linkedNames.isEmpty()) {
+                    block.authors = linkedNames;
+                    haveAuthors = true;
+                }
                 continue;
             }
             if (block.type == null && TYPE_LINE.matcher(text).matches()) {
@@ -253,14 +277,18 @@ final class AlertHtmlParser {
     /**
      * Whether a line looks like a citation/venue line.
      *
-     * Example: "Ocean Engineering, Volume 311, Part 2, August 2024" -> true; "A. Smith, B. Jones" -> false.
+     * Example: "Ocean Engineering, Volume 311, Part 2, August 2024" -> true; "A. Smith, B. Jones" -> false;
+     * "© 2025 BioMed Central Limited" -> false (a footer); "VOLUME: 27 | NUMBER: 4 | November 2026" -> false
+     * (the issue header, which {@link #issueOf} reads).
      *
      * @param text the normalized line text
-     * @return true when the line is at most 200 characters, has at least 3 words, and mentions a year or volume
+     * @return true when the line is at most 200 characters, has at least 3 words, mentions a year or volume,
+     *         and is neither a copyright notice nor an issue header
      */
     private static boolean isVenueLine(String text) {
         return text.length() <= 200 && wordCount(text) >= 3
-                && (YEAR.matcher(text).find() || VOLUME.matcher(text).find());
+                && (YEAR.matcher(text).find() || VOLUME.matcher(text).find())
+                && !COPYRIGHT.matcher(text).find() && !VOLUME_HEADER.matcher(text).find();
     }
 
     /**
@@ -288,27 +316,27 @@ final class AlertHtmlParser {
     }
 
     /**
-     * Label on the line before the title, else one after it, else the nearest section heading above.
+     * Label on the line before the title, else one after it, else the nearest label above: in a table of
+     * contents a section label ("Technical Papers") heads every paper below it until the next label.
      *
      * Example:
      * <pre>{@code
-     * "Research article" / [title]                       -> "Research article"  (line above)
-     * <h2>Original Research</h2> ... [title] ...          -> "Original Research" (section heading)
-     * <h2>Volume 27, Issue 4</h2> ... [title] ...         -> null                (heading has digits)
+     * "Research article" / [title]                            -> "Research article"  (line above)
+     * "Technical Papers" / [title A] / authors / [title B]    -> "Technical Papers" for both
+     * <h1>New articles have been published</h1> ... [title]   -> null                (not a type label)
      * }</pre>
      *
      * @param lines all lines of the email
      * @param titles the title read from each line, or null where the line is not a title
      * @param titleIndex index of the title line
      * @param block the title's block, for a type label found under the title
-     * @param issue the email header, so a heading that is just the journal name is not taken as a type
-     * @return the label; a heading counts only if it has at most 5 words and no digits; null if none fits
+     * @return the label, which is always a line of a few words ending in a type word ("article", "papers",
+     *         "studies", ...); null if there is none above or under the title
      */
-    private static String articleType(List<Line> lines, String[] titles, int titleIndex, Block block, Issue issue) {
+    private static String articleType(List<Line> lines, String[] titles, int titleIndex, Block block) {
         if (titleIndex > 0) {
             Line previous = lines.get(titleIndex - 1);
-            if (!previous.rule() && titles[titleIndex - 1] == null && previous.soleAnchor().isEmpty()
-                    && TYPE_LINE.matcher(previous.text()).matches()) {
+            if (titles[titleIndex - 1] == null && isTypeLabel(previous)) {
                 return previous.text();
             }
         }
@@ -316,15 +344,29 @@ final class AlertHtmlParser {
             return block.type;
         }
         for (int i = titleIndex - 1; i >= 0; i--) {
-            Line line = lines.get(i);
-            if (line.heading() && titles[i] == null) {
-                String text = line.text();
-                boolean sectionLike = wordCount(text) <= 5 && !text.matches(".*\\d.*")
-                        && !issue.venue().map(text::equalsIgnoreCase).orElse(false);
-                return sectionLike ? text : null;
+            if (titles[i] == null && isTypeLabel(lines.get(i))) {
+                return lines.get(i).text();
             }
         }
         return null;
+    }
+
+    /**
+     * The names on a link line that is an author list, as ASCE links each author to their profile.
+     *
+     * Example: "Samantha Montano" -> [Samantha Montano]; "ABOUT ASCE PUBLICATIONS" -> [] (a footer menu
+     * link: capitalised words, but no lowercase letter, which every name in an author list has).
+     *
+     * @param text the link's text
+     * @return the names, or empty if the text is not an author list or is all capitals
+     */
+    private static List<String> linkedAuthors(String text) {
+        return text.chars().anyMatch(Character::isLowerCase) ? AuthorNames.parse(text) : List.of();
+    }
+
+    /** Whether a line is an article-type label such as "Research article" or "Technical Papers". */
+    private static boolean isTypeLabel(Line line) {
+        return !line.rule() && line.soleAnchor().isEmpty() && TYPE_LINE.matcher(line.text()).matches();
     }
 
     /**
@@ -335,6 +377,7 @@ final class AlertHtmlParser {
      * <a href="https://doi.org/10.1/abc">[PDF] Wave loads on floating turbines</a> -> "Wave loads on floating turbines"
      * <a href="https://example.com/manage">Unsubscribe from these alerts</a>       -> empty (footer text)
      * <a href="mailto:editor@example.com">Contact the editor</a>                   -> empty (not http)
+     * <a href="https://www.google.com/maps/search/...">London, N1 9XW,</a>          -> empty (Gmail's address link)
      * Read <a href="https://doi.org/10.1/abc">Wave loads on floating turbines</a>  -> empty (text beside link)
      * }</pre>
      *
@@ -348,7 +391,7 @@ final class AlertHtmlParser {
             return Optional.empty();
         }
         String href = anchor.get().href().trim().toLowerCase(Locale.ROOT);
-        if (!href.startsWith("http://") && !href.startsWith("https://")) {
+        if (!href.startsWith("http://") && !href.startsWith("https://") || GMAIL_ADDED_LINK.matcher(href).find()) {
             return Optional.empty();
         }
         String title = TITLE_TAG.matcher(AlertLines.normalize(anchor.get().text())).replaceFirst("");

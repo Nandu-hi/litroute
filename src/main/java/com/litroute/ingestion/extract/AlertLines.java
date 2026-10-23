@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.jsoup.nodes.Element;
@@ -67,17 +68,20 @@ final class AlertLines {
         }
 
         /**
-         * The link, if the whole line is nothing but one link - the shape of a paper title.
+         * The link, if the whole line is nothing but one link - the shape of a paper title. A format tag
+         * beside the link does not count as other text: Google Scholar sets "[PDF]" in a span of its own
+         * before the title link.
          *
          * @return the single anchor when {@link #anchors()} has exactly one entry and no non-link segment
-         *         has visible text; empty otherwise
+         *         has visible text other than format tags; empty otherwise
          */
         Optional<Seg> soleAnchor() {
             List<Seg> anchors = anchors();
             if (anchors.size() != 1) {
                 return Optional.empty();
             }
-            boolean otherText = segs.stream().anyMatch(seg -> seg.href() == null && !normalize(seg.text()).isEmpty());
+            boolean otherText = segs.stream().anyMatch(seg -> seg.href() == null
+                    && !FORMAT_TAGS.matcher(normalize(seg.text())).matches());
             return otherText ? Optional.empty() : Optional.of(anchors.get(0));
         }
     }
@@ -87,6 +91,9 @@ final class AlertLines {
             "dl", "dt", "dd", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "section", "article", "header",
             "footer", "center", "pre", "form", "address", "figure", "figcaption", "main", "nav", "aside");
     private static final Set<String> HEADING_TAGS = Set.of("h1", "h2", "h3", "h4", "h5", "h6");
+    /** Nothing, or nothing but "[PDF]"-style format tags, as search alerts put beside a title. */
+    private static final Pattern FORMAT_TAGS =
+            Pattern.compile("(?i)(?:\\[(?:PDF|HTML|BOOK|B|CITATION|C|DOC)\\]\\s*)*");
 
     private AlertLines() {
     }

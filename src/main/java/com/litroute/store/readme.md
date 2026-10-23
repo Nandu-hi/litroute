@@ -33,9 +33,9 @@ student PDFs ──▶ M5 ProfileBuilder ──▶ M7d profiles.json ──┐  
                                                            ▼
                                             M7e scored_queue.json ◀── setStatus ── M8 GUI (professor)
                                                 matched/<student>/*.pdf
-                                                           │ APPROVED
-                                                           ▼
-                                                       M10 send
+                                                           │ APPROVED          ▲ SENT
+                                                           ▼                   │
+                                                       M10 ApprovedPaperSender ┘ ──▶ Gmail SMTP ──▶ students
 ```
 
 **Write order is what makes crashes safe.** [AlertBatchProcessor](../ingestion/extract/AlertBatchProcessor.java) loads both stores first (so a corrupt store fails before any network calls are made), extracts and enriches the batch in memory, saves M7c in one write, and saves M7a **last**. If the process crashes at any point, the emails are still unmarked, so the whole batch is processed again on the next run instead of being silently skipped. Papers from the re-run replace that batch's earlier entries, and PDFs already downloaded are reused.

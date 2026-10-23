@@ -10,13 +10,14 @@ import java.util.regex.Pattern;
 
 /**
  * Decides whether an inbox message looks like a publication/citation alert worth
- * handing to M2. M1 scans the whole INBOX with no label or filter, so this is the
- * only gate between every email the user has received and the pipeline.
+ * handing to M2. M1 scans the INBOX's unread mail with no label or filter, so this is
+ * the only gate between every email the user has received and the pipeline.
  *
  * Acceptance is uniform and not limited to known publishers: KNOWN_ALERT_SENDER_DOMAINS
- * is a low-false-positive fast path (from six real client alerts: SpringerOpen,
- * Taylor &amp; Francis, Google Scholar, ScienceDirect/Elsevier, ASCE), while the broad
- * SUBJECT_KEYWORDS catch alerts from any other publication by subject wording.
+ * and KNOWN_ALERT_SENDER_ADDRESSES are a low-false-positive fast path (from six real
+ * client alerts: SpringerOpen, Taylor &amp; Francis, Google Scholar, ScienceDirect/Elsevier,
+ * ASCE), while the broad SUBJECT_KEYWORDS catch alerts from any other publication by
+ * subject wording.
  *
  * A forwarded alert has the forwarder as its IMAP sender, so when the direct
  * sender/subject don't match, the same check runs on <em>every</em> quoted
@@ -57,9 +58,13 @@ public final class AlertClassifier {
      */
     private static final int SUBJECT_LOOKAHEAD_LINES = 4;
 
+    /**
+     * Domains that send nothing but alerts, or whose alerts are worth the occasional newsletter. A
+     * domain that also sends account, security or product mail (google.com: sign-in alerts, Workspace
+     * and Cloud notices) must not be here; trust its alert address in KNOWN_ALERT_SENDER_ADDRESSES.
+     */
     private static final Set<String> KNOWN_ALERT_SENDER_DOMAINS = Set.of(
             "scholar.google.com",
-            "google.com",
             "arxiv.org",
             "ieee.org",
             "sciencedirect.com",
@@ -77,6 +82,13 @@ public final class AlertClassifier {
             "researchgate.net",
             "wiley.com",
             "nature.com");
+
+    /**
+     * Single alert addresses on domains that send other mail too. Google Scholar alerts come from
+     * scholaralerts-noreply@google.com, the only google.com address trusted as an alert sender.
+     */
+    private static final Set<String> KNOWN_ALERT_SENDER_ADDRESSES = Set.of(
+            "scholaralerts-noreply@google.com");
 
     private static final Set<String> SUBJECT_KEYWORDS = Set.of(
             "new citations",
@@ -126,6 +138,9 @@ public final class AlertClassifier {
     }
 
     public boolean isPublicationAlert(String fromAddress, String subject) {
+        if (fromAddress != null && KNOWN_ALERT_SENDER_ADDRESSES.contains(fromAddress.toLowerCase(Locale.ROOT))) {
+            return true;
+        }
         String domain = domainOf(fromAddress);
         if (domain != null
                 && ((KNOWN_ALERT_SENDER_DOMAINS.contains(domain) || extraAllowedSenderDomains.contains(domain)))) {
