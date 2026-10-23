@@ -7,11 +7,14 @@ import com.litroute.profile.ProfileBuilder;
 import com.litroute.security.GmailCredentials;
 import com.litroute.store.ProfileStore;
 import com.litroute.store.ScoredQueueStore;
+import com.litroute.store.SentPaperStore;
 import java.io.IOException;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.Consumer;
 
 /**
@@ -20,10 +23,12 @@ import java.util.function.Consumer;
  * one email listing their papers with the PDFs attached, or several when the PDFs are too large for one
  * (see {@link DigestComposer}).
  *
- * A paper is marked {@link ReviewStatus#SENT} as soon as the email carrying it has gone, so a crash or a
- * failure part-way leaves the rest approved for the next send; a crash between sending and marking sends
- * that one email again rather than losing it. Papers of a student with no address stay approved until
- * one is added.
+ * As soon as the email carrying a paper has gone, the paper is recorded in the sent papers
+ * ({@link SentPaperStore}) and then taken out of the queue, so a crash or a failure part-way leaves the
+ * rest approved for the next send. Recorded first: a crash between the two leaves the paper in both, and
+ * the next send drops it from the queue before looking for approved papers, so it is never sent twice;
+ * a crash between sending and recording sends that one email again rather than losing it. Papers of a
+ * student with no address stay approved until one is added.
  */
 public final class ApprovedPaperSender {
 
@@ -31,7 +36,7 @@ public final class ApprovedPaperSender {
      * What a send did.
      *
      * @param emails      emails sent
-     * @param papers      papers sent (and marked sent)
+     * @param papers      papers sent (and moved from the queue to the sent papers)
      * @param attachments PDFs attached across those emails
      * @param unaddressed students whose approved papers could not be sent for want of an address, each
      *                    with how many papers wait
@@ -46,17 +51,20 @@ public final class ApprovedPaperSender {
     }
 
     private final ScoredQueueStore queue;
+    private final SentPaperStore sent;
     private final ProfileStore profiles;
     private final GmailSmtpSender smtp;
     private final long attachmentBudget;
 
-    public ApprovedPaperSender(ScoredQueueStore queue, ProfileStore profiles, GmailSmtpSender smtp) {
-        this(queue, profiles, smtp, DigestComposer.GMAIL_ATTACHMENT_BUDGET);
+    public ApprovedPaperSender(ScoredQueueStore queue, SentPaperStore sent, ProfileStore profiles, GmailSmtpSender smtp) {
+        this(queue, sent, profiles, smtp, DigestComposer.GMAIL_ATTACHMENT_BUDGET);
     }
 
     /** As above, attaching at most {@code attachmentBudget} bytes of PDF per email. */
-    ApprovedPaperSender(ScoredQueueStore queue, ProfileStore profiles, GmailSmtpSender smtp, long attachmentBudget) {
+    ApprovedPaperSender(ScoredQueueStore queue, SentPaperStore sent, ProfileStore profiles, GmailSmtpSender smtp,
+            long attachmentBudget) {
         this.queue = queue;
+        this.sent = sent;
         this.profiles = profiles;
         this.smtp = smtp;
         this.attachmentBudget = attachmentBudget;
@@ -64,8 +72,8 @@ public final class ApprovedPaperSender {
 
     /** The review queue and profiles under {@code ~/.litroute/data}, sent through Gmail. */
     public static ApprovedPaperSender atDefaultLocations() {
-        return new ApprovedPaperSender(ScoredQueueStore.atDefaultLocation(), ProfileStore.atDefaultLocation(),
-                new GmailSmtpSender());
+        return new ApprovedPaperSender(ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation(),
+                ProfileStore.atDefaultLocation(), new GmailSmtpSender());
     }
 
     /**
@@ -74,9 +82,10 @@ public final class ApprovedPaperSender {
      * @param credentials the professor's Gmail account, which the emails come from; not cleared
      * @param progress    told what is being sent, as it happens
      * @throws IOException if a store cannot be read or written, or Gmail cannot be reached, refuses the login
-     *         or drops the connection; the emails already sent stay marked sent
+     *         or drops the connection; the papers already sent stay recorded as sent
      */
     public Report send(GmailCredentials credentials, Consumer<String> progress) throws IOException {
+        settle();
         Map<String, List<ScoredPaper>> approved = new LinkedHashMap<>();
         for (ScoredPaper paper : queue.load()) {
             if (paper.status() == ReviewStatus.APPROVED) {
@@ -124,9 +133,8 @@ public final class ApprovedPaperSender {
                     progress.accept("  " + e.getMessage());
                     continue;
                 }
-                for (ScoredPaper paper : email.papers()) {
-                    queue.setStatus(paper, ReviewStatus.SENT);
-                }
+                sent.addAll(email.papers(), Instant.now());
+                queue.remove(email.papers());
                 emails++;
                 papers += email.papers().size();
                 attachments += email.attachments().size();
@@ -135,5 +143,23 @@ public final class ApprovedPaperSender {
             }
         }
         return new Report(emails, papers, attachments, unaddressed, failures);
+    }
+
+    /**
+     * Takes out of the queue what has already gone: entries recorded as sent (left there by a crash
+     * between recording and removing) and entries marked {@link ReviewStatus#SENT} by older versions,
+     * which kept sent papers in the queue; the latter are recorded as sent first, at the time of this move.
+     */
+    private void settle() throws IOException {
+        List<ScoredPaper> queued = queue.load();
+        List<ScoredPaper> markedSent = queued.stream().filter(paper -> paper.status() == ReviewStatus.SENT).toList();
+        if (!markedSent.isEmpty()) {
+            sent.addAll(markedSent, Instant.now());
+        }
+        Set<String> gone = sent.sentKeys();
+        List<ScoredPaper> leftOver = queued.stream().filter(paper -> gone.contains(paper.queueKey())).toList();
+        if (!leftOver.isEmpty()) {
+            queue.remove(leftOver);
+        }
     }
 }

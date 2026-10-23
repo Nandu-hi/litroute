@@ -12,7 +12,7 @@ mvn -q compile javafx:run
 
 | Tab | Class | What it does |
 |---|---|---|
-| **Review** | [ReviewPane](ReviewPane.java) | The review queue (M7e). Students on the left with how many papers wait for each; their papers in the middle; the chosen paper's details and M6's rationale below. **Approve**, **Drop**, **Back to pending** (or A, D, P) record the decision for every selected paper. **Send approved** emails them to their students (M10). |
+| **Review** | [ReviewPane](ReviewPane.java) | The review queue (M7e). Students on the left with how many papers wait for each; their papers in the middle; the chosen paper's details and M6's rationale below. **Approve**, **Drop**, **Back to pending** (or A, D, P) record the decision for every selected paper. **Send approved** emails them to their students (M10), which moves them out of the queue. **Show: Sent** lists the sent papers with when they went, read only. |
 | **Pipeline** | [PipelinePane](PipelinePane.java) | Runs M9 with a live log: the matcher, how many unread emails a run examines, and **Keep emails unread** (for testing) are chosen here and remembered. **Clear and re-run…** undoes every run so far and runs again over the same emails ([pipeline readme](../pipeline/readme.md)). |
 | **Profiles** | [ProfilesPane](ProfilesPane.java) | The stored profiles, **Rebuild profiles**, which syncs them with their folders (M5), and **Open profiles folder**. |
 | **Gmail** | [CredentialsPane](CredentialsPane.java) | Unlock the stored App Password with the master passphrase, or set it up. A tab rather than a dialog, because tiling window managers hide modal dialogs. |

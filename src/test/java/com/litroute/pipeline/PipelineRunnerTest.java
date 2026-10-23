@@ -26,6 +26,7 @@ import com.litroute.store.EmailCacheStore;
 import com.litroute.store.EnrichmentCacheStore;
 import com.litroute.store.ScoredPaperLog;
 import com.litroute.store.ScoredQueueStore;
+import com.litroute.store.SentPaperStore;
 import com.litroute.testing.SampleMails;
 import com.litroute.testing.SampleMails.Sample;
 import com.litroute.testing.TestModel;
@@ -34,6 +35,7 @@ import com.litroute.testing.TestProfiles.Workspace;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.LinkedHashSet;
@@ -122,7 +124,8 @@ public class PipelineRunnerTest {
         AlertBatchProcessor batches = new AlertBatchProcessor(new PaperExtractor(enrichment),
                 new EnrichmentCacheStore(data.resolve("enrichment_cache.json")), processed);
         return new PipelineRunner(profiles.builder(), profiles.store(), inbox, processed, batches, matchers,
-                queue, new ScoredPaperLog(data.resolve("scored_papers.json")), markRead);
+                queue, new ScoredPaperLog(data.resolve("scored_papers.json")),
+                new SentPaperStore(data.resolve("sent_papers.json")), markRead);
     }
 
     private PipelineRunner runner() {
@@ -213,6 +216,25 @@ public class PipelineRunnerTest {
                 queue.load().stream().map(ScoredPaper::queueKey).toList());
         assertTrue("decisions were discarded", queue.load().stream().allMatch(p -> p.status() == ReviewStatus.PENDING));
         assertEquals(SampleMails.ALL.size(), inbox.read.size());
+    }
+
+    /**
+     * A student never gets the same paper twice: after a paper was sent, clearing and re-running the
+     * pipeline over the same emails does not queue it for that student again.
+     */
+    @Test
+    public void aPaperAlreadySentIsNeverQueuedForItsStudentAgain() throws IOException {
+        runner().run(CREDENTIALS, progress::add);
+        ScoredPaper delivered = queue.load().get(0);
+        new SentPaperStore(data.resolve("sent_papers.json")).addAll(List.of(delivered), Instant.now());
+        queue.remove(List.of(delivered));
+        runner().reset(CREDENTIALS, progress::add);
+
+        Report again = runner().run(CREDENTIALS, progress::add);
+
+        assertTrue(queue.load().stream().noneMatch(p -> p.queueKey().equals(delivered.queueKey())));
+        assertEquals(queue.load().size(), again.matches());
+        assertTrue(progress.contains("1 match(es) already sent to their student earlier; not queued again."));
     }
 
     /** If Gmail can't mark the alerts unread, nothing is cleared: clearing would lose them for good. */

@@ -13,6 +13,7 @@ All files live in `~/.litroute/data/` by default (each class has `atDefaultLocat
 | **M7d** [ProfileStore](ProfileStore.java) | `profiles.json` | M5 → M6 | Every student's [Profile](../model/Profile.java) (vectors, text and keywords) |
 | **M7e** [ScoredQueueStore](ScoredQueueStore.java) | `scored_queue.json` + `matched/<profile>/` | M6 → M8/M9 | The professor's review queue of [ScoredPaper](../model/ScoredPaper.java)s, and each student's matched PDFs |
 | [ScoredPaperLog](ScoredPaperLog.java) | `scored_papers.json` | M6 → M9 | The papers M6 has already scored, matched or not, so a run scores only new ones |
+| [SentPaperStore](SentPaperStore.java) | `sent_papers.json` | M10 → M9 | Every paper emailed to its student, and when; such a paper is never queued for that student again |
 
 There is no M7b: candidates are written only once they are enriched and deduplicated, straight into M7c, so no half-finished snapshot is ever stored.
 
@@ -33,10 +34,13 @@ student PDFs ──▶ M5 ProfileBuilder ──▶ M7d profiles.json ──┐  
                                                            │ addAll(Map<student, List<ScoredPaper>>)
                                                            ▼
                                             M7e scored_queue.json ◀── setStatus ── M8 GUI (professor)
-                                                matched/<student>/*.pdf
-                                                           │ APPROVED          ▲ SENT
-                                                           ▼                   │
-                                                       M10 ApprovedPaperSender ┘ ──▶ Gmail SMTP ──▶ students
+                                                matched/<student>/*.pdf     ▲ skip papers already sent
+                                                           │ APPROVED       │
+                                                           ▼                │
+                                                       M10 ApprovedPaperSender ──▶ Gmail SMTP ──▶ students
+                                                           │ (1) record, (2) remove from the queue
+                                                           ▼
+                                                     sent_papers.json
 ```
 
 **Write order is what makes crashes safe.** [AlertBatchProcessor](../ingestion/extract/AlertBatchProcessor.java) loads both stores first (so a corrupt store fails before any network calls are made), extracts and enriches the batch in memory, saves M7c in one write, and saves M7a **last**. If the process crashes at any point, the emails are still unmarked, so the whole batch is processed again on the next run instead of being silently skipped. Papers from the re-run replace that batch's earlier entries, and PDFs already downloaded are reused.
@@ -78,6 +82,16 @@ The review queue: a JSON list of scored (paper, student) pairs in the order they
 - **Concurrency:** the GUI (M8) changes statuses while the pipeline (M9) adds papers. Every change is a read-modify-write inside `synchronized` on **one lock per file path**, shared by all store objects for that file, so neither side can lose the other's update.
 - Queues saved before recommendations existed load with `recommended = false`.
 - Each entry stores its `relevance` (null when the matcher didn't measure it). Entries queued before relevance was stored take it from their rationale, which states it ("Relevance 0.82 (…").
+
+### [SentPaperStore](SentPaperStore.java)
+
+The papers already emailed to their students, kept **apart from the review queue**: a sent paper leaves the queue and is recorded here with the time it went (status `SENT`, in the queue entry's own JSON shape).
+
+- **A student never gets the same paper twice.** M9 doesn't queue a paper for a student it was sent to, not even after **Clear and re-run**, which leaves this file alone. A paper is identified as in the queue: the student plus the paper's DOI, else its compacted title.
+- **[addAll(papers, sentAt)](SentPaperStore.java):** records papers as sent. A paper sent to the same student again keeps one entry, with the new time.
+- **[sentKeys()](SentPaperStore.java):** the queue keys of everything sent, for M9 and M10 to check against.
+- **[queue.remove(papers)](ScoredQueueStore.java)** takes sent papers out of the queue, leaving their PDF copies in the students' folders.
+- One lock per file path, like the queue.
 
 ### [ScoredPaperLog](ScoredPaperLog.java)
 

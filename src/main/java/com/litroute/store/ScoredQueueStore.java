@@ -16,10 +16,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
@@ -50,9 +52,9 @@ public final class ScoredQueueStore {
      * JSON shape of one queue entry; the candidate is stored as M7c stores it. {@code recommended} is
      * absent in queues written before recommendations existed, and reads as false. {@code relevance} is
      * null when the matcher did not measure it; in queues written before it was stored, it is read from
-     * the rationale, which states it.
+     * the rationale, which states it. {@link SentPaperStore} stores sent papers in the same shape.
      */
-    private record StoredScoredPaper(StoredCandidate candidate, String profileName, double score, String rationale,
+    record StoredScoredPaper(StoredCandidate candidate, String profileName, double score, String rationale,
             ReviewStatus status, Boolean recommended, Double relevance) {
 
         static StoredScoredPaper from(ScoredPaper scored) {
@@ -176,6 +178,25 @@ public final class ScoredQueueStore {
                 }
             }
             return queue.size();
+        }
+    }
+
+    /**
+     * Takes these papers out of the queue (matched by {@link ScoredPaper#queueKey()}), leaving their PDF
+     * copies in the students' folders: what M10 does once a paper is sent and recorded in
+     * {@link SentPaperStore}.
+     *
+     * @return how many of them were queued
+     */
+    public int remove(Collection<ScoredPaper> papers) throws IOException {
+        Set<String> keys = papers.stream().map(ScoredPaper::queueKey).collect(Collectors.toSet());
+        synchronized (lock) {
+            List<ScoredPaper> queue = read();
+            List<ScoredPaper> kept = queue.stream().filter(paper -> !keys.contains(paper.queueKey())).toList();
+            if (kept.size() < queue.size()) {
+                write(kept);
+            }
+            return queue.size() - kept.size();
         }
     }
 

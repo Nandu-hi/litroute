@@ -1,6 +1,7 @@
 package com.litroute.delivery;
 
 import com.litroute.model.PaperCandidate;
+import com.litroute.model.ReviewStatus;
 import com.litroute.model.ScoredPaper;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -37,16 +38,21 @@ final class DigestComposer {
 
     /**
      * @param professor        the Gmail address the emails are sent from
-     * @param papers           the student's approved papers, at least one
+     * @param papers           the student's papers; only those with status APPROVED are composed
      * @param attachmentBudget the most bytes of PDF one email carries
-     * @return the emails, in the order to send them; together they list every paper once
+     * @return the emails, in the order to send them; together they list every approved paper once, and no
+     *         email is ever empty - none at all when no paper is approved
      */
     static List<DigestEmail> compose(String profileName, List<String> recipients, String professor,
             List<ScoredPaper> papers, long attachmentBudget) {
+        List<ScoredPaper> approved = papers.stream().filter(paper -> paper.status() == ReviewStatus.APPROVED).toList();
+        if (approved.isEmpty()) {
+            return List.of(); // nothing approved for this student: no email at all
+        }
         List<List<Item>> parts = new ArrayList<>();
         List<Item> current = new ArrayList<>();
         long attached = 0;
-        for (ScoredPaper paper : papers.stream().sorted(RECOMMENDED_THEN_SCORE).toList()) {
+        for (ScoredPaper paper : approved.stream().sorted(RECOMMENDED_THEN_SCORE).toList()) {
             Optional<Path> pdf = paper.candidate().pdfPath();
             long size = pdf.map(DigestComposer::sizeOrMinusOne).orElse(-1L);
             if (pdf.isEmpty()) {
@@ -56,7 +62,7 @@ final class DigestComposer {
             } else if (size > attachmentBudget) {
                 current.add(new Item(paper, Optional.empty(), "The PDF is too large to attach; use the link above."));
             } else {
-                if (attached + size > attachmentBudget) {
+                if (attached + size > attachmentBudget && !current.isEmpty()) {
                     parts.add(current);
                     current = new ArrayList<>();
                     attached = 0;

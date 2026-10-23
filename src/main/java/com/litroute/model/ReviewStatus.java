@@ -8,6 +8,6 @@ public enum ReviewStatus {
     APPROVED,
     /** Not to be sent. */
     DROPPED,
-    /** Approved and emailed to the student (M10); approving it again sends it again. */
+    /** Approved and emailed to the student (M10): held in {@code SentPaperStore}, no longer in the queue. */
     SENT
 }

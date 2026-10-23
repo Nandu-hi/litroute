@@ -1,6 +1,6 @@
 # The `delivery` module (M10)
 
-**In one sentence:** it emails every paper the professor approved in the review queue to its student, from the professor's own Gmail account, with the paper's PDF attached, and marks the paper sent so it never goes twice.
+**In one sentence:** it emails every paper the professor approved in the review queue to its student, from the professor's own Gmail account, with the paper's PDF attached, then moves the paper out of the queue into the sent papers, so it never goes twice.
 
 ## Input and output
 
@@ -9,7 +9,7 @@
 | **Input** | M7e [ScoredQueueStore](../store/ScoredQueueStore.java) | The review queue. Only entries whose status is `APPROVED` are sent. Their `pdfPath` points to the student's copy in `matched/<student>/`. |
 | **Input** | M7d [ProfileStore](../store/ProfileStore.java) | Each student's `emails`, read from the profile folder's `email.txt` when the profiles are synced. |
 | **Input** | [GmailCredentials](../security/GmailCredentials.java) | The professor's Gmail address and App Password: the same ones M1 reads the inbox with. |
-| **Output** | Emails, plus statuses in M7e | One email per student (or several, see below). Each paper sent is set to `SENT`. |
+| **Output** | Emails, plus [SentPaperStore](../store/SentPaperStore.java) | One email per student (or several, see below). Each paper sent is recorded in `sent_papers.json` and removed from the queue. |
 | **Output** | [ApprovedPaperSender.Report](ApprovedPaperSender.java) | Emails, papers and PDFs sent; students left out because they have no address; emails that failed. |
 
 ## How it works
@@ -23,19 +23,20 @@ M7e queue ── APPROVED entries, grouped by student
    │
    ▼  GmailSmtpSender.connect()  smtps://smtp.gmail.com:465, one login for the whole send
    │     for each email:
-   │        send ─▶ every paper in it set to SENT in M7e
+   │        send ─▶ every paper in it recorded in sent_papers.json, then removed from M7e
    │        a recipient refused   ─▶ reported, its papers stay APPROVED, the next email still goes
-   │        connection lost       ─▶ stop (IOException); the emails already sent stay SENT
+   │        connection lost       ─▶ stop (IOException); the papers already sent stay recorded
 ```
 
 - **What a student receives.** The subject is `LitRoute: 3 new papers for RP1-mh-risk`. The body lists each paper's title, authors, venue · year · type, its link (URL, else `https://doi.org/<doi>`), whether its PDF is attached, and its abstract when there is one. Replies go to the professor. Gmail keeps a copy in the professor's Sent folder.
 - **Attachments and Gmail's 25 MB limit.** One email carries at most 15 MiB of PDFs ([DigestComposer.GMAIL_ATTACHMENT_BUDGET](DigestComposer.java)). Base64 makes that about 21 MB on the wire. When the next PDF would not fit, the papers continue in another email (`(part 2 of 3)`). A paper whose PDF is missing, gone from disk or larger than the whole budget is still sent, with a note to use its link.
-- **Exactly once, as far as a crash allows.** A paper is marked `SENT` straight after the email carrying it is accepted. A failure part-way leaves the rest `APPROVED` for the next send. A crash between sending and marking sends that one email again rather than losing it.
-- **Sending again.** Approving a `SENT` paper again (in M8) sends it again.
+- **Exactly once, as far as a crash allows.** Straight after the email carrying a paper is accepted, the paper is recorded as sent, then removed from the queue. A failure part-way leaves the rest `APPROVED` for the next send. A crash between recording and removing leaves the paper in both; every send first takes such papers (and any marked `SENT` in the queue by older versions) out of the queue, so they never go twice. A crash between sending and recording sends that one email again rather than losing it.
+- **No empty emails.** A student gets an email only when they have at least one approved paper. The sender only passes on students with approved papers, and [DigestComposer.compose](DigestComposer.java) itself composes only `APPROVED` papers: given none, it returns no email at all, and no part of a multi-part send is ever empty.
+- **Never twice to one student.** A sent paper is no longer in the queue, so it can't be approved again, and M9 never re-queues it for that student.
 
 ## Where it is started
 
-- **UI (M8):** the **Send approved (N)** button on the Review tab. It needs the Gmail credentials unlocked, and runs on the same job thread as a pipeline run. The Review tab's **Sent** filter shows what has gone.
+- **UI (M8):** the **Send approved (N)** button on the Review tab. It needs the Gmail credentials unlocked, and runs on the same job thread as a pipeline run. The Review tab's **Show: Sent** lists what has gone and when, read only.
 - **CLI:** `PipelineRunnerCli --send-approved` sends after the pipeline run, e.g. from cron.
 
 ## The classes

@@ -19,7 +19,8 @@ PipelineRunner.run(credentials, progress)
    ├─ 3. M2–M4 AlertBatchProcessor.process  notes dropped, papers enriched, deduplicated → M7c, then M7a
    ├─ 4. M1 markRead                        only now, and only unless "keep emails unread" is on
    └─ 5. M6 match the papers not scored yet → M7e queue, then ScoredPaperLog
-                  (papers close to no student are not queued; the log says how many)
+                  (papers close to no student are not queued, and neither is a paper already
+                   sent to that student; the log says how many of each)
 ```
 
 - **Crash safety.** Each step's stores are written in the order that makes a crash repeat work rather than skip it. Alerts are marked read only after M7a holds them, since M1 looks at unread mail only. A batch is recorded as scored only after its matches are queued.
@@ -35,7 +36,7 @@ PipelineRunner.run(credentials, progress)
 3. The record of scored papers is cleared.
 4. M7c (papers and lookup cache), then M7a, are cleared ([forgetAll](../ingestion/extract/AlertBatchProcessor.java)).
 
-A crash part-way leaves M7a for last: its emails are skipped, never lost. PDFs downloaded by M2 stay in `~/.litroute/data/pdfs/`. The UI's **Clear and re-run…** asks first, stating how many emails will be marked unread and how many queued papers and decisions will be lost, then resets and runs.
+A crash part-way leaves M7a for last: its emails are skipped, never lost. PDFs downloaded by M2 stay in `~/.litroute/data/pdfs/`, and **the sent papers are kept**, so the re-run never queues a paper for a student who already received it. The UI's **Clear and re-run…** asks first, stating how many emails will be marked unread and how many queued papers and decisions will be lost, then resets and runs.
 
 ## Running it without the UI
 
@@ -49,4 +50,4 @@ mvn -q compile exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCl
 
 | Test | What it checks |
 |---|---|
-| [PipelineRunnerTest](../../../../../test/java/com/litroute/pipeline/PipelineRunnerTest.java) | On the client's six real alerts, enriched offline from recorded replies and matched by the real model against the real profiles: a first run scores every paper and queues the close ones, each for one student; alerts are marked read only once M7a holds them; told to keep mail unread, it marks none and still skips processed alerts; a second run finds nothing new and keeps the professor's decisions; papers fetched before any profile existed are scored once there is one; papers are scored again when the matcher failed. **Reset:** the next run processes the same six emails afresh, with decisions discarded and the alerts read again; a reset that can't reach Gmail clears nothing. |
+| [PipelineRunnerTest](../../../../../test/java/com/litroute/pipeline/PipelineRunnerTest.java) | On the client's six real alerts, enriched offline from recorded replies and matched by the real model against the real profiles: a first run scores every paper and queues the close ones, each for one student; alerts are marked read only once M7a holds them; told to keep mail unread, it marks none and still skips processed alerts; a second run finds nothing new and keeps the professor's decisions; papers fetched before any profile existed are scored once there is one; papers are scored again when the matcher failed. **Reset:** the next run processes the same six emails afresh, with decisions discarded and the alerts read again; a reset that can't reach Gmail clears nothing; a paper already sent is not queued for its student again after a reset. |

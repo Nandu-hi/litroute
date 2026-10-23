@@ -68,6 +68,22 @@ public class DigestComposerTest {
         assertTrue(email.body().contains("Abstract: Building facades are continuously subjected"));
     }
 
+    /** An email is composed only for approved papers: none at all when the student has none approved. */
+    @Test
+    public void onlyApprovedPapersAreComposedAndNoneApprovedMeansNoEmail() {
+        ScoredPaper pending = facades().withStatus(ReviewStatus.PENDING);
+        ScoredPaper dropped = ssi().withStatus(ReviewStatus.DROPPED);
+
+        assertTrue(DigestComposer.compose(STUDENT, TO, PROFESSOR, List.of(), DigestComposer.GMAIL_ATTACHMENT_BUDGET)
+                .isEmpty());
+        assertTrue(DigestComposer.compose(STUDENT, TO, PROFESSOR, List.of(pending, dropped),
+                DigestComposer.GMAIL_ATTACHMENT_BUDGET).isEmpty());
+        List<DigestEmail> emails = DigestComposer.compose(STUDENT, TO, PROFESSOR, List.of(pending, ssi()),
+                DigestComposer.GMAIL_ATTACHMENT_BUDGET);
+        assertEquals(1, emails.size());
+        assertEquals(List.of(ssi().queueKey()), emails.get(0).papers().stream().map(ScoredPaper::queueKey).toList());
+    }
+
     /** M6's recommendation leads, as it does in the review table, even over a higher score. */
     @Test
     public void recommendedPapersAreListedFirst() {

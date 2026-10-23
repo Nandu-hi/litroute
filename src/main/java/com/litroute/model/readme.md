@@ -87,7 +87,7 @@ How relevant one candidate is to one student, and why.
 
 ### [ReviewStatus](ReviewStatus.java)
 
-An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10), `DROPPED` (not to be sent) or `SENT` (emailed to the student by M10; approving it again sends it again).
+An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10), `DROPPED` (not to be sent) or `SENT` (emailed to the student by M10: such a paper leaves the queue for [SentPaperStore](../store/SentPaperStore.java) and is never queued for that student again).
 
 ## How it's tested
 

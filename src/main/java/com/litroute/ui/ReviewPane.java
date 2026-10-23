@@ -10,7 +10,13 @@ import com.litroute.scoring.RelevanceScorer;
 import com.litroute.security.GmailCredentials;
 import com.litroute.store.ProfileStore;
 import com.litroute.store.ScoredQueueStore;
+import com.litroute.store.SentPaperStore;
+import com.litroute.store.SentPaperStore.Sent;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -58,11 +64,14 @@ import javafx.scene.layout.VBox;
  * for a decision, their matched papers in the middle (always best score first), and the chosen
  * paper's details and M6's rationale below. Approve, Drop and Back to pending (or the A, D and P keys)
  * record the decision for every selected paper; the queue file is written off the UI thread. Send approved
- * emails every approved paper to its student (M10) and marks it sent; it needs the Gmail credentials unlocked.
+ * emails every approved paper to its student (M10), which moves it from the queue to the sent papers; it
+ * needs the Gmail credentials unlocked. Show: Sent lists the sent papers, read only.
  */
 final class ReviewPane extends BorderPane {
 
     private static final String ALL_STUDENTS = "All students";
+    private static final DateTimeFormatter SENT_TIME = DateTimeFormatter.ofPattern("d MMM yyyy, HH:mm")
+            .withZone(ZoneId.systemDefault());
 
     /** Which entries the table shows. */
     private enum Filter {
@@ -86,6 +95,9 @@ final class ReviewPane extends BorderPane {
 
     private final Session session;
     private final ScoredQueueStore queue;
+    private final SentPaperStore sent;
+    /** When each paper shown as sent went, by {@link ScoredPaper#queueKey()}. */
+    private final Map<String, Instant> sentAt = new HashMap<>();
     private final Consumer<String> openDocument;
     private final Runnable showCredentials;
     private final ObservableList<ScoredPaper> entries = FXCollections.observableArrayList();
@@ -101,9 +113,11 @@ final class ReviewPane extends BorderPane {
     private final Detail detail = new Detail();
 
     /** @param showCredentials brings up the Gmail tab, for a send started while the credentials are locked */
-    ReviewPane(Session session, ScoredQueueStore queue, Consumer<String> openDocument, Runnable showCredentials) {
+    ReviewPane(Session session, ScoredQueueStore queue, SentPaperStore sent, Consumer<String> openDocument,
+            Runnable showCredentials) {
         this.session = session;
         this.queue = queue;
+        this.sent = sent;
         this.openDocument = openDocument;
         this.showCredentials = showCredentials;
 
@@ -143,10 +157,16 @@ final class ReviewPane extends BorderPane {
         reload();
     }
 
-    /** Reads the queue again, keeping the chosen student; call after the pipeline adds papers. */
+    /** Reads the queue and the sent papers again, keeping the chosen student; call after the pipeline adds papers. */
     void reload() {
         try {
-            List<ScoredPaper> loaded = queue.load();
+            List<Sent> sentPapers = sent.load();
+            sentAt.clear();
+            sentPapers.forEach(entry -> sentAt.put(entry.paper().queueKey(), entry.sentAt()));
+            // A paper recorded as sent but not yet taken out of the queue (a crash in between) shows as sent.
+            List<ScoredPaper> loaded = new ArrayList<>(queue.load().stream()
+                    .filter(paper -> !sentAt.containsKey(paper.queueKey())).toList());
+            sentPapers.forEach(entry -> loaded.add(entry.paper()));
             String chosen = studentList.getSelectionModel().getSelectedItem();
             entries.setAll(loaded);
             List<String> names = new ArrayList<>(List.of(ALL_STUDENTS));
@@ -293,8 +313,10 @@ final class ReviewPane extends BorderPane {
                 && (!onlyRecommended || paper.recommended()));
         long pending = entries.stream().filter(paper -> paper.status() == ReviewStatus.PENDING).count();
         long approved = entries.stream().filter(paper -> paper.status() == ReviewStatus.APPROVED).count();
+        long sentCount = entries.stream().filter(paper -> paper.status() == ReviewStatus.SENT).count();
         summary.setStyle("");
-        summary.setText(entries.size() + " queued: " + pending + " pending, " + approved + " approved");
+        summary.setText((entries.size() - sentCount) + " queued: " + pending + " pending, " + approved + " approved · "
+                + sentCount + " sent");
         send.setText("Send approved (" + approved + ")");
         noneApproved.set(approved == 0);
         studentList.refresh();
@@ -313,8 +335,12 @@ final class ReviewPane extends BorderPane {
 
     /** Records the decision for every selected paper, then shows it in the table. */
     private void decide(ReviewStatus status) {
-        List<ScoredPaper> chosen = List.copyOf(table.getSelectionModel().getSelectedItems());
+        List<ScoredPaper> chosen = table.getSelectionModel().getSelectedItems().stream()
+                .filter(paper -> paper.status() != ReviewStatus.SENT).toList();
         if (chosen.isEmpty()) {
+            if (!table.getSelectionModel().isEmpty()) {
+                summary.setText("Sent papers are a record of what each student received; they can't be changed.");
+            }
             return;
         }
         int next = table.getSelectionModel().getSelectedIndex();
@@ -358,7 +384,8 @@ final class ReviewPane extends BorderPane {
         }
         summary.setStyle("");
         summary.setText("Sending...");
-        ApprovedPaperSender sender = new ApprovedPaperSender(queue, ProfileStore.atDefaultLocation(), new GmailSmtpSender());
+        ApprovedPaperSender sender = new ApprovedPaperSender(queue, sent, ProfileStore.atDefaultLocation(),
+                new GmailSmtpSender());
         session.runJob(new Task<Report>() {
             @Override
             protected Report call() throws Exception {
@@ -485,7 +512,10 @@ final class ReviewPane extends BorderPane {
             link.setVisible(url.isPresent());
             match.setText(String.format(Locale.ROOT, "Matched to %s, score %.2f%s%s, %s", chosen.profileName(),
                     chosen.score(), chosen.relevance().map(r -> String.format(Locale.ROOT, ", relevance %.2f", r)).orElse(""),
-                    chosen.recommended() ? ", recommended" : "", chosen.status().name().toLowerCase(Locale.ROOT)));
+                    chosen.recommended() ? ", recommended" : "", chosen.status() == ReviewStatus.SENT
+                            && sentAt.containsKey(chosen.queueKey())
+                            ? "sent " + SENT_TIME.format(sentAt.get(chosen.queueKey()))
+                            : chosen.status().name().toLowerCase(Locale.ROOT)));
             rationale.setText(chosen.rationale()
                     + candidate.abstractSnippet().map(text -> "\n\nAbstract: " + text).orElse(""));
             openPdf.setDisable(candidate.pdfPath().isEmpty());

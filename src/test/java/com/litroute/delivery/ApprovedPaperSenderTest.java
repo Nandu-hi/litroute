@@ -15,6 +15,7 @@ import com.litroute.security.GmailCredentials;
 import com.litroute.store.Candidates;
 import com.litroute.store.ProfileStore;
 import com.litroute.store.ScoredQueueStore;
+import com.litroute.store.SentPaperStore;
 import com.litroute.testing.TestProfiles;
 import jakarta.mail.Address;
 import jakarta.mail.BodyPart;
@@ -25,12 +26,14 @@ import jakarta.mail.internet.MimeMessage;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -49,6 +52,7 @@ public class ApprovedPaperSenderTest {
     private GreenMail greenMail;
     private Path data;
     private ScoredQueueStore queue;
+    private SentPaperStore sent;
     private ProfileStore profiles;
     private String addressed;
     private String unaddressed;
@@ -63,6 +67,7 @@ public class ApprovedPaperSenderTest {
 
         data = Files.createTempDirectory("litroute-delivery");
         queue = new ScoredQueueStore(data.resolve("scored_queue.json"), data.resolve("matched"));
+        sent = new SentPaperStore(data.resolve("sent_papers.json"));
         profiles = new ProfileStore(data.resolve("profiles.json"));
         Iterator<Profile> real = TestProfiles.profiles().values().iterator();
         Profile first = real.next();
@@ -83,7 +88,7 @@ public class ApprovedPaperSenderTest {
     }
 
     private ApprovedPaperSender sender(long attachmentBudget) {
-        return new ApprovedPaperSender(queue, profiles,
+        return new ApprovedPaperSender(queue, sent, profiles,
                 new GmailSmtpSender("127.0.0.1", greenMail.getSmtps().getPort(), true), attachmentBudget);
     }
 
@@ -117,8 +122,14 @@ public class ApprovedPaperSenderTest {
         return queued;
     }
 
+    /** SENT if the paper is recorded as sent and gone from the queue, else its status in the queue. */
     private ReviewStatus statusOf(ScoredPaper paper) throws IOException {
-        return queue.load().stream().filter(p -> p.queueKey().equals(paper.queueKey())).findFirst().orElseThrow().status();
+        Optional<ScoredPaper> queued = queue.load().stream().filter(p -> p.queueKey().equals(paper.queueKey())).findFirst();
+        if (sent.sentKeys().contains(paper.queueKey())) {
+            assertTrue("a sent paper leaves the queue", queued.isEmpty());
+            return ReviewStatus.SENT;
+        }
+        return queued.orElseThrow().status();
     }
 
     private static List<BodyPart> attachments(MimeMessage message) throws Exception {
@@ -160,6 +171,24 @@ public class ApprovedPaperSenderTest {
             assertEquals(ReviewStatus.SENT, statusOf(paper));
         }
         assertEquals("only approved papers are sent", ReviewStatus.PENDING, statusOf(pending));
+    }
+
+    /**
+     * Papers left in the queue by a crash after they were recorded as sent, or marked SENT in the queue by
+     * an older version, are taken out of the queue before a send and never sent again.
+     */
+    @Test
+    public void papersAlreadySentAreTakenOutOfTheQueueAndNotSentAgain() throws Exception {
+        List<ScoredPaper> approved = approveTwoPapersFor(addressed);
+        sent.addAll(List.of(approved.get(0)), Instant.parse("2026-10-24T01:00:00Z"));
+        queue.setStatus(approved.get(1), ReviewStatus.SENT);
+
+        Report report = sender().send(professor(), progress::add);
+
+        assertEquals(new Report(0, 0, 0, List.of(), List.of()), report);
+        assertEquals(0, greenMail.getReceivedMessages().length);
+        assertTrue(queue.load().isEmpty());
+        assertEquals(Set.of(approved.get(0).queueKey(), approved.get(1).queueKey()), sent.sentKeys());
     }
 
     @Test

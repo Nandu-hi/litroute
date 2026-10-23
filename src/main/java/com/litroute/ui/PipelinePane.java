@@ -118,11 +118,12 @@ final class PipelinePane extends BorderPane {
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, String.format("This undoes every run so far and runs "
                 + "the pipeline again over the same alert emails:%n%n"
                 + "• the %d processed alert email(s) are marked unread in Gmail;%n"
-                + "• the review queue is emptied: %d paper(s), %d of them approved, dropped or sent - those decisions "
-                + "are lost;%n"
+                + "• the review queue is emptied: %d paper(s), %d of them approved or dropped - those decisions are "
+                + "lost;%n"
                 + "• the matched PDF copies in the students' folders, the scored papers and the extracted papers are "
                 + "cleared.%n%n"
-                + "If Gmail can't be reached, nothing is cleared.", processed, queued.size(), decided),
+                + "Papers already sent are kept on record, and are never queued again for the student who received "
+                + "them. If Gmail can't be reached, nothing is cleared.", processed, queued.size(), decided),
                 ButtonType.CANCEL, ButtonType.OK);
         confirm.setTitle("Clear and re-run");
         confirm.setHeaderText("Clear all matches and re-run the pipeline?");

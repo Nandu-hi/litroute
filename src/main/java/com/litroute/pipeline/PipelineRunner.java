@@ -25,8 +25,10 @@ import com.litroute.store.EnrichmentCacheStore;
 import com.litroute.store.ProfileStore;
 import com.litroute.store.ScoredPaperLog;
 import com.litroute.store.ScoredQueueStore;
+import com.litroute.store.SentPaperStore;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -115,6 +117,7 @@ public final class PipelineRunner {
     private final MatcherFactory matchers;
     private final ScoredQueueStore queue;
     private final ScoredPaperLog scored;
+    private final SentPaperStore sent;
     private final boolean markRead;
 
     /**
@@ -126,11 +129,12 @@ public final class PipelineRunner {
      * @param matchers        M6
      * @param queue           M7e
      * @param scored          the papers M6 has matched already
+     * @param sent            the papers already emailed to their students, never queued for them again
      */
     public PipelineRunner(ProfileBuilder profileBuilder, ProfileStore profiles, EmailSource emails,
             EmailCacheStore processedEmails, AlertBatchProcessor batches, MatcherFactory matchers,
-            ScoredQueueStore queue, ScoredPaperLog scored) {
-        this(profileBuilder, profiles, emails, processedEmails, batches, matchers, queue, scored, true);
+            ScoredQueueStore queue, ScoredPaperLog scored, SentPaperStore sent) {
+        this(profileBuilder, profiles, emails, processedEmails, batches, matchers, queue, scored, sent, true);
     }
 
     /**
@@ -140,7 +144,7 @@ public final class PipelineRunner {
      */
     public PipelineRunner(ProfileBuilder profileBuilder, ProfileStore profiles, EmailSource emails,
             EmailCacheStore processedEmails, AlertBatchProcessor batches, MatcherFactory matchers,
-            ScoredQueueStore queue, ScoredPaperLog scored, boolean markRead) {
+            ScoredQueueStore queue, ScoredPaperLog scored, SentPaperStore sent, boolean markRead) {
         this.profileBuilder = profileBuilder;
         this.profiles = profiles;
         this.emails = emails;
@@ -149,6 +153,7 @@ public final class PipelineRunner {
         this.matchers = matchers;
         this.queue = queue;
         this.scored = scored;
+        this.sent = sent;
         this.markRead = markRead;
     }
 
@@ -170,7 +175,8 @@ public final class PipelineRunner {
                 EnrichmentCacheStore.atDefaultLocation(), processedEmails);
         return new PipelineRunner(new ProfileBuilder(ProfileBuilder.defaultProfilesRoot(), profiles, provider),
                 profiles, new GmailEmailSource(maxUnread), processedEmails, batches, matcher(kind, provider),
-                ScoredQueueStore.atDefaultLocation(), ScoredPaperLog.atDefaultLocation(), markRead);
+                ScoredQueueStore.atDefaultLocation(), ScoredPaperLog.atDefaultLocation(),
+                SentPaperStore.atDefaultLocation(), markRead);
     }
 
     /** The factory for the chosen matcher; the AI one reads its key from the environment when used. */
@@ -187,7 +193,8 @@ public final class PipelineRunner {
      * only if that worked are the review queue (with the professor's decisions and the students' PDF
      * copies), the record of scored papers, M7c and finally M7a cleared. So a Gmail failure changes
      * nothing, and a crash part-way leaves M7a for last: its emails are skipped, never lost. Downloaded
-     * PDFs stay where M2 saved them.
+     * PDFs stay where M2 saved them, and the record of papers already sent is kept, so the re-run never
+     * queues a paper for a student who has received it.
      *
      * @param credentials the Gmail account the emails were read from; not cleared
      * @param progress    told what each step is doing
@@ -251,7 +258,19 @@ public final class PipelineRunner {
         }
 
         progress.accept("Matching " + fresh.size() + " paper(s) against " + students.size() + " profile(s)...");
-        Map<String, List<ScoredPaper>> matches = matchers.create(students.values()).match(fresh);
+        // A student never gets the same paper twice: what was already sent to them is not queued again.
+        Set<String> alreadySent = sent.sentKeys();
+        Map<String, List<ScoredPaper>> matches = new LinkedHashMap<>();
+        int resent = 0;
+        for (Map.Entry<String, List<ScoredPaper>> entry : matchers.create(students.values()).match(fresh).entrySet()) {
+            List<ScoredPaper> unsent = entry.getValue().stream().filter(paper -> !alreadySent.contains(paper.queueKey()))
+                    .toList();
+            resent += entry.getValue().size() - unsent.size();
+            matches.put(entry.getKey(), unsent);
+        }
+        if (resent > 0) {
+            progress.accept(resent + " match(es) already sent to their student earlier; not queued again.");
+        }
         List<ScoredPaper> matched = matches.values().stream().flatMap(List::stream).toList();
         List<ScoredPaper> updated = queue.addAll(matched);
         scored.addAll(fresh.stream().map(ScoredPaper::paperKey).toList());
@@ -262,9 +281,9 @@ public final class PipelineRunner {
             progress.accept("  " + entry.getKey() + ": " + entry.getValue().size() + " matched, " + picked + " recommended");
         }
         progress.accept(matched.size() + " match(es) queued for review; the queue holds " + updated.size() + ".");
-        if (matched.size() < fresh.size()) {
-            progress.accept((fresh.size() - matched.size()) + " paper(s) were not close enough to any student's work "
-                    + "and were not queued.");
+        if (matched.size() + resent < fresh.size()) {
+            progress.accept((fresh.size() - matched.size() - resent) + " paper(s) were not close enough to any student's "
+                    + "work and were not queued.");
         }
         return new Report(built, alerts.size(), held.size(), fresh.size(), 0, matched.size(), recommended, updated.size());
     }

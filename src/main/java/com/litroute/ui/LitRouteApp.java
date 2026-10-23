@@ -1,6 +1,7 @@
 package com.litroute.ui;
 
 import com.litroute.store.ScoredQueueStore;
+import com.litroute.store.SentPaperStore;
 import java.util.function.Consumer;
 import javafx.application.Application;
 import javafx.application.Platform;
@@ -49,7 +50,8 @@ public final class LitRouteApp extends Application {
             tabs.getSelectionModel().select(gmailTab);
             Platform.runLater(credentials::focusNextField);
         };
-        ReviewPane review = new ReviewPane(session, ScoredQueueStore.atDefaultLocation(), openDocument, showCredentials);
+        ReviewPane review = new ReviewPane(session, ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation(),
+                openDocument, showCredentials);
         Tab reviewTab = new Tab("Review", review);
         tabs.getTabs().addAll(reviewTab,
                 new Tab("Pipeline", new PipelinePane(session, review::reload, showCredentials)),
