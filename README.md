@@ -72,7 +72,7 @@ Each package has its own `readme.md` with the details. [src/main/java/com/litrou
 
 Other requirements:
 
-- **OS:** Linux, macOS or Windows (WSL for the install script). Maven downloads JavaFX and ONNX Runtime for your platform automatically. On a minimal Linux install, JavaFX also needs GTK 3 (`libgtk-3-0` / `gtk3`).
+- **OS:** Linux, macOS or Windows 10/11. Maven downloads JavaFX and ONNX Runtime for your platform automatically. On a minimal Linux install, JavaFX also needs GTK 3 (`libgtk-3-0` / `gtk3`).
 - **Disk:** about 3 GB for the one-time model export (PyTorch CPU + model weights) and about 500 MB for the installed model.
 - **Network:** for the install, Gmail, and paper lookups (Crossref, OpenAlex, publisher pages).
 
@@ -82,30 +82,46 @@ Other requirements:
 
 ### Quick install
 
+**Linux / macOS (and WSL):**
+
 ```bash
 git clone <repository-url> litroute
 cd litroute
 ./install.sh
 ```
 
-[install.sh](install.sh) is safe to re-run. It skips every step that is already done. It:
+**Windows** (Command Prompt or PowerShell):
 
-1. checks for a JDK 17+, Maven and Python 3 and offers to install any that are missing (apt, pacman, dnf, zypper or Homebrew);
-2. compiles the project, which downloads the Maven dependencies;
-3. exports SPECTER2 to `~/.litroute/models`, skipping this step if the model is already there;
-4. creates `~/.litroute/profiles` and `~/.litroute/data`;
-5. with `--credentials`, sets up the Gmail App Password.
+```bat
+git clone <repository-url> litroute
+cd litroute
+install.cmd
+```
 
-| Option | Effect |
-|---|---|
-| `--yes` | Install missing system packages without asking |
-| `--skip-model` | Skip the SPECTER2 export (e.g. you copied `~/.litroute/models` from another machine) |
-| `--skip-build` | Skip the Maven build |
-| `--credentials` | Set up the Gmail App Password at the end (needs a real terminal) |
+`install.cmd` runs [install.ps1](install.ps1) without changing PowerShell's execution policy. From PowerShell you can also run `.\install.ps1` directly if your policy allows scripts.
+
+Both installers are safe to re-run. They skip every step that is already done. They:
+
+1. check for a JDK 17+, Maven and Python 3 and offer to install any that are missing:
+   - Linux and macOS: apt, pacman, dnf, zypper or Homebrew;
+   - Windows: winget for Temurin JDK 21 and Python 3.12. Maven is downloaded into `%LOCALAPPDATA%\Programs` and added to your user `PATH`;
+2. compile the project, which downloads the Maven dependencies;
+3. export SPECTER2 to `~/.litroute/models`, skipping this step if the model is already there;
+4. create `~/.litroute/profiles` and `~/.litroute/data`;
+5. with `--credentials` / `-Credentials`, set up the Gmail App Password.
+
+| `install.sh` | `install.cmd` / `install.ps1` | Effect |
+|---|---|---|
+| `--yes` | `-Yes` | Install missing prerequisites without asking |
+| `--skip-model` | `-SkipModel` | Skip the SPECTER2 export (e.g. you copied `~/.litroute/models` from another machine) |
+| `--skip-build` | `-SkipBuild` | Skip the Maven build |
+| `--credentials` | `-Credentials` | Set up the Gmail App Password at the end (needs a real terminal) |
 
 Set `SPECTER2_OUT_DIR` to install the model somewhere other than `~/.litroute/models`. LitRoute itself always loads the model from `~/.litroute/models`.
 
-> The script is written for `bash`. From fish, zsh or another shell, run `./install.sh` or `bash install.sh`.
+> On Windows, `~` in this README means `%USERPROFILE%`, so the data lives in `C:\Users\<you>\.litroute`.
+>
+> `install.sh` is written for `bash`. From fish, zsh or another shell, run `./install.sh` or `bash install.sh`. On Windows, use `install.cmd` even from Git Bash.
 
 ### Manual installation
 
@@ -122,6 +138,13 @@ sudo dnf install java-21-openjdk-devel maven python3
 brew install openjdk@21 maven python
 ```
 
+On Windows, install the JDK and Python with winget, then get Maven from https://maven.apache.org/download.cgi. Unzip it and add its `bin` folder to `PATH`.
+
+```powershell
+winget install EclipseAdoptium.Temurin.21.JDK
+winget install Python.Python.3.12
+```
+
 Check them with `java -version` (17+) and `mvn -v`.
 
 **2. Build.**
@@ -135,6 +158,8 @@ mvn -DskipTests compile
 ```bash
 scripts/model-export/setup_model.sh
 ```
+
+`setup_model.sh` is a bash script. On Windows, run `install.cmd -SkipBuild` instead, which does the same steps.
 
 This script:
 
@@ -155,6 +180,12 @@ You can delete the virtualenv afterwards. To use the model on another machine, c
 
 ```bash
 mkdir -p ~/.litroute/profiles ~/.litroute/data
+```
+
+On Windows (PowerShell):
+
+```powershell
+mkdir "$env:USERPROFILE\.litroute\profiles", "$env:USERPROFILE\.litroute\data"
 ```
 
 Then continue with [Configuration](#configuration).
@@ -218,6 +249,8 @@ The default matcher (*words + SPECTER2*) works offline. To use the Groq language
 ```bash
 export GROQ_API_KEY=gsk_...              # bash / zsh
 set -x GROQ_API_KEY gsk_...              # fish
+$env:GROQ_API_KEY = "gsk_..."            # Windows PowerShell
+set GROQ_API_KEY=gsk_...                 # Windows Command Prompt
 ```
 
 LitRoute never writes the key to disk. The AI matcher sends each student's keywords and paper titles, and the new papers' titles and abstracts, to Groq.
@@ -253,7 +286,9 @@ A typical session:
 
 ### Command line
 
-Every entry point runs through Maven's `exec:java`:
+Every entry point runs through Maven's `exec:java`.
+
+> **PowerShell:** quote every `-D` argument, e.g. `mvn -q compile exec:java "-Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCli"`. Unquoted, PowerShell splits `-Dexec.mainClass=...` at the dot and Maven fails with *Unknown lifecycle phase*. Command Prompt and the bash examples below need no quotes.
 
 ```bash
 # One pipeline run (asks for the master passphrase)
@@ -289,6 +324,14 @@ Other tools:
 
 Anyone who can read the crontab can read the passphrase in it. Prefer a file only you can read, e.g. `LITROUTE_PASSPHRASE="$(cat ~/.litroute/.pass)"` with `chmod 600`.
 
+On Windows, use **Task Scheduler** instead. Create a task that runs `cmd.exe` with these arguments, replacing `C:\path\to\litroute` with your folder:
+
+```bat
+/c cd /d C:\path\to\litroute && mvn -q exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCli >> %USERPROFILE%\.litroute\task.log 2>&1
+```
+
+Set `LITROUTE_PASSPHRASE` as a user environment variable (**Settings → System → About → Advanced system settings → Environment Variables**). Anyone signed in as you can read it.
+
 ---
 
 ## Where LitRoute keeps its files
@@ -317,7 +360,8 @@ To start over, use **Clear and re-run…** in the app. Deleting `data/` loses th
 
 ```
 litroute/
-├── install.sh                     one-step installer
+├── install.sh                     one-step installer (Linux, macOS, WSL)
+├── install.cmd, install.ps1       one-step installer (Windows)
 ├── pom.xml                        Maven build (Java 17, JavaFX 21, ONNX Runtime, DJL tokenizers, PDFBox, Jakarta Mail, Jackson, jsoup)
 ├── Makefile                       `make <TestClass>` runs one test class
 ├── scripts/model-export/          one-time SPECTER2 → ONNX export (Python)
@@ -357,6 +401,10 @@ The tests use the alert emails stored in `src/test/resources` and recorded Cross
 | `pip` can't find `torch` | Your Python is newer than PyTorch supports. Run the export with an older Python 3, e.g. `python3.12 -m venv scripts/model-export/.venv`, then re-run `setup_model.sh`. |
 | `Error: JavaFX runtime components are missing` | Start the app with `mvn javafx:run`, or run `com.litroute.ui.Launcher` rather than `LitRouteApp`. |
 | The window doesn't open on Linux | Install GTK 3 (`libgtk-3-0` / `gtk3`). |
+| Windows: `install.ps1 cannot be loaded because running scripts is disabled` | Run `install.cmd` instead. It bypasses the execution policy for this one script. |
+| Windows: `mvn`, `java` or `python` not found right after the installer added them | Open a new terminal window so it picks up the updated `PATH`, then re-run the installer. |
+| Windows: `Unknown lifecycle phase ".mainClass=..."` | You're in PowerShell. Quote the argument: `"-Dexec.mainClass=..."`. |
+| Windows: ONNX Runtime fails to load (`UnsatisfiedLinkError`, `onnxruntime.dll`) | Install the Microsoft Visual C++ Redistributable (x64): `winget install Microsoft.VCRedist.2015+.x64`. |
 | Gmail login rejected | Use an **App Password**, not the account password. Check that 2-Step Verification and IMAP are on. |
 | Wrong passphrase / can't decrypt | The passphrase can't be recovered. Set up the credentials again in the Gmail tab or with `CredentialSetupCli`. |
 | `CredentialSetupCli` refuses to run | It needs a real terminal (not piped input or an IDE console), so the password is never echoed. Use the app's Gmail tab instead. |

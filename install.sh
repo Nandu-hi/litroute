@@ -4,7 +4,14 @@
 # ~/.litroute folders. Safe to re-run: every step skips what is already done.
 #
 # Usage: ./install.sh [--yes] [--skip-model] [--skip-build] [--credentials] [--help]
+# On Windows, use install.ps1 (or install.cmd) instead; WSL counts as Linux.
 set -euo pipefail
+
+case "$(uname -s)" in
+    MINGW*|MSYS*|CYGWIN*)
+        echo "On Windows, run install.cmd (or install.ps1 from PowerShell) instead." >&2
+        exit 1 ;;
+esac
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LITROUTE_HOME="$HOME/.litroute"
