@@ -1,6 +1,6 @@
 # The `scoring` module (M6)
 
-Matches each deduplicated paper to the **one** student it suits best, and recommends each student's best 3 papers of the batch. A paper is compared with every student's reference papers by meaning (SPECTER2) and by wording (TF-IDF). Design decisions and measurements: [m6plan.txt](../../../../../../m6plan.txt).
+Matches each deduplicated paper to the **one** student it suits best, and only if it is a research paper close enough to that student's own work (relevance ≥ 0.7, or 0.43 from a title alone); there is no quota per student, and every paper it returns is recommended. A paper is compared with every student's reference papers by meaning (SPECTER2) and by wording (TF-IDF). Design decisions and measurements: [m6plan.txt](../../../../../../m6plan.txt).
 
 A second matcher asks a language model instead (on Groq): see [AI matching](#ai-matching). Both are a [PaperMatcher](PaperMatcher.java) and give the same output.
 
@@ -10,7 +10,7 @@ A second matcher asks a language model instead (on Groq): see [AI matching](#ai-
   - every student's [Profile](../model/Profile.java) from M7d: their papers' vectors and text, built with the same model (other models are rejected);
   - the batch: deduplicated [PaperCandidate](../model/PaperCandidate.java)s from M7c, or local PDFs via [LocalPdfCandidates](LocalPdfCandidates.java);
   - SPECTER2 ([EmbeddingProvider](../embedding/EmbeddingProvider.java)).
-- **Out:** `Map<profile name, List<ScoredPaper>>` ([PaperMatcher.match](PaperMatcher.java)): every student, in profile order, with the papers assigned to them, highest score first (an empty list if none). Each [ScoredPaper](../model/ScoredPaper.java) has a score from 0 to 1, a rationale, `PENDING` status and a `recommended` flag. Every paper is in exactly one list; one that isn't recommended says why. The CLI queues them in M7e, which copies each matched PDF into the student's folder.
+- **Out:** `Map<profile name, List<ScoredPaper>>` ([PaperMatcher.match](PaperMatcher.java)): every student, in profile order, with the papers assigned to them, highest score first (an empty list if none). Each [ScoredPaper](../model/ScoredPaper.java) has a score from 0 to 1, a rationale, `PENDING` status and a `recommended` flag. A paper appears in at most one list; one close to no student is not returned at all. M9 (or the CLI) queues them in M7e, which copies each matched PDF into the student's folder.
 
 ## How it works
 
@@ -44,34 +44,34 @@ Profiles (M7d)                                   Candidate (M7c or a local PDF)
 
 ## How a paper is scored
 
-1. **Evidence** ([read](RelevanceScorer.java#L515)): its PDF if readable, else title + abstract, else title alone. A PDF is compared with the papers' combined vectors, the rest with their abstract views.
-2. **Meaning** ([Space.closeness](RelevanceScorer.java#L680)), for each student:
+1. **Evidence** ([read](RelevanceScorer.java#L640)): its PDF if readable, else title + abstract, else title alone. A PDF is compared with the papers' combined vectors, the rest with their abstract views.
+2. **Meaning** ([Space.closeness](RelevanceScorer.java#L880)), for each student:
    ```
    closeness = ½ · cos(c, centroid) + ½ · mean cos(c, the student's 3 closest papers)
    centroid  = normalize(mean of the student's paper vectors)
    ```
-   - Copies of a paper (same hash, or cosine ≥ 0.99) count once ([sameAs](RelevanceScorer.java#L622)).
-   - The centroid is computed on [line 672](RelevanceScorer.java#L672) and the blend on [line 691](RelevanceScorer.java#L691).
+   - Copies of a paper (same hash, or cosine ≥ 0.99) count once ([sameAs](RelevanceScorer.java#L786)).
+   - The centroid is computed on [line 860](RelevanceScorer.java#L860) and the blend on [line 891](RelevanceScorer.java#L891).
    - Paper vectors are unit length, so cos(c, centroid) is the average similarity to all the student's papers divided by |mean|: fit with their work as a whole. The closest-papers half rewards matching one part of it.
-3. **Wording** ([LexicalIndex.closeness](LexicalIndex.java#L115)): the same ½ + ½ blend over TF-IDF vectors.
-4. **Fit** ([fit](RelevanceScorer.java#L417)): each signal is standardized across the students, then the two are averaged, so a generic paper stands out for no one. For one signal, with similarities x₁ … x_S for the S students ([zScores](RelevanceScorer.java#L429)):
-   - `mean = (x₁ + … + x_S) / S` ([line 432](RelevanceScorer.java#L432))
-   - `sd = √( ((x₁ − mean)² + … + (x_S − mean)²) / S )`, dividing by S, not S − 1 ([lines 436–438](RelevanceScorer.java#L436))
-   - `z_s = (x_s − mean) / sd`; if sd is (near) 0, below 1e-12, every z is 0, since the signal can't tell the students apart ([lines 440–442](RelevanceScorer.java#L440))
-   - `fit_s = (z_s of meaning + z_s of wording) / 2`; `SEMANTIC` or `LEXICAL` alone uses that one signal's z ([line 423](RelevanceScorer.java#L423))
-5. **Share** ([softmax](RelevanceScorer.java#L448)): how much of the paper belongs to each student, with sharpness k = 2 ([SHARE_SHARPNESS](RelevanceScorer.java#L88)):
-   - `share_s = exp(k · (fit_s − max fit)) / Σₜ exp(k · (fit_t − max fit))` ([lines 456–460](RelevanceScorer.java#L456))
-   - Subtracting the largest fit ([line 451](RelevanceScorer.java#L451)) leaves the shares unchanged and keeps `exp` from overflowing. The shares sum to 1; a larger k gives the best student more of the share.
-6. **Relevance** ([relevance](RelevanceScorer.java#L465), [Anchors](RelevanceScorer.java#L164)): each similarity is placed between an `other` and an `own` anchor and passed through a logistic curve, so it is about 0.9 for a typical own paper and 0.1 for another student's. The anchors are medians measured by holding out each reference paper in turn, per kind of evidence ([calibrate](RelevanceScorer.java#L564)).
-7. **Score** = relevance × share ([line 371](RelevanceScorer.java#L371)). The rationale gives the share and runner-up, the relevance, the shared words, the closest papers and the evidence used.
+3. **Wording** ([LexicalIndex.closeness](LexicalIndex.java#L142)): the same ½ + ½ blend over TF-IDF vectors.
+4. **Fit** ([fit](RelevanceScorer.java#L472)): each signal is standardized across the students, then the two are averaged, so a generic paper stands out for no one. For one signal, with similarities x₁ … x_S for the S students ([zScores](RelevanceScorer.java#L490)):
+   - `mean = (x₁ + … + x_S) / S` ([line 493](RelevanceScorer.java#L493))
+   - `sd = √( ((x₁ − mean)² + … + (x_S − mean)²) / S )`, dividing by S, not S − 1 ([lines 497–499](RelevanceScorer.java#L497))
+   - `z_s = (x_s − mean) / sd`; if sd is (near) 0, below 1e-12, every z is 0, since the signal can't tell the students apart ([lines 501–505](RelevanceScorer.java#L501))
+   - `fit_s = (z_s of meaning + z_s of wording) / 2`; `SEMANTIC` or `LEXICAL` alone uses that one signal's z ([line 478](RelevanceScorer.java#L478))
+5. **Share** ([softmax](RelevanceScorer.java#L515)): how much of the paper belongs to each student, with sharpness k = 2 ([SHARE_SHARPNESS](RelevanceScorer.java#L87)):
+   - `share_s = exp(k · (fit_s − max fit)) / Σₜ exp(k · (fit_t − max fit))` ([lines 523–527](RelevanceScorer.java#L523))
+   - Subtracting the largest fit ([line 518](RelevanceScorer.java#L518)) leaves the shares unchanged and keeps `exp` from overflowing. The shares sum to 1; a larger k gives the best student more of the share.
+6. **Relevance** ([relevance](RelevanceScorer.java#L549), [Anchors](RelevanceScorer.java#L189)): each similarity is placed between an `other` and an `own` anchor and passed through a logistic curve, so it is about 0.9 for a typical own paper and 0.1 for another student's. The anchors are medians measured by holding out each reference paper in turn, per kind of evidence ([calibrate](RelevanceScorer.java#L709)).
+7. **Score** = relevance × share ([line 415](RelevanceScorer.java#L415)). The rationale gives the share and runner-up, the relevance, the shared words, the closest papers and the evidence used.
 
 ## Assigning and recommending
 
-[match](RelevanceScorer.java#L287) gives each paper to its highest-scoring student, but only if it is a research paper (not a book review, discussion, erratum and the like; [PaperCandidate.isResearch](../model/PaperCandidate.java), which M2 already applies) with relevance ≥ 0.7 ([RELEVANCE_FLOOR](RelevanceScorer.java#L98)). Any other paper matches no one and is not queued. There is no quota per student: a student gets every paper that qualifies, however many or few.
+[match](RelevanceScorer.java#L342) gives each paper to its highest-scoring student, but only if it is a research paper (not a book review, discussion, erratum and the like; [PaperCandidate.isResearch](../model/PaperCandidate.java), which M2 already applies) with relevance ≥ 0.7 ([RELEVANCE_FLOOR](RelevanceScorer.java#L99)). Any other paper matches no one and is not queued. There is no quota per student: a student gets every paper that qualifies, however many or few.
 
-**Why 0.7 and no quota** (October 2026, the professor's first reviewed batch of 31 alert papers): with the old rule every paper was queued and each student's top 3 above 0.5 recommended, so 20 of the 31 queued papers were dropped, 15 of them landing on RP4-mh-char, the broadest hazard profile. Five were book reviews, a discussion, a closure and an erratum (one book review scored relevance 0.96); nine were below 0.5. Above 0.5, six of the 17 research papers were generic hazard or disaster-management papers he dropped, and the quota of 3 had cut a rainstorm hazard-chain paper (relevance 0.91) from RP4. Raising the floor while queuing only what clears it:
+**Why 0.7 and no quota** (October 2026, the professor's first reviewed batch of 31 alert papers): with the old rule every paper was queued and each student's top 3 above 0.5 recommended, so 20 of the 31 queued papers were dropped, 15 of them landing on RP4-mh-char, the broadest hazard profile. Five were book reviews, a discussion, a closure and an erratum (one book review scored relevance 0.96); nine were below 0.5. Above 0.5, six of the 17 research papers were generic hazard or disaster-management papers the professor dropped, and the quota of 3 had cut a rainstorm hazard-chain paper (relevance 0.91) from RP4. Raising the floor while queuing only what clears it:
 
-| Rule | Queued | Approved by the professor | Dropped by him |
+| Rule | Queued | Approved by the professor | Dropped by the professor |
 |---|---|---|---|
 | old: everything, top 3 per student ★ | 31 | 11 (all ★) | 20 |
 | research, relevance ≥ 0.5 | 17 | 11 | 6 |
@@ -87,18 +87,18 @@ On the papers the professor filed by student, 0.7 still matches 41 of 46 to thei
 - **Titles weigh meaning above words** ([TITLE_MEANING_WEIGHT](RelevanceScorer.java) = 0.65): a dozen words share few terms with anyone's papers.
 - **Title-only floor** ([TITLE_FLOOR](RelevanceScorer.java) = 0.43): a title's relevance stays near the middle of the scale even when it plainly belongs to a student. Bridge piers 0.61 and compound geohazards 0.44 are in; the out-of-scope review of steels under impact, 0.41, is out.
 
-On the batch: 16 of 26 matched, the 14 the professor wants plus the flood cost–benefit and drought–flood papers (one out of scope, one borderline). On his filed papers known by title and abstract, no match changes; judged by title alone, 34 of 46 reach their student (32 before) and 5 reach another (3 before).
+On the batch: 16 of 26 matched, the 14 the professor wants plus the flood cost–benefit and drought–flood papers (one out of scope, one borderline). On the professor's filed papers known by title and abstract, no match changes; judged by title alone, 34 of 46 reach their student (32 before) and 5 reach another (3 before).
 
 **Result** on the 48 papers the professor filed by student, from full PDFs: `HYBRID` (the default) assigns 46 correctly and gets every top 3 right. `SEMANTIC` alone gets 43 and P@3 0.81; `LEXICAL` alone gets 43 and 0.88.
 
 ## TF-IDF
 
 - [Terms](Terms.java): lowercase, accent-folded stems plus pairs of adjacent stems (`rank_aggregation`). Words under 3 letters, function words and boilerplate are dropped, and a dropped word breaks a pair.
-- [LexicalIndex](LexicalIndex.java#L52): `idf = ln((N+1)/(df+1)) + 1` ([line 68](LexicalIndex.java#L68)); each term is weighted `(1 + ln(count)) × idf` ([weigh](LexicalIndex.java#L162)); terms in only one paper or in more than half of them are dropped; vectors are unit length.
+- [LexicalIndex](LexicalIndex.java#L57): `idf = ln((N+1)/(df+1)) + 1` ([line 73](LexicalIndex.java#L73)); each term is weighted `(1 + ln(count)) × idf` ([weigh](LexicalIndex.java#L201)); terms in only one paper or in more than half of them are dropped; vectors are unit length.
 
 ## AI matching
 
-[AiPaperMatcher](ai/AiPaperMatcher.java) sends every student and the whole batch to a language model in one prompt and gets back, per student, the relevant papers with a 0–100 score and the one paper to focus on, with a one-line reason. Each student is described by the keywords M5 stored with their profile ([ProfileKeywords](../profile/ProfileKeywords.java)) and their six most typical paper titles. The CLI doesn't run it yet.
+[AiPaperMatcher](ai/AiPaperMatcher.java) sends every student and the whole batch to a language model in one prompt and gets back, per student, the relevant papers with a 0–100 score and the one paper to focus on, with a one-line reason. Each student is described by the keywords M5 stored with their profile ([ProfileKeywords](../profile/ProfileKeywords.java)) and their six most typical paper titles. It is chosen per run: **Matcher: Groq language model** in the UI's Pipeline tab, or `PipelineRunnerCli --matcher=ai`. The classes are described in the [scoring/ai readme](ai/readme.md).
 
 ```
 ProfileBrief per student            the batch (M7c)
@@ -141,16 +141,44 @@ GROQ_API_KEY=... mvn -q test-compile exec:java -Dexec.classpathScope=test -Dexec
 
 [AiRecorder](../../../../../test/java/com/litroute/scoring/ai/AiRecorder.java) sends the stored profiles and the client's sample alert papers, saves `src/test/resources/ai/groq-match-request.json` (without the key) and `groq-match-reply.json` (only for a successful reply), and prints the matches. `-Dexec.args=--dry-run` prints the prompt instead and sends nothing.
 
-## Other classes
+## The classes
 
-- [LocalPdfCandidates](LocalPdfCandidates.java): a PDF dropped in by hand, as a candidate.
-- [MatchEvaluation](MatchEvaluation.java): papers assigned correctly, and per-student P@3, against the professor's filing.
+| Class | Role |
+|---|---|
+| [PaperMatcher](PaperMatcher.java) | M6's interface: `match(batch)` → `Map<student, List<ScoredPaper>>`. Both matchers implement it, so M9 and M7e don't care which ran. |
+| [RelevanceScorer](RelevanceScorer.java) | The default matcher: SPECTER2 meaning + TF-IDF wording, calibrated on the profiles, one student per paper, floors 0.7 / 0.43. |
+| [LexicalIndex](LexicalIndex.java) | Package-private. The TF-IDF index over every profile paper's text; closeness and shared terms for a candidate's text. |
+| [Terms](Terms.java) | Package-private. Text to term counts: folded stems and adjacent stem pairs, stopwords dropped. |
+| [LocalPdfCandidates](LocalPdfCandidates.java) | A PDF dropped in by hand, as a candidate. |
+| [MatchEvaluation](MatchEvaluation.java) | Package-private. Papers assigned correctly, and per-student P@3, against the professor's filing. |
+| [RelevanceScorerCli](RelevanceScorerCli.java) | Terminal entry point: match M7c into M7e, or score PDFs and compare the strategies. |
+| [ai/](ai/readme.md) | The AI matcher on Groq: [AiPaperMatcher](ai/AiPaperMatcher.java) and its prompt, schema and HTTP client. |
+
+## Interaction with M7 (the stores)
+
+M6 reads two stores and writes none itself; M9 writes its result.
+
+```
+M7d profiles.json ──loadAll()──▶ RelevanceScorer(provider, profiles)   (vectors, text; modelId must match)
+                                 or AiPaperMatcher.of(groq, profiles)   (keywords + 6 typical titles)
+M7c enrichment_cache.json ──enriched, minus papers already scored──▶ match(batch)
+                                                                        │ Map<student, List<ScoredPaper>>
+                         sent_papers.json ── keys already sent ──▶ M9 filters them out
+                                                                        ▼
+                         M7e scored_queue.json ◀── addAll ── M9 (matched PDFs copied to matched/<student>/)
+                         scored_papers.json   ◀── addAll(paperKeys) ── M9, after the queue
+```
+
+- **M7d → M6:** a profile saved by another model is rejected; one saved without text forces `SEMANTIC` only (and the default `HYBRID` refuses it).
+- **M7c → M6:** M9 passes every deduplicated paper not yet in `scored_papers.json` or the queue, so papers left unscored by a failed run are scored by the next one.
+- **M6 → M7e:** each `ScoredPaper` carries the candidate as M7c held it; M7e keys it by `queueKey()` and copies its `pdfPath` into the student's folder. Re-scoring a queued paper updates its score and rationale but keeps the professor's decision.
+- **RelevanceScorerCli** is the exception that writes: without a path it reads M7c and M7d and calls `ScoredQueueStore.addAll(matches)` directly.
 
 ## Running it
 
 ```
-mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli [-Dexec.args=--top=2]
-mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli -Dexec.args="PDF_OR_FOLDER [--top=2]"
+mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli
+mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli -Dexec.args=PDF_OR_FOLDER
 ```
 
 - **Without a path:** matches M7c's papers and queues them in M7e.

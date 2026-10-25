@@ -57,11 +57,23 @@ public final class ScoredQueueStore {
     record StoredScoredPaper(StoredCandidate candidate, String profileName, double score, String rationale,
             ReviewStatus status, Boolean recommended, Double relevance) {
 
+        /**
+         * Input: a scored paper.
+         * Output: its JSON shape (empty relevance as null).
+         * Used by: {@link ScoredQueueStore#write}, SentPaperStore.addAll.
+         * Example: paper with relevance empty -> StoredScoredPaper with {@code relevance == null}
+         */
         static StoredScoredPaper from(ScoredPaper scored) {
             return new StoredScoredPaper(StoredCandidate.from(scored.candidate()), scored.profileName(), scored.score(),
                     scored.rationale(), scored.status(), scored.recommended(), scored.relevance().orElse(null));
         }
 
+        /**
+         * Input: none (this stored entry).
+         * Output: the scored paper (missing recommended -> false, missing relevance -> read from rationale); IOException if invalid.
+         * Used by: {@link ScoredQueueStore#read}, SentPaperStore.read.
+         * Example: old entry, rationale "Relevance 0.82 (...)" -> relevance {@code Optional[0.82]}
+         */
         ScoredPaper toScoredPaper() throws IOException {
             try {
                 return new ScoredPaper(candidate.toCandidate(), profileName, score, rationale, status,
@@ -76,14 +88,21 @@ public final class ScoredQueueStore {
     private final Path pdfRoot;
     private final Object lock;
 
-    /** A queue keeping the matched PDFs in a {@code matched} folder next to the queue file. */
+    /**
+     * Input: the queue's JSON file.
+     * Output: a queue keeping matched PDFs in a {@code matched} folder next to that file.
+     * Used by: tests with a temp folder.
+     * Example: {@code new ScoredQueueStore(tmp/q.json).pdfRoot()} -> {@code tmp/matched}
+     */
     public ScoredQueueStore(Path storeFile) {
         this(storeFile, storeFile.resolveSibling("matched"));
     }
 
     /**
-     * @param storeFile the queue's JSON file
-     * @param pdfRoot   the folder holding one subfolder of matched PDFs per student
+     * Input: the queue's JSON file and the folder holding one subfolder of matched PDFs per student.
+     * Output: a queue sharing the lock of every other store object on the same file.
+     * Used by: {@link #atDefaultLocation}, the one-argument constructor, tests.
+     * Example: {@code new ScoredQueueStore(d/scored_queue.json, d/matched)}
      */
     public ScoredQueueStore(Path storeFile, Path pdfRoot) {
         this.storeFile = storeFile;
@@ -91,17 +110,33 @@ public final class ScoredQueueStore {
         this.lock = LOCKS.computeIfAbsent(storeFile.toAbsolutePath().normalize(), path -> new Object());
     }
 
+    /**
+     * Input: none.
+     * Output: a queue at {@code ~/.litroute/data/scored_queue.json} with PDFs under {@code ~/.litroute/data/matched/}.
+     * Used by: PipelineRunner.atDefaultLocations (M9), LitRouteApp (M8), ApprovedPaperSender.atDefaultLocations (M10), RelevanceScorerCli.
+     * Example: {@code atDefaultLocation().pdfRoot()} -> /home/u/.litroute/data/matched
+     */
     public static ScoredQueueStore atDefaultLocation() {
         Path data = Path.of(System.getProperty("user.home"), ".litroute", "data");
         return new ScoredQueueStore(data.resolve("scored_queue.json"), data.resolve("matched"));
     }
 
-    /** The folder holding one subfolder of matched PDFs per student. */
+    /**
+     * Input: none.
+     * Output: the folder holding one subfolder of matched PDFs per student.
+     * Used by: RelevanceScorerCli to print where the PDFs went; {@link #clear}.
+     * Example: -> {@code ~/.litroute/data/matched}
+     */
     public Path pdfRoot() {
         return pdfRoot;
     }
 
-    /** The folder the student's matched PDFs are copied into. */
+    /**
+     * Input: a profile name.
+     * Output: {@code pdfRoot/<name>}; throws if the name would lead outside pdfRoot.
+     * Used by: {@link #withPdfFiled}.
+     * Example: {@code pdfFolder("alice")} -> {@code matched/alice}; {@code pdfFolder("../x")} -> throws
+     */
     public Path pdfFolder(String profileName) {
         Path folder = pdfRoot.resolve(profileName).normalize();
         if (!folder.getParent().equals(pdfRoot)) {
@@ -111,8 +146,10 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * @return the queue in the order entries were first added; empty if nothing has been queued yet
-     * @throws IOException if the file exists but is unreadable or not a valid queue
+     * Input: none.
+     * Output: the queue in first-added order; empty if nothing queued yet; IOException if corrupt.
+     * Used by: ReviewPane (M8) to show it, PipelineRunner (M9) for counts and scored keys, ApprovedPaperSender (M10).
+     * Example: -> {@code [alice/"Wave loads" PENDING, bob/"Soil creep" APPROVED]}
      */
     public List<ScoredPaper> load() throws IOException {
         synchronized (lock) {
@@ -122,21 +159,23 @@ public final class ScoredQueueStore {
 
     /**
      * Adds what a {@code PaperMatcher} matched: each student's papers, as {@link #addAll(Collection)}.
-     *
-     * @return the whole queue after the change
+     * Input: M6 output, student -> their scored papers.
+     * Output: the whole queue after the change.
+     * Used by: RelevanceScorerCli; tests.
+     * Example: {@code addAll({alice=[X], bob=[Y]})} -> queue [..., alice/X, bob/Y]
      */
     public List<ScoredPaper> addAll(Map<String, List<ScoredPaper>> matches) throws IOException {
         return addAll(matches.values().stream().flatMap(List::stream).toList());
     }
 
     /**
-     * Adds newly scored papers. A paper already queued for the same student (see
-     * {@link ScoredPaper#queueKey()}) takes the new score, rationale and recommendation but keeps its
-     * place and its review status, so re-scoring never undoes the professor's decision. Each paper's PDF,
-     * if it has one, is copied into the student's folder (see {@link #pdfFolder}) and the queued entry
-     * points to the copy.
-     *
-     * @return the whole queue after the change
+     * Adds newly scored papers. A paper already queued for the same student takes the new score, rationale
+     * and recommendation but keeps its place and review status, so re-scoring never undoes a decision.
+     * Each PDF is copied into the student's folder and the entry points to the copy.
+     * Input: scored papers.
+     * Output: the whole queue after the change.
+     * Used by: PipelineRunner (M9) after M6 (papers already sent filtered out first); {@link #addAll(Map)}.
+     * Example: alice/X APPROVED queued, {@code addAll([alice/X score 0.9])} -> alice/X score 0.9, still APPROVED
      */
     public List<ScoredPaper> addAll(Collection<ScoredPaper> scored) throws IOException {
         synchronized (lock) {
@@ -144,6 +183,7 @@ public final class ScoredQueueStore {
             for (ScoredPaper matched : scored) {
                 ScoredPaper paper = withPdfFiled(matched);
                 ScoredPaper existing = queue.get(paper.queueKey());
+                // Re-put keeps the LinkedHashMap position; carry over the professor's status.
                 queue.put(paper.queueKey(), existing == null ? paper : paper.withStatus(existing.status()));
             }
             List<ScoredPaper> updated = new ArrayList<>(queue.values());
@@ -153,16 +193,18 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * Empties the queue, discarding every decision in it, and deletes the PDF copies its entries point
-     * to in the students' folders (then any student folder left empty). Nothing else is touched: a file
-     * an entry points to outside {@link #pdfRoot()} is not this store's copy.
-     *
-     * @return how many entries the queue held
+     * Empties the queue (decisions included) and deletes its PDF copies in the students' folders, then any
+     * folder left empty. A file outside {@link #pdfRoot()} is not this store's copy and is left alone.
+     * Input: none.
+     * Output: how many entries the queue held.
+     * Used by: PipelineRunner.reset (M9, Clear and re-run).
+     * Example: queue of 3 with copies in matched/alice -> returns 3; matched/alice deleted
      */
     public int clear() throws IOException {
         synchronized (lock) {
             List<ScoredPaper> queue = read();
             write(List.of());
+            // Queue file first: a crash now leaves stray PDFs, never entries pointing to deleted files.
             for (ScoredPaper paper : queue) {
                 Optional<Path> copy = paper.candidate().pdfPath().map(Path::normalize).filter(path -> path.startsWith(pdfRoot));
                 if (copy.isPresent()) {
@@ -182,11 +224,11 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * Takes these papers out of the queue (matched by {@link ScoredPaper#queueKey()}), leaving their PDF
-     * copies in the students' folders: what M10 does once a paper is sent and recorded in
-     * {@link SentPaperStore}.
-     *
-     * @return how many of them were queued
+     * Takes these papers out of the queue (by {@link ScoredPaper#queueKey()}), leaving their PDF copies.
+     * Input: papers to remove.
+     * Output: how many of them were queued; the file is rewritten only if any were.
+     * Used by: ApprovedPaperSender (M10), after recording them in {@link SentPaperStore}.
+     * Example: queue [alice/X, bob/Y], {@code remove([alice/X])} -> 1; queue [bob/Y]
      */
     public int remove(Collection<ScoredPaper> papers) throws IOException {
         Set<String> keys = papers.stream().map(ScoredPaper::queueKey).collect(Collectors.toSet());
@@ -202,8 +244,10 @@ public final class ScoredQueueStore {
 
     /**
      * Records the professor's decision on one queued paper.
-     *
-     * @return false if that paper is not queued for that student
+     * Input: the paper (matched by queue key) and its new status.
+     * Output: true if updated; false if that paper is not queued for that student.
+     * Used by: ReviewPane (M8) Approve/Drop.
+     * Example: {@code setStatus(alice/X, APPROVED)} -> true; {@code setStatus(zoe/X, APPROVED)} -> false
      */
     public boolean setStatus(ScoredPaper paper, ReviewStatus status) throws IOException {
         synchronized (lock) {
@@ -219,10 +263,12 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * The paper with its PDF copied into the student's folder, under the PDF's own file name. A file of
-     * that name holding the same bytes is the same PDF, filed before; one holding other bytes belongs to
-     * another paper, so this copy gets a numbered name ({@code x-2.pdf}). A PDF that is gone from where
-     * the pipeline saved it is left as it is: the paper is still queued.
+     * Copies the paper's PDF into the student's folder under its own name; the same bytes already there are
+     * reused, other bytes under that name get {@code x-2.pdf}. A missing PDF is logged and the paper kept as is.
+     * Input: a scored paper.
+     * Output: the paper, pointing at the student's copy (unchanged if it has no PDF, or it is gone).
+     * Used by: {@link #addAll(Collection)}.
+     * Example: alice, pdfs/x.pdf -> pdfPath matched/alice/x.pdf (or matched/alice/x-2.pdf if another x.pdf is there)
      */
     private ScoredPaper withPdfFiled(ScoredPaper paper) throws IOException {
         Optional<Path> pdf = paper.candidate().pdfPath();
@@ -244,6 +290,7 @@ public final class ScoredQueueStore {
         String stem = dot > 0 ? name.substring(0, dot) : name;
         String extension = dot > 0 ? name.substring(dot) : "";
         Path target = folder.resolve(name);
+        // Next free name, unless a file of that name already holds these exact bytes.
         for (int n = 2; Files.exists(target) && Files.mismatch(source, target) != -1; n++) {
             target = folder.resolve(stem + "-" + n + extension);
         }
@@ -255,11 +302,23 @@ public final class ScoredQueueStore {
                 paper.recommended(), paper.relevance());
     }
 
+    /**
+     * Input: an M6 rationale (null allowed).
+     * Output: the relevance it states, or empty.
+     * Used by: {@link StoredScoredPaper#toScoredPaper} for entries saved before relevance was stored.
+     * Example: {@code statedIn("Relevance 0.82 (share 0.6)")} -> {@code Optional[0.82]}
+     */
     private static Optional<Double> statedIn(String rationale) {
         Matcher stated = rationale == null ? null : STATED_RELEVANCE.matcher(rationale);
         return stated != null && stated.find() ? Optional.of(Double.parseDouble(stated.group(1))) : Optional.empty();
     }
 
+    /**
+     * Input: none; the caller holds the lock.
+     * Output: the queue on disk; empty if no file; IOException if corrupt.
+     * Used by: every public method that reads or changes the queue.
+     * Example: file of 2 entries -> list of 2 ScoredPapers
+     */
     private List<ScoredPaper> read() throws IOException {
         if (!Files.exists(storeFile)) {
             return new ArrayList<>();
@@ -271,10 +330,22 @@ public final class ScoredQueueStore {
         return queue;
     }
 
+    /**
+     * Input: the whole queue; the caller holds the lock.
+     * Output: none; the file is atomically replaced.
+     * Used by: addAll, clear, remove, setStatus.
+     * Example: {@code write([])} -> file {@code []}
+     */
     private void write(List<ScoredPaper> queue) throws IOException {
         AtomicFiles.writeAtomically(storeFile, JSON.writeValueAsBytes(queue.stream().map(StoredScoredPaper::from).toList()));
     }
 
+    /**
+     * Input: the queue.
+     * Output: the same entries keyed by queue key, in queue order.
+     * Used by: {@link #addAll(Collection)}, {@link #setStatus}.
+     * Example: {@code [alice/X]} -> {@code {"alice\ndoi:x" = alice/X}}
+     */
     private static Map<String, ScoredPaper> byKey(List<ScoredPaper> queue) {
         Map<String, ScoredPaper> byKey = new LinkedHashMap<>();
         for (ScoredPaper paper : queue) {

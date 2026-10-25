@@ -42,11 +42,10 @@ public final class AlertBatchProcessor {
     @FunctionalInterface
     public interface ExtractorFactory {
         /**
-         * Create the extractor to use for one batch.
-         *
-         * @param lookupCache the live, mutable lookup cache loaded from M7c, keyed by lookup key; must
-         *        not be {@code null}. Entries the extractor adds are persisted with the batch.
-         * @return the extractor for this batch; never {@code null}
+         * Input: the live, mutable lookup cache loaded from M7c (entries added to it are saved with the batch).
+         * Output: the extractor for this batch, never null.
+         * Used by: {@link AlertBatchProcessor#process}, once per batch.
+         * Example: {@code lookups -> new PaperExtractor(new CachingPaperEnricher(online, lookups))}
          */
         PaperExtractor create(Map<String, PaperCandidate> lookupCache);
     }
@@ -57,13 +56,10 @@ public final class AlertBatchProcessor {
     private final Deduplicator deduplicator = new Deduplicator();
 
     /**
-     * Create a processor whose extractor is built from M7c's lookup cache at the start of each run.
-     *
-     * @param extractorFactory builds the extractor once M7c's lookup cache has been loaded; must not
-     *        be {@code null}
-     * @param enrichmentCache M7c, holding the enriched papers and the lookup cache; must not be
-     *        {@code null}
-     * @param processedEmails M7a, holding the IDs of emails already handled; must not be {@code null}
+     * Input: a factory building the extractor from M7c's lookup cache, the M7c store and the M7a store (all non-null).
+     * Output: a processor whose extractor is built fresh at the start of each batch.
+     * Used by: PipelineRunner.atDefaultLocations (M9).
+     * Example: {@code new AlertBatchProcessor(lookups -> ..., EnrichmentCacheStore.atDefaultLocation(), EmailCacheStore.atDefaultLocation())}
      */
     public AlertBatchProcessor(ExtractorFactory extractorFactory, EnrichmentCacheStore enrichmentCache,
             EmailCacheStore processedEmails) {
@@ -73,12 +69,10 @@ public final class AlertBatchProcessor {
     }
 
     /**
-     * Create a processor around a fixed extractor that ignores the lookup cache (offline runs, tests).
-     *
-     * @param extractor the extractor used for every run; must not be {@code null}
-     * @param enrichmentCache M7c, holding the enriched papers and the lookup cache; must not be
-     *        {@code null}
-     * @param processedEmails M7a, holding the IDs of emails already handled; must not be {@code null}
+     * Input: a fixed extractor (ignores the lookup cache), the M7c store and the M7a store (all non-null).
+     * Output: a processor using that extractor for every batch.
+     * Used by: tests and offline runs.
+     * Example: {@code new AlertBatchProcessor(PaperExtractor.offline(), m7c, m7a)}
      */
     public AlertBatchProcessor(PaperExtractor extractor, EnrichmentCacheStore enrichmentCache,
             EmailCacheStore processedEmails) {
@@ -86,17 +80,12 @@ public final class AlertBatchProcessor {
     }
 
     /**
-     * Extract, enrich and deduplicate a batch of alert emails, then persist the result to M7c and
-     * mark the emails as processed in M7a, in that order.
-     *
-     * @param emails the alert emails of this batch; must not be {@code null} or contain
-     *        {@code null} elements, and each email needs a message ID. May be empty, in which case
-     *        the held papers are re-deduplicated and re-saved. Re-processing an email already
-     *        stored replaces its earlier papers rather than duplicating them.
-     * @return every paper now held in M7c, enriched and deduplicated, in first-seen order
-     * @throws IOException if a store can't be read or written; if M7c can't be saved the emails are
-     *         left unmarked so the batch is retried
-     * @throws NullPointerException if {@code emails} or one of its elements is {@code null}
+     * Extracts, enriches and deduplicates a batch, then saves M7c and only then M7a. Re-processing an email
+     * replaces its earlier papers; an empty batch just re-deduplicates and re-saves what is held.
+     * Input: this batch's alert emails (non-null, no null elements).
+     * Output: every paper now in M7c, enriched and deduplicated, first-seen order; IOException if a store fails (emails then stay unmarked).
+     * Used by: PipelineRunner.run (M9), step 3.
+     * Example: M7c holds [A]; batch of 1 email with papers [A', B] -> saves and returns [A (merged with A'), B]; email ID added to M7a
      */
     public List<PaperCandidate> process(List<RawEmail> emails) throws IOException {
         // Load first so a corrupt store fails before any lookups or downloads are spent on this batch.
@@ -117,6 +106,7 @@ public final class AlertBatchProcessor {
         held.removeIf(candidate -> batchIds.contains(candidate.sourceMessageId()));
         held.addAll(extracted);
 
+        // M7c first, M7a last: a crash in between re-runs the batch instead of skipping it.
         List<PaperCandidate> deduplicated = deduplicator.deduplicate(held);
         enrichmentCache.save(new Contents(deduplicated, cache.lookups()));
 
@@ -126,12 +116,12 @@ public final class AlertBatchProcessor {
     }
 
     /**
-     * Forgets every batch processed so far: M7c's papers and lookup cache, then M7a's record of which
-     * emails were processed, in that order, so a crash in between leaves the emails recorded (skipped,
-     * not lost) rather than papers held for emails no longer recorded. Run again, the same emails are
-     * extracted and enriched afresh.
-     *
-     * @throws IOException if a store can't be written
+     * Forgets every batch: M7c's papers and lookups, then M7a, in that order, so a crash in between leaves
+     * the emails recorded (skipped, not lost) rather than papers held for emails no longer recorded.
+     * Input: none.
+     * Output: none; M7c and M7a are empty; IOException if a store can't be written.
+     * Used by: PipelineRunner.reset (M9, Clear and re-run), after the emails are marked unread.
+     * Example: {@code forgetAll(); process(sameEmails)} -> the same emails are extracted and enriched afresh
      */
     public void forgetAll() throws IOException {
         enrichmentCache.save(Contents.empty());

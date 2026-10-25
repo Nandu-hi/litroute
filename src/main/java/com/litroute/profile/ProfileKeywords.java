@@ -52,16 +52,28 @@ public final class ProfileKeywords {
         int lists;
         int mentions;
 
+        /**
+         * Input: the keyword as first written, and its stem key.
+         * Output: a keyword with zero lists and mentions.
+         * Used by: {@link #of}.
+         * Example: {@code new Keyword("Multi-hazard", "multihazard")}
+         */
         Keyword(String written, String key) {
             this.written = written;
             this.key = key;
         }
     }
 
-    /** @return at most {@value #MAX_KEYWORDS} keywords, best first; empty if no paper lists any */
+    /**
+     * Input: a profile's papers (duplicate titles counted once).
+     * Output: at most {@value #MAX_KEYWORDS} keywords, most listed first, then most mentioned; [] if no paper lists any.
+     * Used by: ProfileBuilder.sync (M5), stored on the Profile for M6's AI prompt.
+     * Example: see the class example: 4 multi-hazard papers -> [Multi-hazard, wind load, Fragility, ...]
+     */
     public static List<String> of(List<ProfilePaper> allPapers) {
         Set<String> titles = new HashSet<>();
         List<ProfilePaper> papers = allPapers.stream().filter(paper -> titles.add(Titles.compact(paper.title()))).toList();
+        // Count how many papers list each keyword (once per paper).
         Map<String, Keyword> byKey = new LinkedHashMap<>();
         for (ProfilePaper paper : papers) {
             Set<String> listed = new HashSet<>();
@@ -72,6 +84,7 @@ public final class ProfileKeywords {
                 }
             }
         }
+        // Count how many papers are about each keyword: title, abstract or keywords mention it.
         for (ProfilePaper paper : papers) {
             String about = String.join(" ", paper.title(), paper.abstractText().orElse(""),
                     String.join(" ", paper.keywords().orElse(List.of())));
@@ -93,6 +106,10 @@ public final class ProfileKeywords {
     /**
      * Whether a text, given as its word stems run together and space-separated, mentions the keyword. Run
      * together, "multi-hazard" is found in "multihazard risk"; a short keyword must be whole words.
+     * Input: a keyword, and a text's stems run together and space-separated.
+     * Output: whether the text mentions it (short keywords must be whole words).
+     * Used by: {@link #of}.
+     * Example: "multi-hazard" in compact "multihazardrisk" -> true; "fire" in spaced " wildfire " -> false
      */
     private static boolean mentions(Keyword keyword, String compact, String spaced) {
         if (keyword.key.length() > WHOLE_WORD_CHARS) {
@@ -104,6 +121,10 @@ public final class ProfileKeywords {
     /**
      * The keyword's word stems run together, so "Multi-hazards" and "multihazard" are one keyword, and so
      * are "reduced-order models" and "Reduced order modeling". "Fragility" and "fragility analysis" stay two.
+     * Input: a keyword as written.
+     * Output: its word stems run together: the identity keywords are merged by.
+     * Used by: {@link #of}; ProfileKeywordsTest.
+     * Example: "Reduced order modeling" -> "reducedordermodel"; "Multi-hazards" -> "multihazard"
      */
     static String key(String keyword) {
         return String.join("", stems(keyword));
@@ -112,6 +133,10 @@ public final class ProfileKeywords {
     /**
      * The text's words, accents and case folded, each less a plural "s" (not from "-ss", "-is" or "-us")
      * and then "-ing" or "-ed" where four letters remain ("modelling" and "modeling" both become "model").
+     * Input: any text.
+     * Output: its words with accents and case folded, less a plural s and then -ing/-ed.
+     * Used by: {@link #of}, {@link #mentions}, {@link #key}.
+     * Example: "Modelling Wind Loads" -> [model, wind, load]
      */
     private static List<String> stems(String text) {
         String folded = Normalizer.normalize(text, Normalizer.Form.NFD).replaceAll("\\p{M}", "").toLowerCase(Locale.ROOT);

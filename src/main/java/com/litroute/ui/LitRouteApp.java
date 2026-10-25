@@ -36,10 +36,22 @@ public final class LitRouteApp extends Application {
 
     private final Session session = new Session();
 
+    /**
+     * Input: command-line arguments, passed on to JavaFX.
+     * Output: none; JavaFX starts and calls {@link #start}.
+     * Used by: {@code mvn javafx:run} (the pom's mainClass), {@link Launcher}.
+     * Example: {@code mvn -q compile javafx:run} -> the window opens
+     */
     public static void main(String[] args) {
         launch(args);
     }
 
+    /**
+     * Input: the primary window JavaFX provides.
+     * Output: none; the window shows the Review, Pipeline, Profiles and Gmail tabs, a locked banner, and opens on Gmail.
+     * Used by: JavaFX, once at startup.
+     * Example: first launch -> Gmail tab focused, banner "Gmail credentials are locked ..."
+     */
     @Override
     public void start(Stage stage) {
         Consumer<String> openDocument = uri -> getHostServices().showDocument(uri);
@@ -89,6 +101,12 @@ public final class LitRouteApp extends Application {
         showCredentials.run();
     }
 
+    /**
+     * Input: none.
+     * Output: none; the session's threads stop, the passphrase is wiped and the model closed.
+     * Used by: JavaFX, when the window closes or File > Quit.
+     * Example: Quit -> passphrase zeroed, SPECTER2 released
+     */
     @Override
     public void stop() {
         session.close();

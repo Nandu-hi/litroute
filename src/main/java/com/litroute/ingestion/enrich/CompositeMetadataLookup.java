@@ -28,15 +28,27 @@ public final class CompositeMetadataLookup {
     private final List<MetadataSource> sources;
     private final Map<String, Integer> consecutiveFailures = new HashMap<>();
 
+    /**
+     * Input: the sources in priority order.
+     * Output: a lookup asking each in turn (failure counts start at 0).
+     * Used by: OnlinePaperEnricher, with [CrossrefSource, OpenAlexSource].
+     * Example: {@code new CompositeMetadataLookup(List.of(crossref, openAlex))}
+     */
     public CompositeMetadataLookup(List<MetadataSource> sources) {
         this.sources = List.copyOf(sources);
     }
 
-    /** @return the merged metadata, or empty if no source found the paper (or every source was unreachable) */
+    /**
+     * Input: what is known about the paper.
+     * Output: every source's answer merged (earlier wins per field); empty if none found it or all were unreachable.
+     * Used by: OnlinePaperEnricher.enrich (M3).
+     * Example: Crossref finds DOI 10.1/x by title, OpenAlex (queried by that DOI) adds an OA PDF -> merged metadata with both
+     */
     public Optional<PaperMetadata> find(PaperQuery query) {
         Optional<PaperMetadata> merged = Optional.empty();
         PaperQuery current = query;
         for (MetadataSource source : sources) {
+            // Circuit breaker: a source that keeps failing is skipped for the rest of the run.
             if (consecutiveFailures.getOrDefault(source.name(), 0) >= MAX_CONSECUTIVE_FAILURES) {
                 continue;
             }

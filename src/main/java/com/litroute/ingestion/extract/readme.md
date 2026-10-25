@@ -9,7 +9,7 @@
 | **Input** | [RawEmail](../../model/RawEmail.java) (from M1) | `messageId`, subject, sender, received time, `htmlBody`, `plainTextBody`. Only `htmlBody` is used. With no HTML body, the result is an empty list. |
 | **Output** | `List<PaperCandidate>` ([PaperCandidate](../../model/PaperCandidate.java)) | Zero or more papers in the order they appear in the email. Each has `title` (required), `authors`, `venue`, `year`, `articleType`, `doi`, `url`, `abstractSnippet`, `pdfPath` and `sourceMessageId`. Any field the email doesn't state stays `Optional.empty()`. |
 
-You call it through [PaperExtractor.extract(RawEmail)](PaperExtractor.java#L41). For ordinary failures it never throws: if enrichment fails, the paper is kept exactly as parsed, and an email with no papers gives `[]`.
+You call it through [PaperExtractor.extract(RawEmail)](PaperExtractor.java#L57). For ordinary failures it never throws: if enrichment fails, the paper is kept exactly as parsed, and an email with no papers gives `[]`.
 
 ## How it works (two stages)
 
@@ -36,9 +36,9 @@ The parser doesn't have a separate rule set for each publisher. It relies on one
 2. **Title line.** A line counts as a title when it is nothing but one http(s) link, has at least 3 words, and isn't "furniture" text like "Unsubscribe", "Read article" or "Full Text". A tag such as `[PDF]` at the start of the title is stripped, whether it is inside the link or beside it (Google Scholar puts it in a span of its own). Not titles:
    - a Google Maps link, which Gmail makes of a street address when a message is forwarded ("London, N1 9XW,");
    - a link that is the journal's own name from the issue header (ASCE's "Natural Hazards Review");
-   - a linked author name right under a title (ASCE links authors to their profiles: "Michelle A. Ritchie").
+   - a linked author name right under a title (ASCE links authors to their profiles: "Jane A. Doe").
 3. **Block.** The lines after a title, up to the next title, heading or rule (12 lines at most), form that paper's block. **The title only becomes a paper if the block has an author list or a venue line.** This check keeps stray links out of the results.
-4. **Reading the block** ([readBlock](AlertHtmlParser.java#L139)):
+4. **Reading the block** ([readBlock](AlertHtmlParser.java#L221)):
    - **Authors:** [AuthorNames](AuthorNames.java) splits on `, ; & and`, drops placeholders like "others" and "…", and rejects the whole line if any piece doesn't look like a name. A link line counts too when it is a list of names with lowercase letters in them, so ASCE's linked sole authors are kept and a footer menu link such as "ABOUT ASCE PUBLICATIONS" is not.
    - **Venue and year:** taken from a line containing a year or a volume number. For example, "Ocean Engineering, Volume 311, … August 2024" gives venue "Ocean Engineering" and year 2024. A copyright line ("© 2025 BioMed Central …") and the issue header ("VOLUME: 27 | …") never count, so a footer link above them is not a paper.
    - **Combined lines:** Scholar-style "Authors – Venue, 2026" lines are split into both parts.
@@ -46,13 +46,13 @@ The parser doesn't have a separate rule set for each publisher. It relies on one
 5. **Issue header fallback.** For table-of-contents mails (ASCE's "VOLUME: 27 | NUMBER: 4 | November 2026") or headlines like "New articles for &lt;journal&gt;", the venue and year come from the header when a block doesn't state them.
 6. **Article type.** Taken from a label just before or after the title, otherwise from the nearest label above it. As in a table of contents, a section label ("Technical Papers", "Case Studies", whether a heading or a plain line) heads every paper under it until the next one. A label right above the next title belongs to that next paper, not to the one before it. A label is always a few words ending in a type word (article, papers, studies, notes, reviews, discussions, closures, corrections, …), so the email's banner ("New articles have been published") is never a type.
 7. **Notes are dropped.** A book review, discussion, closure, erratum, correction, editorial and the like is not a research paper and never leaves M2 ([PaperCandidate.isResearch](../../model/PaperCandidate.java)), recognized by its section label or, for alerts without labels, by its title ("Erratum for …", "Discussion of …"). So it is never enriched, stored or matched: a book review can read exactly like a student's papers (one scored relevance 0.96). ASCE's 22-entry table of contents gives its 17 research papers.
-7. **Links and DOI.** Every href in the block goes through [LinkUnwrapper](LinkUnwrapper.java), which never touches the network:
+8. **Links and DOI.** Every href in the block goes through [LinkUnwrapper](LinkUnwrapper.java), which never touches the network:
    - **READABLE:** a plain publisher URL, or a redirect wrapper whose real target can be percent-decoded (`scholar_url?url=…`, Elsevier's `/CL0/https:%2F%2F…`). Nested wrappers are unwrapped up to 4 levels deep.
    - **OPAQUE:** a click-tracking token with no recoverable target. Its URL is dropped, because it identifies nothing and carries the recipient's tracking ID.
    - **NONE:** no usable http link (`mailto:`, `cid:` and so on).
 
    The DOI is searched for in the resolved URL, then in the raw hrefs, then in the block text.
-8. **Dedup within one mail.** If several links point to the same paper (title, "Full Text", "Read article"), it is emitted once. The match uses a normalized title.
+9. **Dedup within one mail.** If several links point to the same paper (title, "Full Text", "Read article"), it is emitted once. The match uses a normalized title.
 
 ### Stage 2: enrichment ([PaperEnricher](PaperEnricher.java))
 
@@ -74,6 +74,40 @@ This class lives in `extract`, but it ties M2, M3, M4 and the stores together:
 - **[forgetAll()](AlertBatchProcessor.java):** empties M7c (papers and lookup cache), then M7a, in that order, so the same emails are extracted and enriched afresh on the next run. A crash in between leaves the emails recorded, so they are skipped, never lost. M9's **Clear and re-run** calls it after marking the emails unread.
 
   A crash at any point means the batch is re-run rather than silently skipped. A re-run replaces that batch's earlier entries instead of duplicating them.
+
+## The classes
+
+| Class | Role |
+|---|---|
+| [PaperExtractor](PaperExtractor.java) | M2's entry point: parse one email, then enrich each paper (keeping it as parsed if enrichment throws). |
+| [AlertHtmlParser](AlertHtmlParser.java) | Package-private. Stage 1: finds the paper blocks in the email's lines and reads title, authors, venue, year, type, abstract, links and DOI. |
+| [AlertLines](AlertLines.java) | Package-private. Flattens the HTML into visual lines of text and link segments. |
+| [AuthorNames](AuthorNames.java) | Package-private. Strict author-line parser: a line is authors only if every piece is a name. |
+| [LinkUnwrapper](LinkUnwrapper.java) | Package-private. Unwraps redirect links and classifies them READABLE / OPAQUE / NONE, offline. |
+| [LinkKind](LinkKind.java) | READABLE / OPAQUE / NONE: decides how M3 may enrich a paper. |
+| [ParsedPaper](ParsedPaper.java) | Package-private record: a parsed candidate plus its LinkKind. |
+| [PaperEnricher](PaperEnricher.java) | Stage 2's interface; `NONE` is the offline no-op, M3 provides the real ones. |
+| [AlertBatchProcessor](AlertBatchProcessor.java) | Runs a batch through M2-M4 and persists it: M7c, then M7a. |
+
+## Interaction with M7 (the stores)
+
+Only [AlertBatchProcessor](AlertBatchProcessor.java) touches the stores; the parser and extractor are pure.
+
+```
+                ┌── M7c enrichment_cache.json ──┐            ┌── M7a email_cache.json ──┐
+   (1) load()   │ enriched: [...]  lookups: {…} │            │ ["<id1>", "<id2>", ...]  │   (1) load()
+                └──────────┬─────────────▲──────┘            └───────────▲──────────────┘
+                lookups map│ (live)      │ (3) save(deduplicated, lookups)│ (4) save(ids ∪ batch) LAST
+                           ▼             │                                │
+  RawEmails ──▶ ExtractorFactory.create(lookups) ──▶ PaperExtractor.extract (per email)
+                       └ CachingPaperEnricher reads/adds lookups ──▶ (2) held papers − this batch's old ones
+                                                                         + extracted ──▶ Deduplicator (M4)
+```
+
+- **Load both first**, so a corrupt store fails the batch before any network call or download is spent.
+- **Nothing is written while extracting.** The lookup cache is filled in memory and saved with the papers in one M7c write.
+- **M7a last.** A crash before it leaves the emails unrecorded, so the next run processes the batch again; its papers replace the earlier copies (same `sourceMessageId`), and the PDFs already on disk are reused.
+- **forgetAll()** writes empty M7c, then empty M7a: the reverse dependency, so a crash in between leaves emails recorded (skipped) rather than papers whose emails are forgotten.
 
 ## How it's tested
 

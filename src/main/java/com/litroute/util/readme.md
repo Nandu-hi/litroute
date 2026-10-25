@@ -37,15 +37,15 @@ It is used by every JSON store (M7a, c, d, e), the credential file, and [PdfDown
 `find(text)` returns the first DOI (`10.<4–9 digits>/…`) in any text or URL, as a bare DOI:
 - if the text contains `%`, it is percent-decoded first, keeping a literal `+`;
 - the match stops at whitespace, quotes, `< > ? # & \`, so query strings are excluded;
-- [clean](Dois.java#L38) repeatedly removes trailing punctuation (`.,;:`), publisher suffixes (`.pdf`, `/pdf`, `/epdf`, `/full`, `/fulltext`, `/abstract`, `/abs`, `/meta`, `/references`), and an unmatched closing `)` or `]` that belongs to the surrounding sentence, as in `(doi:10.1/x)`;
+- [clean](Dois.java#L51) repeatedly removes trailing punctuation (`.,;:`), publisher suffixes (`.pdf`, `/pdf`, `/epdf`, `/full`, `/fulltext`, `/abstract`, `/abs`, `/meta`, `/references`), and an unmatched closing `)` or `]` that belongs to the surrounding sentence, as in `(doi:10.1/x)`;
 - a match with nothing after the `/` is ignored.
 
 Example: `https://link.springer.com/content/pdf/10.1186/s43065-024-00115-x.pdf?utm_source=alert` → `10.1186/s43065-024-00115-x`.
 
 ### [Titles](Titles.java): compare titles written differently
 
-- **[compact(title)](Titles.java#L32):** removes accents (NFD + delete combining marks), lowercases with `Locale.ROOT`, and keeps only `a-z0-9`. "Wave Loads: A Review" → `waveloadsareview`. Publisher quirks such as missing spaces, en-dash vs hyphen or curly quotes therefore don't matter. This is the form titles are compared and cached in.
-- **[similarity(a, b)](Titles.java#L21):** `1 − editDistance / longerLength` on the compacted titles, from 0 to 1 (1 means identical after compacting). The Levenshtein distance uses two rolling rows. Two empty titles score 0, not 1.
+- **[compact(title)](Titles.java#L42):** removes accents (NFD + delete combining marks), lowercases with `Locale.ROOT`, and keeps only `a-z0-9`. "Wave Loads: A Review" → `waveloadsareview`. Publisher quirks such as missing spaces, en-dash vs hyphen or curly quotes therefore don't matter. This is the form titles are compared and cached in.
+- **[similarity(a, b)](Titles.java#L26):** `1 − editDistance / longerLength` on the compacted titles, from 0 to 1 (1 means identical after compacting). The Levenshtein distance uses two rolling rows. Two empty titles score 0, not 1.
 - What counts as "similar enough" is decided by the caller, because M3 matching an API result and M4 merging two alerts need different thresholds.
 
 ### [Vectors](Vectors.java): embedding arithmetic
@@ -55,6 +55,12 @@ Example: `https://link.springer.com/content/pdf/10.1186/s43065-024-00115-x.pdf?u
 - `mean(vectors)` and `weightedSum(vectors, weights)` (Σ wᵢ·vᵢ).
 - **A zero vector is treated as similar to nothing.** Its cosine with anything is 0, and normalizing it returns it unchanged. This avoids producing NaN, which would otherwise spread silently into every score computed from it.
 - Vectors of different lengths are rejected with `IllegalArgumentException`.
+
+## Interaction with M7 (the stores)
+
+- **AtomicFiles** is the write path of every M7 store (M7a, M7c, M7d, M7e, the scored-paper log and the sent papers) and of M7e's PDF copies in `matched/<student>/`. It is what makes the stores' crash-safety rule hold: a store file is always either its old or its new version.
+- **Titles.compact** produces two of the stores' keys: the M7c lookup-cache key ([CachingPaperEnricher](../ingestion/enrich/CachingPaperEnricher.java)) and, for papers without a DOI, the `title:` part of [ScoredPaper.queueKey / paperKey](../model/ScoredPaper.java) that M7e, the sent papers and the scored-paper log use. So the same paper written differently in two alerts is found under the same key.
+- **Dois, Titles.similarity, Vectors** compute values that end up in M7c (a candidate's DOI) and M7e (scores), but read or write no store themselves.
 
 ## How it's tested
 

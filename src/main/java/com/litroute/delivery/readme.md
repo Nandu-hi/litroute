@@ -43,10 +43,22 @@ M7e queue ── APPROVED entries, grouped by student
 
 | Class | Role |
 |---|---|
-| [ApprovedPaperSender](ApprovedPaperSender.java) | The send: reads M7e and M7d, composes, sends, marks `SENT`, reports. |
+| [ApprovedPaperSender](ApprovedPaperSender.java) | The send: settles leftovers, reads M7e and M7d, composes, sends, records each sent paper in SentPaperStore and removes it from M7e, reports. |
 | [DigestComposer](DigestComposer.java) | Package-private. Turns one student's approved papers into [DigestEmail](DigestEmail.java)s within the attachment budget. |
 | [DigestEmail](DigestEmail.java) | One email: recipients, subject, body, attached PDFs, and the queue entries it delivers. |
 | [GmailSmtpSender](GmailSmtpSender.java) | SMTP over SSL to Gmail. `connect()` logs in once (a refused login is an `IOException`), and `Connection.send()` builds the MIME message (text + `application/pdf` parts). |
+
+## Interaction with M7 (the stores)
+
+| Store | What M10 does with it | When |
+|---|---|---|
+| **M7e** `scored_queue.json` | reads the `APPROVED` entries; `remove(papers)` takes each sent paper out (its PDF copy in `matched/<student>/` stays) | read at the start of `send`; one `remove` per email, right after it is recorded |
+| **M7e** `matched/<student>/*.pdf` | attaches the copy the queue entry's `pdfPath` points to | while composing |
+| **M7d** `profiles.json` | reads each student's `emails` (from `email.txt`, synced by M5) | once per send |
+| `sent_papers.json` ([SentPaperStore](../store/SentPaperStore.java)) | `addAll(papers, now)` records each sent paper (status `SENT`); `sentKeys()` lets `settle()` drop queue entries already recorded | after each email, **before** the M7e removal; `settle()` first thing |
+| M7a, M7c | not touched | — |
+
+The order **record, then remove** is what keeps a paper from going twice: a crash between the two leaves the paper in both files, and the next `settle()` removes it from the queue. M9 later reads `sentKeys()` so a re-scored paper is never queued again for the student who received it.
 
 ## How it's tested
 

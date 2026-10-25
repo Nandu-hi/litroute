@@ -15,11 +15,10 @@ public interface PaperMatcher {
 
     /**
      * Matches a batch of deduplicated papers (M4's output) to the students.
-     *
-     * @return every student's profile name, in the order the matcher was given the profiles, mapped to
-     *         the papers matched to that student, highest score first; a student nothing matched maps to
-     *         an empty list. Recommended papers have {@link ScoredPaper#recommended()} set.
-     * @throws IOException if the matcher depends on a service that could not answer
+     * Input: a batch of deduplicated papers (M4/M7c output).
+     * Output: every student's name, in profile order, mapped to their matched papers, best first ([] if none); IOException if a needed service failed.
+     * Used by: PipelineRunner.run (M9) step 5; the result goes to ScoredQueueStore.addAll (M7e).
+     * Example: [P1 (wave loads), P2 (soil creep)] -> {alice=[P1 0.82 recommended], bob=[P2 0.74]}
      */
     Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch) throws IOException;
 }

@@ -58,9 +58,10 @@ public record PaperMetadata(
     /**
      * Makes immutable copies of the two lists, so a caller changing its own list afterwards can't change this record.
      * A null list or a null element in either list throws {@link NullPointerException}.
-     *
-     * <p>Example:
-     *
+     * Input: every field.
+     * Output: the record, with immutable copies of authors and pdfUrls (null list/element throws).
+     * Used by: CrossrefSource, OpenAlexSource, ArticlePageReader (M3).
+     * Example:
      * <pre>{@code
      * Input:  List<String> names = new ArrayList<>(List.of("A. Smith"));
      *         PaperMetadata m = new PaperMetadata(..., names, ...);
@@ -77,9 +78,10 @@ public record PaperMetadata(
      * This metadata wins wherever it has a value; {@code other} only fills gaps and adds extra PDF locations.
      * Authors are taken as a whole list, never mixed: {@code other}'s list is used only if this one is empty.
      * PDF URLs are this record's first, then {@code other}'s, with duplicates removed.
-     *
-     * <p>Example:
-     *
+     * Input: the less trusted source's metadata.
+     * Output: a new record: this one's values first, other fills gaps, PDF URLs unioned (this first); inputs unchanged.
+     * Used by: CompositeMetadataLookup.find; OnlinePaperEnricher (page over APIs).
+     * Example:
      * <pre>{@code
      * this  (publisher page): doi=Optional[10.3390/jmse12030400], title=Optional.empty, authors=[Smith, A.],
      *                         abstractText=Optional.empty, pdfUrls=[https://www.mdpi.com/.../400/pdf]
@@ -90,9 +92,6 @@ public record PaperMetadata(
      *         authors=[Smith, A.], abstractText=Optional[We study wave loads ...],
      *         pdfUrls=[https://www.mdpi.com/.../400/pdf, https://europepmc.org/.../pdf]
      * }</pre>
-     *
-     * @param other the less trusted source's metadata
-     * @return a new record combining both; neither input is changed
      */
     public PaperMetadata mergedWith(PaperMetadata other) {
         Set<String> pdfs = new LinkedHashSet<>(pdfUrls);

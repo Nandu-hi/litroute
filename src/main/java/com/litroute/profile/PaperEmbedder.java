@@ -37,10 +37,22 @@ public final class PaperEmbedder {
 
     private final EmbeddingProvider provider;
 
+    /**
+     * Input: the embedding model.
+     * Output: an embedder using it.
+     * Used by: ProfileBuilder (M5), RelevanceScorer (M6).
+     * Example: {@code new PaperEmbedder(specter2)}
+     */
     public PaperEmbedder(EmbeddingProvider provider) {
         this.provider = provider;
     }
 
+    /**
+     * Input: a paper's text.
+     * Output: its abstract, structure and body views plus their weighted blend, all unit length.
+     * Used by: {@link #embed(PaperText, String, String)}; RelevanceScorer (M6) for candidates with a PDF.
+     * Example: text with no headings -> structureView empty, combined = 0.75 abstract + 0.25 body (renormalized)
+     */
     public Embedding embed(PaperText text) {
         float[] abstractView = provider.embed(text.title(), text.abstractText());
         Optional<float[]> structureView = text.headings().isEmpty()
@@ -52,12 +64,19 @@ public final class PaperEmbedder {
             for (String chunk : text.bodyChunks()) {
                 chunks.add(provider.embed(text.title(), chunk));
             }
+            // One vector per sampled passage, averaged into the body view.
             bodyView = Optional.of(Vectors.normalize(Vectors.mean(chunks)));
         }
         return new Embedding(combine(abstractView, structureView, bodyView), abstractView, structureView, bodyView);
     }
 
-    /** A profile's reference paper: its views, text and author keywords, plus where it came from. */
+    /**
+     * A profile's reference paper: its views, text and author keywords, plus where it came from.
+     * Input: a reference paper's text, its path in the profile folder and the PDF's hash.
+     * Output: a ProfilePaper with every view, its text and its author keywords.
+     * Used by: ProfileBuilder.syncAll (M5) for each new or changed PDF.
+     * Example: {@code embed(text, "rao2024.pdf", "ab12..")} -> ProfilePaper(rao2024.pdf, ab12.., "Wave loads..", ...)
+     */
     public ProfilePaper embed(PaperText text, String relativePath, String sha256) {
         Embedding embedding = embed(text);
         return new ProfilePaper(relativePath, sha256, text.title(), embedding.combined(), embedding.abstractView(),
@@ -65,7 +84,13 @@ public final class PaperEmbedder {
                 Optional.of(text.bodyText()), Optional.of(text.keywords()));
     }
 
-    /** Weighted blend of the views, unit length; a missing view's weight goes proportionally to the others. */
+    /**
+     * Weighted blend of the views, unit length; a missing view's weight goes proportionally to the others.
+     * Input: the abstract view and the optional structure and body views.
+     * Output: 0.6/0.2/0.2 weighted sum, unit length; a missing view's weight is shared out proportionally.
+     * Used by: {@link #embed(PaperText)}.
+     * Example: only abstract present -> the abstract view itself
+     */
     static float[] combine(float[] abstractView, Optional<float[]> structureView, Optional<float[]> bodyView) {
         List<float[]> views = new ArrayList<>(List.of(abstractView));
         List<Double> weights = new ArrayList<>(List.of(ABSTRACT_WEIGHT));

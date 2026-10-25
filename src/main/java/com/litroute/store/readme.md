@@ -45,6 +45,19 @@ student PDFs ──▶ M5 ProfileBuilder ──▶ M7d profiles.json ──┐  
 
 **Write order is what makes crashes safe.** [AlertBatchProcessor](../ingestion/extract/AlertBatchProcessor.java) loads both stores first (so a corrupt store fails before any network calls are made), extracts and enriches the batch in memory, saves M7c in one write, and saves M7a **last**. If the process crashes at any point, the emails are still unmarked, so the whole batch is processed again on the next run instead of being silently skipped. Papers from the re-run replace that batch's earlier entries, and PDFs already downloaded are reused.
 
+## Who reads and writes each store
+
+| Store | Written by | Read by |
+|---|---|---|
+| **M7a** `email_cache.json` | [AlertBatchProcessor](../ingestion/extract/AlertBatchProcessor.java) (`process`: last; `forgetAll`: last) | [PipelineRunner](../pipeline/PipelineRunner.java) (IDs for M1 to skip; IDs to mark unread on reset), AlertBatchProcessor, [PipelinePane](../ui/PipelinePane.java) (count) |
+| **M7c** `enrichment_cache.json` | AlertBatchProcessor (papers + lookups in one write; empty on `forgetAll`) | AlertBatchProcessor (held papers, live lookups for [CachingPaperEnricher](../ingestion/enrich/CachingPaperEnricher.java)), [RelevanceScorerCli](../scoring/RelevanceScorerCli.java) |
+| **M7d** `profiles.json` | [ProfileBuilder](../profile/ProfileBuilder.java) (`save`, `remove`) | ProfileBuilder, PipelineRunner (profiles for M6), [ApprovedPaperSender](../delivery/ApprovedPaperSender.java) (addresses), [ProfilesPane](../ui/ProfilesPane.java), the CLIs |
+| **M7e** `scored_queue.json` + `matched/` | PipelineRunner (`addAll`, `clear`), [ReviewPane](../ui/ReviewPane.java) (`setStatus`), ApprovedPaperSender (`remove`), RelevanceScorerCli (`addAll`) | ReviewPane, PipelineRunner (already-queued papers, counts), ApprovedPaperSender (approved papers and their PDF copies) |
+| `scored_papers.json` | PipelineRunner (`addAll` after the queue; `clear` on reset) | PipelineRunner |
+| `sent_papers.json` | ApprovedPaperSender (`addAll` before removing from M7e) | PipelineRunner (never re-queue), ApprovedPaperSender (`settle`), ReviewPane (**Show: Sent**) |
+
+All stores share the same rules: the default file is under `~/.litroute/data/` (`atDefaultLocation()`), a missing file loads as empty, a corrupt one is an `IOException`, and every write is a whole-file atomic replace. M7e and the sent papers, which the UI and a pipeline run may change at the same time, also take one lock per file path.
+
 ## The classes
 
 ### [EmailCacheStore](EmailCacheStore.java): M7a
@@ -71,8 +84,8 @@ All profiles in one JSON object keyed by profile name, kept in the order they we
 ### [ScoredQueueStore](ScoredQueueStore.java): M7e
 
 The review queue: a JSON list of scored (paper, student) pairs in the order they were first queued, plus a folder of matched PDFs per student.
-- **[addAll(matches)](ScoredQueueStore.java#L118):** takes a matcher's output, `Map<student, List<ScoredPaper>>`, as it is; [addAll(scored)](ScoredQueueStore.java#L131) takes the papers in one list. A paper already queued for the same student (same [queueKey()](../model/ScoredPaper.java#L57)) takes the new score, rationale and recommendation but **keeps its place and its review status**, so re-scoring never undoes the professor's decision.
-- **Matched PDFs per student:** a queued paper's PDF is copied into [pdfFolder(student)](ScoredQueueStore.java#L95) (`~/.litroute/data/matched/<student>/` by default; next to the queue file when it is constructed with only a file), keeping its file name, and the queue entry's `pdfPath` points to the copy, so M10 can attach it.
+- **[addAll(matches)](ScoredQueueStore.java#L167):** takes a matcher's output, `Map<student, List<ScoredPaper>>`, as it is; [addAll(scored)](ScoredQueueStore.java#L180) takes the papers in one list. A paper already queued for the same student (same [queueKey()](../model/ScoredPaper.java#L100)) takes the new score, rationale and recommendation but **keeps its place and its review status**, so re-scoring never undoes the professor's decision.
+- **Matched PDFs per student:** a queued paper's PDF is copied into [pdfFolder(student)](ScoredQueueStore.java#L140) (`~/.litroute/data/matched/<student>/` by default; next to the queue file when it is constructed with only a file), keeping its file name, and the queue entry's `pdfPath` points to the copy, so M10 can attach it.
   - A paper matched to two students (the AI matcher allows it) is copied into both folders.
   - Queuing a paper again finds its copy (same bytes) instead of copying it twice; another paper's PDF with the same file name is saved as `name-2.pdf`.
   - A paper without a PDF (paywalled), or whose download has since gone, is still queued, with no file; a gone PDF is logged.

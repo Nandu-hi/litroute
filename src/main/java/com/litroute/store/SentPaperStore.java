@@ -47,36 +47,62 @@ public final class SentPaperStore {
     private final Path storeFile;
     private final Object lock;
 
+    /**
+     * Input: the JSON file to keep this store in.
+     * Output: a store for that file (nothing is read yet), sharing the lock of every store on the same file.
+     * Used by: {@link #atDefaultLocation}; tests with a temp folder.
+     * Example: {@code new SentPaperStore(tmp.resolve("sent_papers.json")).load()} -> empty
+     */
     public SentPaperStore(Path storeFile) {
         this.storeFile = storeFile;
         this.lock = LOCKS.computeIfAbsent(storeFile.toAbsolutePath().normalize(), path -> new Object());
     }
 
+    /**
+     * Input: none.
+     * Output: a store for {@code ~/.litroute/data/sent_papers.json}.
+     * Used by: PipelineRunner.atDefaultLocations (M9), LitRouteApp/ReviewPane (M8), ApprovedPaperSender.atDefaultLocations (M10).
+     * Example: {@code atDefaultLocation()} -> store for /home/u/.litroute/data/sent_papers.json
+     */
     public static SentPaperStore atDefaultLocation() {
         return new SentPaperStore(Path.of(System.getProperty("user.home"), ".litroute", "data", "sent_papers.json"));
     }
 
-    /** @return every sent paper, oldest first; empty if nothing has been sent yet */
+    /**
+     * Input: none.
+     * Output: every sent paper with its time, oldest first; empty if nothing sent yet.
+     * Used by: ReviewPane (M8) "Sent" view; {@link #sentKeys}.
+     * Example: -> {@code [Sent(alice/"Wave loads", 2026-10-20T10:00Z)]}
+     */
     public List<Sent> load() throws IOException {
         synchronized (lock) {
             return read();
         }
     }
 
-    /** The {@link ScoredPaper#queueKey()} of every paper sent, to keep them out of the queue. */
+    /**
+     * Input: none.
+     * Output: the {@link ScoredPaper#queueKey()} of every paper sent.
+     * Used by: PipelineRunner (M9) to not re-queue them; ApprovedPaperSender (M10) to take them out of the queue.
+     * Example: -> {@code {"alice\ndoi:10.1/x"}}
+     */
     public Set<String> sentKeys() throws IOException {
         return load().stream().map(sent -> sent.paper().queueKey()).collect(Collectors.toSet());
     }
 
     /**
-     * Records these papers as sent at {@code sentAt}. A paper sent to the same student before (approved
-     * again and re-sent) keeps one entry, with the new time.
+     * Records papers as sent; one already recorded for the same student keeps one entry, with the new time.
+     * Input: the papers just emailed and when.
+     * Output: none; the file holds them with status SENT, re-sent ones moved to the end.
+     * Used by: ApprovedPaperSender (M10) right after each email goes out.
+     * Example: {@code addAll([alice/X], t2)} with alice/X sent at t1 -> one entry alice/X at t2
      */
     public void addAll(Collection<ScoredPaper> papers, Instant sentAt) throws IOException {
         synchronized (lock) {
             Map<String, Sent> sent = new LinkedHashMap<>();
             read().forEach(entry -> sent.put(entry.paper().queueKey(), entry));
             for (ScoredPaper paper : papers) {
+                // Remove first so a re-sent paper moves to the end (newest).
                 sent.remove(paper.queueKey());
                 sent.put(paper.queueKey(), new Sent(paper.withStatus(ReviewStatus.SENT), sentAt));
             }
@@ -86,6 +112,12 @@ public final class SentPaperStore {
         }
     }
 
+    /**
+     * Input: none; the caller holds the lock.
+     * Output: the sent papers on disk; empty if no file; IOException on a corrupt entry.
+     * Used by: {@link #load}, {@link #addAll}.
+     * Example: file with one entry -> {@code [Sent(...)]}
+     */
     private List<Sent> read() throws IOException {
         if (!Files.exists(storeFile)) {
             return new ArrayList<>();

@@ -80,15 +80,22 @@ public final class GroqClient implements LlmClient {
     private final int tokensPerMinute;
 
     /**
-     * @param poster the HTTP transport
-     * @param apiKey a Groq API key
-     * @param model  a Groq model id, e.g. {@value #DEFAULT_MODEL}
+     * Input: the HTTP transport, a Groq API key and a model id.
+     * Output: a client with the default retries and the free tier's token window.
+     * Used by: tests (AiPaperMatcherTest with a recorded poster).
+     * Example: {@code new GroqClient(recorded, "test-key", "openai/gpt-oss-120b")}
      */
     public GroqClient(JsonPoster poster, String apiKey, String model) {
         this(poster, apiKey, model, ApiCalls.RetryPolicy.DEFAULT);
     }
 
-    /** As {@link #GroqClient(JsonPoster, String, String)}, retrying as given. */
+    /**
+     * As {@link #GroqClient(JsonPoster, String, String)}, retrying as given.
+     * Input: as above, plus a retry policy.
+     * Output: a client for the free tier's token window.
+     * Used by: the public constructor; GroqClientTest (no real sleeping).
+     * Example: {@code new GroqClient(poster, key, model, fastRetries)}
+     */
     GroqClient(JsonPoster poster, String apiKey, String model, ApiCalls.RetryPolicy retries) {
         this(poster, apiKey, model, retries, FREE_TOKENS_PER_MINUTE);
     }
@@ -96,6 +103,10 @@ public final class GroqClient implements LlmClient {
     /**
      * As {@link #GroqClient(JsonPoster, String, String, ApiCalls.RetryPolicy)}, for an account allowed
      * {@code tokensPerMinute}.
+     * Input: as above, plus the account's tokens a minute.
+     * Output: the client; throws on a blank key or model, or tokensPerMinute &lt;= {@value #MAX_ANSWER_TOKENS}.
+     * Used by: the other constructors, {@link #fromEnvironment(Map)}.
+     * Example: tokensPerMinute 2000 -> IllegalArgumentException
      */
     GroqClient(JsonPoster poster, String apiKey, String model, ApiCalls.RetryPolicy retries, int tokensPerMinute) {
         if (apiKey == null || apiKey.isBlank()) {
@@ -119,13 +130,21 @@ public final class GroqClient implements LlmClient {
      * A client with the key in {@value #KEY_VARIABLE}, the model in {@value #MODEL_VARIABLE} (default
      * {@value #DEFAULT_MODEL}), and the account's tokens a minute in {@value #TOKENS_PER_MINUTE_VARIABLE}
      * (default the free tier's {@value #FREE_TOKENS_PER_MINUTE}).
-     *
-     * @throws IllegalStateException if no key is set, or the tokens a minute are not a number
+     * Input: none (reads the process environment).
+     * Output: a client from {@value #KEY_VARIABLE}, {@value #MODEL_VARIABLE} and {@value #TOKENS_PER_MINUTE_VARIABLE}; IllegalStateException without a key.
+     * Used by: PipelineRunner.matcher (M9, AI matcher), AiRecorder.
+     * Example: GROQ_API_KEY=gsk_... -> client for openai/gpt-oss-120b, 5,500 prompt tokens
      */
     public static GroqClient fromEnvironment() {
         return fromEnvironment(System.getenv());
     }
 
+    /**
+     * Input: environment variables.
+     * Output: see {@link #fromEnvironment()}; IllegalStateException if the key is missing or tokens a minute is not a number.
+     * Used by: {@link #fromEnvironment()}; GroqClientTest.
+     * Example: {GROQ_API_KEY=k, GROQ_TOKENS_PER_MINUTE=30000} -> maxPromptTokens 27,500
+     */
     static GroqClient fromEnvironment(Map<String, String> environment) {
         String key = environment.get(KEY_VARIABLE);
         if (key == null || key.isBlank()) {
@@ -144,17 +163,35 @@ public final class GroqClient implements LlmClient {
                 ApiCalls.RetryPolicy.DEFAULT, tokensPerMinute);
     }
 
+    /**
+     * Input: none.
+     * Output: the model id requests use.
+     * Used by: AiPaperMatcher (rationales and logs).
+     * Example: -> "openai/gpt-oss-120b"
+     */
     @Override
     public String modelId() {
         return model;
     }
 
-    /** The account's tokens a minute, less the room kept for the answer ({@value #MAX_ANSWER_TOKENS}). */
+    /**
+     * The account's tokens a minute, less the room kept for the answer ({@value #MAX_ANSWER_TOKENS}).
+     * Input: none.
+     * Output: the account's tokens a minute less {@value #MAX_ANSWER_TOKENS}.
+     * Used by: AiPaperMatcher.requests.
+     * Example: free tier: 8000 - 2500 -> 5500
+     */
     @Override
     public int maxPromptTokens() {
         return tokensPerMinute - MAX_ANSWER_TOKENS;
     }
 
+    /**
+     * Input: a prompt and the answer's JSON Schema.
+     * Output: the model's parsed JSON answer, retried as {@link ApiCalls#post} describes; IOException on failure.
+     * Used by: AiPaperMatcher.ask (M6 AI).
+     * Example: see the class example: "Name a colour." -> {"colour":"blue"}
+     */
     @Override
     public JsonNode generateJson(String prompt, ObjectNode responseSchema) throws IOException {
         HttpReply reply = ApiCalls.post(poster, ENDPOINT, Map.of("Authorization", "Bearer " + apiKey),
@@ -162,6 +199,12 @@ public final class GroqClient implements LlmClient {
         return answer(JSON.readTree(reply.body()));
     }
 
+    /**
+     * Input: the model id, the prompt and the answer's schema.
+     * Output: the chat-completions JSON: one user message, strict json_schema format, low reasoning, 2,500 answer tokens.
+     * Used by: {@link #generateJson}; GroqClientTest.
+     * Example: -> {"model":"openai/gpt-oss-120b","messages":[...],"response_format":{...},...}
+     */
     static byte[] requestBody(String model, String prompt, ObjectNode responseSchema) throws IOException {
         ObjectNode body = JSON.createObjectNode();
         body.put("model", model);
@@ -181,6 +224,10 @@ public final class GroqClient implements LlmClient {
     /**
      * The schema as strict mode accepts it: every object closed and all its properties required, the
      * optional ones nullable; {@code minimum} and {@code maximum} dropped. The given schema is not changed.
+     * Input: a JSON Schema.
+     * Output: a copy that strict mode accepts: objects closed, all properties required, optional ones nullable, no min/max.
+     * Used by: {@link #requestBody}; GroqClientTest.
+     * Example: {properties:{a,b}, required:[a]} -> required [a, b], b's type ["string","null"], additionalProperties false
      */
     static ObjectNode strictSchema(ObjectNode schema) {
         ObjectNode copy = schema.deepCopy();
@@ -188,6 +235,12 @@ public final class GroqClient implements LlmClient {
         return copy;
     }
 
+    /**
+     * Input: a schema node (changed in place).
+     * Output: none; the node and everything under it are made strict.
+     * Used by: {@link #strictSchema}, recursively.
+     * Example: an object node -> required lists every property, additionalProperties false
+     */
     private static void tighten(ObjectNode node) {
         node.remove(List.of("minimum", "maximum"));
         String type = node.path("type").asText("");
@@ -211,6 +264,12 @@ public final class GroqClient implements LlmClient {
         }
     }
 
+    /**
+     * Input: an optional property's schema (changed in place).
+     * Output: none; null is added to its type (and enum).
+     * Used by: {@link #tighten}.
+     * Example: {type: string, enum: [P1]} -> {type: [string, null], enum: [P1, null]}
+     */
     private static void nullable(ObjectNode property) {
         property.set("type", JSON.createArrayNode().add(property.path("type").asText()).add("null"));
         if (property.path("enum").isArray()) {
@@ -218,7 +277,13 @@ public final class GroqClient implements LlmClient {
         }
     }
 
-    /** The wait Groq names in its error ("Please try again in 7.66s"), if any. */
+    /**
+     * The wait Groq names in its error ("Please try again in 7.66s"), if any.
+     * Input: a failed Groq reply.
+     * Output: the wait its error message names, if any.
+     * Used by: {@link #generateJson}, passed to ApiCalls.post.
+     * Example: {"error":{"message":"... try again in 7.66s"}} -> PT7.66S
+     */
     static Optional<Duration> askedWait(HttpReply reply) {
         try {
             return ApiCalls.tryAgainIn(JSON.readTree(reply.body()).path("error").path("message").asText(""));
@@ -229,8 +294,10 @@ public final class GroqClient implements LlmClient {
 
     /**
      * The JSON the model wrote: the content of the first choice's message.
-     *
-     * @throws IOException if the answer was cut short or is missing, or the text is not JSON
+     * Input: Groq's chat-completions response.
+     * Output: the JSON in the first choice's message; IOException if missing, cut short (finish_reason not stop) or not JSON.
+     * Used by: {@link #generateJson}; GroqClientTest.
+     * Example: {"choices":[{"message":{"content":"{\"a\":1}"},"finish_reason":"stop"}]} -> {"a":1}
      */
     static JsonNode answer(JsonNode response) throws IOException {
         JsonNode choice = response.path("choices").path(0);

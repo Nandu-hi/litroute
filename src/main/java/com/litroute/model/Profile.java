@@ -31,6 +31,12 @@ public record Profile(
         String modelId,
         Instant updatedAt) {
 
+    /**
+     * Input: every field; name non-blank, at least one paper.
+     * Output: the profile, with immutable copies of its lists; throws on a blank name or no papers.
+     * Used by: ProfileBuilder (M5) and ProfileStore (M7d) when loading.
+     * Example: {@code new Profile("alice", List.of("a@x.edu"), papers, List.of("wave loads"), "specter2", now)} -> ok; papers [] -> throws
+     */
     public Profile {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("name must not be blank");
@@ -43,7 +49,12 @@ public record Profile(
         keywords = List.copyOf(keywords);
     }
 
-    /** A profile without keywords. */
+    /**
+     * Input: every field except keywords.
+     * Output: a profile with no keywords.
+     * Used by: older call sites and tests that predate keywords.
+     * Example: {@code new Profile("alice", emails, papers, "specter2", now).keywords()} -> {@code []}
+     */
     public Profile(String name, List<String> emails, List<ProfilePaper> papers, String modelId, Instant updatedAt) {
         this(name, emails, papers, List.of(), modelId, updatedAt);
     }
@@ -78,11 +89,22 @@ public record Profile(
             Optional<String> bodyText,
             Optional<List<String>> keywords) {
 
+        /**
+         * Input: every field.
+         * Output: the paper, with an immutable copy of its keywords (if read).
+         * Used by: ProfileBuilder (M5) and ProfileStore (M7d).
+         * Example: keywords {@code Optional.of(mutableList)} -> stored as an unmodifiable copy
+         */
         public ProfilePaper {
             keywords = keywords.map(List::copyOf);
         }
 
-        /** A paper whose author keywords were not read. */
+        /**
+         * Input: every field except keywords.
+         * Output: a paper whose keywords were not read ({@code keywords()} empty).
+         * Used by: ProfileStore (M7d) for papers saved before keywords were kept.
+         * Example: {@code new ProfilePaper(..., abstractText, bodyText).hasKeywords()} -> false
+         */
         public ProfilePaper(String relativePath, String sha256, String title, float[] embedding, float[] abstractView,
                 Optional<float[]> structureView, Optional<float[]> bodyView, Optional<String> abstractText,
                 Optional<String> bodyText) {
@@ -90,30 +112,55 @@ public record Profile(
                     Optional.empty());
         }
 
-        /** A paper whose text was not kept: its vectors only. */
+        /**
+         * Input: path, hash, title and vectors only.
+         * Output: a paper with no text and no keywords.
+         * Used by: ProfileStore (M7d) for papers saved before text was kept; tests.
+         * Example: {@code new ProfilePaper(path, sha, title, emb, abs, s, b).hasText()} -> false
+         */
         public ProfilePaper(String relativePath, String sha256, String title, float[] embedding, float[] abstractView,
                 Optional<float[]> structureView, Optional<float[]> bodyView) {
             this(relativePath, sha256, title, embedding, abstractView, structureView, bodyView, Optional.empty(),
                     Optional.empty(), Optional.empty());
         }
 
-        /** Whether the paper's text was kept, so M6 can match its words without reading the PDF again. */
+        /**
+         * Input: none.
+         * Output: whether the abstract text was kept, so M6 can match its words without re-reading the PDF.
+         * Used by: ProfileBuilder (M5) to back-fill text; RelevanceScorer (M6) lexical matching.
+         * Example: a paper loaded from a pre-text store -> false
+         */
         public boolean hasText() {
             return abstractText.isPresent();
         }
 
-        /** Whether the PDF was read for its author keywords (it may have had none). */
+        /**
+         * Input: none.
+         * Output: whether the PDF was read for author keywords (true even when it listed none).
+         * Used by: ProfileBuilder (M5) to decide whether to re-read a PDF.
+         * Example: keywords {@code Optional.of([])} -> true; {@code Optional.empty()} -> false
+         */
         public boolean hasKeywords() {
             return keywords.isPresent();
         }
 
-        /** The same paper with its text and author keywords as read from the PDF; the vectors are kept. */
+        /**
+         * Input: the abstract, body text and author keywords read from the PDF.
+         * Output: a copy of this paper with those set; vectors unchanged.
+         * Used by: ProfileBuilder (M5) when back-filling text into a stored profile.
+         * Example: {@code p.withText("We study...", "1 Introduction ...", List.of("piles")).hasText()} -> true
+         */
         public ProfilePaper withText(String abstractText, String bodyText, List<String> keywords) {
             return new ProfilePaper(relativePath, sha256, title, embedding, abstractView, structureView, bodyView,
                     Optional.of(abstractText), Optional.of(bodyText), Optional.of(keywords));
         }
 
-        /** The same paper, found at another path in a profile folder. */
+        /**
+         * Input: the PDF's new path inside the profile folder.
+         * Output: a copy of this paper with only relativePath changed.
+         * Used by: ProfileBuilder (M5) when a PDF was moved or renamed (same hash).
+         * Example: {@code p.at("2024/rao.pdf").relativePath()} -> {@code "2024/rao.pdf"}
+         */
         public ProfilePaper at(String relativePath) {
             return new ProfilePaper(relativePath, sha256, title, embedding, abstractView, structureView, bodyView,
                     abstractText, bodyText, keywords);

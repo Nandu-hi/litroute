@@ -61,7 +61,7 @@ What one student works on, built from the PDFs in their profile folder. A profil
 |---|---|
 | `name` | The folder's name. Must not be blank. |
 | `emails` | Addresses from the folder's `email.txt`, where M10 will send approved papers. |
-| `papers` | One [ProfilePaper](Profile.java#L57) per readable PDF. **Never empty.** |
+| `papers` | One [ProfilePaper](Profile.java#L80) per readable PDF. **Never empty.** |
 | `keywords` | Up to 10 of the author keywords of the student's papers, those running through the most of them first ([ProfileKeywords](../profile/ProfileKeywords.java)). M6's language model is told them. Empty if no paper lists keywords. |
 | `modelId` | The embedding model that produced every vector. Vectors from different models can't be compared. |
 | `updatedAt` | When the profile last actually changed. |
@@ -83,11 +83,26 @@ How relevant one candidate is to one student, and why.
 | `relevance` | 0.0–1.0, optional: how close the paper is to the student's own work whoever else it suits (0.9 as close as their own papers, 0.1 as close as another student's). Empty when the matcher doesn't measure it (the AI matcher). |
 
 - `withStatus(...)` and `withRecommended(...)` return changed copies; the record itself never changes.
-- **[queueKey()](ScoredPaper.java#L57)** identifies an entry in the review queue: the student plus the paper, identified by `doi:<lowercased DOI>` or, without a DOI, `title:<compacted title>` (the same way M4 identifies papers). M7e uses it to update a re-scored paper instead of adding it twice.
+- **[queueKey()](ScoredPaper.java#L100)** identifies an entry in the review queue: the student plus the paper, identified by `doi:<lowercased DOI>` or, without a DOI, `title:<compacted title>` (the same way M4 identifies papers). M7e uses it to update a re-scored paper instead of adding it twice.
 
 ### [ReviewStatus](ReviewStatus.java)
 
 An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10), `DROPPED` (not to be sent) or `SENT` (emailed to the student by M10: such a paper leaves the queue for [SentPaperStore](../store/SentPaperStore.java) and is never queued for that student again).
+
+## Interaction with M7 (the stores)
+
+The records are what the stores hold, but the stores never serialize them directly: each store has its own plain JSON shape with nullable fields, so Jackson needs no `Optional`/`Path`/`Instant` modules, and converting back runs the record's constructor, so a hand-edited or corrupt entry is rejected as an `IOException` instead of loading invalid data.
+
+| Record | Stored in | As | Key |
+|---|---|---|---|
+| `RawEmail` | **M7a** `email_cache.json` (only its `messageId`) | a JSON array of IDs | `messageId` |
+| `PaperCandidate` | **M7c** `enrichment_cache.json` (`enriched` and `lookups`), and inside every M7e / sent entry | [StoredCandidate](../store/StoredCandidate.java) | M7c lookups: `Titles.compact(title)` |
+| `Profile` / `ProfilePaper` | **M7d** `profiles.json` | `StoredProfile` / `StoredPaper` in [ProfileStore](../store/ProfileStore.java) | profile `name` |
+| `ScoredPaper` | **M7e** `scored_queue.json`; `sent_papers.json` once sent | `StoredScoredPaper` in [ScoredQueueStore](../store/ScoredQueueStore.java) | `queueKey()` |
+| `ScoredPaper.paperKey` | `scored_papers.json` ([ScoredPaperLog](../store/ScoredPaperLog.java)) | a JSON array of keys | `paperKey()` |
+| `ReviewStatus` | inside each M7e / sent entry | its name | — |
+
+The `with...` copies are how a store changes a record: M7e's `setStatus` stores `withStatus(...)`, and filing a matched PDF into a student's folder stores `candidate.withPdfPath(copy)`.
 
 ## How it's tested
 

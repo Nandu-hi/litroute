@@ -38,6 +38,26 @@ PipelineRunner.run(credentials, progress)
 
 A crash part-way leaves M7a for last: its emails are skipped, never lost. PDFs downloaded by M2 stay in `~/.litroute/data/pdfs/`, and **the sent papers are kept**, so the re-run never queues a paper for a student who already received it. The UI's **Clear and re-run…** asks first, stating how many emails will be marked unread and how many queued papers and decisions will be lost, then resets and runs.
 
+## Interaction with M7 (the stores)
+
+M9 is the only module that drives every store; the order of its reads and writes is what makes a crash repeat work instead of skipping it.
+
+| Step | Reads | Writes |
+|---|---|---|
+| 1. profile sync (M5) | **M7d** | **M7d** (changed profiles only) |
+| 2. fetch (M1) | **M7a** (IDs to skip) | — |
+| 3. extract/enrich/dedup (M2–M4, AlertBatchProcessor) | **M7c** (papers + lookup cache), **M7a** | **M7c**, then **M7a** last |
+| 4. mark read (M1) | — | Gmail only, and only for IDs now in M7a |
+| 5. match (M6) | **M7d** (profiles), **M7c** (via step 3's result), **M7e** + `scored_papers.json` (what is already scored), `sent_papers.json` (what each student already got) | **M7e** (`addAll`), then `scored_papers.json` |
+| reset | **M7a** (which emails to mark unread) | **M7e** `clear()`, `scored_papers.json` `clear()`, **M7c** then **M7a** emptied (`forgetAll`) — never `sent_papers.json` |
+
+The classes:
+
+| Class | Role |
+|---|---|
+| [PipelineRunner](PipelineRunner.java) | One run (`run`) and **Clear and re-run** (`reset`) over injected stages and stores; `atDefaultLocations` wires the real ones under `~/.litroute`, `matcher` builds the chosen M6 matcher. Also the `Report`, `ResetReport`, `MatcherKind` and `MatcherFactory` types. |
+| [PipelineRunnerCli](PipelineRunnerCli.java) | The terminal / cron entry point: parses the flags, unlocks the credentials (terminal or `LITROUTE_PASSPHRASE`), runs once, optionally sends the approved papers (M10). |
+
 ## Running it without the UI
 
 ```

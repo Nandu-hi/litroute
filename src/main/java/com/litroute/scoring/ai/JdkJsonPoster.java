@@ -26,6 +26,12 @@ public final class JdkJsonPoster implements JsonPoster {
             .connectTimeout(CONNECT_TIMEOUT)
             .build();
 
+    /**
+     * Input: an https URI, extra headers, a JSON body and a byte cap.
+     * Output: the reply (body cut at maxBytes); IOException for non-https, network failure or interrupt.
+     * Used by: GroqClient.fromEnvironment (through ApiCalls.post).
+     * Example: post(https://api.groq.com/..., {Authorization: Bearer k}, body, 1 MB) -> HttpReply(200, ...)
+     */
     @Override
     public HttpReply post(URI uri, Map<String, String> headers, byte[] body, long maxBytes) throws IOException {
         if (!"https".equalsIgnoreCase(uri.getScheme())) {

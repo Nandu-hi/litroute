@@ -27,18 +27,26 @@ Deduplicator.deduplicate(held)
 deduplicated list ──▶ EnrichmentCacheStore.save(...)   (M7c, the input to M6 scoring)
 ```
 
+## Interaction with M7 (the stores)
+
+The Deduplicator reads and writes no store; it is what keeps **M7c** free of duplicates.
+
+- Its input is M7c's `enriched` list (already deduplicated by earlier runs) followed by the new batch, which [AlertBatchProcessor](../extract/AlertBatchProcessor.java) loaded from M7c.
+- Its output **replaces** M7c's `enriched` list in one write. Because held papers come first, a paper stored by an earlier run keeps its fields and only gains what a new copy adds.
+- M6 later reads that list, and M7e identifies a queued paper the same way M4 does (DOI, else compacted title: [ScoredPaper.paperKey](../../model/ScoredPaper.java)), so one paper is never queued twice for a student.
+
 ### [Deduplicator](Deduplicator.java)
 
-**[deduplicate(candidates)](Deduplicator.java#L37)** goes through the list once. Each candidate is compared with the papers kept so far. If it matches one, the two are merged; otherwise it is added as a new paper.
+**[deduplicate(candidates)](Deduplicator.java#L39)** goes through the list once. Each candidate is compared with the papers kept so far. If it matches one, the two are merged; otherwise it is added as a new paper.
 
-**[samePaper(a, b)](Deduplicator.java#L59)** decides whether two candidates are the same paper:
+**[samePaper(a, b)](Deduplicator.java#L73)** decides whether two candidates are the same paper:
 
 1. **Both have a DOI:** they are the same paper exactly when the DOIs are equal, ignoring case. DOIs are the authoritative identity, so two papers with different DOIs are **never** merged, even if their titles match.
 2. **At most one has a DOI** (so the DOIs can't disagree): fall back to fuzzy matching. Both conditions must hold:
-   - **The titles are similar enough.** [Titles.similarity](../../util/Titles.java#L21) must be at least **0.92** ([SAME_TITLE_THRESHOLD](Deduplicator.java#L31)). Titles are compared with accents, case, spaces and punctuation removed, so "Wave Loads: A Review" and "wave loads - a review" match.
-   - **The authors agree** ([authorsAgree](Deduplicator.java#L74)). If either author list is empty, this check passes, because most alerts list no authors and requiring a match would stop fuzzy merging altogether. If both lists are non-empty, they must share at least one surname (the last word of a name, compacted). This stops two different groups' papers with nearly identical titles from being merged.
+   - **The titles are similar enough.** [Titles.similarity](../../util/Titles.java#L26) must be at least **0.92** ([SAME_TITLE_THRESHOLD](Deduplicator.java#L31)). Titles are compared with accents, case, spaces and punctuation removed, so "Wave Loads: A Review" and "wave loads - a review" match.
+   - **The authors agree** ([authorsAgree](Deduplicator.java#L90)). If either author list is empty, this check passes, because most alerts list no authors and requiring a match would stop fuzzy merging altogether. If both lists are non-empty, they must share at least one surname (the last word of a name, compacted). This stops two different groups' papers with nearly identical titles from being merged.
 
-**[merge(winner, duplicate)](Deduplicator.java#L88)** combines two records as a **union, never a replacement**. The paper seen first keeps every field it has, and the duplicate only fills fields the first one left empty (`winner.venue().or(duplicate::venue)` and so on). Enrichment data is therefore never lost when a sparser copy of the same paper arrives later. `sourceMessageId` and `title` always come from the first copy.
+**[merge(winner, duplicate)](Deduplicator.java#L116)** combines two records as a **union, never a replacement**. The paper seen first keeps every field it has, and the duplicate only fills fields the first one left empty (`winner.venue().or(duplicate::venue)` and so on). Enrichment data is therefore never lost when a sparser copy of the same paper arrives later. `sourceMessageId` and `title` always come from the first copy.
 
 ## How it's tested
 

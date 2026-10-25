@@ -37,21 +37,44 @@ public final class Specter2EmbeddingProvider implements EmbeddingProvider {
     private final OrtEnvironment environment;
     private final OrtSession session;
 
+    /**
+     * Input: a loaded tokenizer, the ONNX environment and session.
+     * Output: a provider owning them.
+     * Used by: {@link #open}.
+     * Example: {@code new Specter2EmbeddingProvider(tokenizer, OrtEnvironment.getEnvironment(), session)}
+     */
     private Specter2EmbeddingProvider(HuggingFaceTokenizer tokenizer, OrtEnvironment environment, OrtSession session) {
         this.tokenizer = tokenizer;
         this.environment = environment;
         this.session = session;
     }
 
+    /**
+     * Input: none.
+     * Output: {@code ~/.litroute/models}, where setup_model.sh exports the model.
+     * Used by: {@link #atDefaultLocation}.
+     * Example: -> /home/u/.litroute/models
+     */
     public static Path defaultModelDirectory() {
         return Path.of(System.getProperty("user.home"), ".litroute", "models");
     }
 
+    /**
+     * Input: none.
+     * Output: the model opened from {@link #defaultModelDirectory}; IOException if not exported yet.
+     * Used by: Session (M8), PipelineRunnerCli, ProfileBuilderCli, RelevanceScorerCli.
+     * Example: -> a ready provider (takes a few seconds to load)
+     */
     public static Specter2EmbeddingProvider atDefaultLocation() throws IOException {
         return open(defaultModelDirectory());
     }
 
-    /** @throws IOException if the exported model or tokenizer is missing or cannot be loaded */
+    /**
+     * Input: a folder holding specter2.onnx (+ .data) and tokenizer.json.
+     * Output: the provider; IOException if the files are missing or cannot be loaded.
+     * Used by: {@link #atDefaultLocation}; tests.
+     * Example: {@code open(Path.of("/tmp/empty"))} -> throws "SPECTER2 model not found in /tmp/empty; run scripts/..."
+     */
     public static Specter2EmbeddingProvider open(Path modelDirectory) throws IOException {
         Path model = modelDirectory.resolve(MODEL_FILE);
         Path tokenizerFile = modelDirectory.resolve(TOKENIZER_FILE);
@@ -75,11 +98,23 @@ public final class Specter2EmbeddingProvider implements EmbeddingProvider {
         }
     }
 
+    /**
+     * Input: none.
+     * Output: {@value #MODEL_ID}.
+     * Used by: see {@link EmbeddingProvider#modelId}.
+     * Example: -> "specter2-proximity-onnx/cls/512"
+     */
     @Override
     public String modelId() {
         return MODEL_ID;
     }
 
+    /**
+     * Input: a title and a text.
+     * Output: the L2-normalized [CLS] vector of {@code title[SEP]text}, truncated to 512 tokens; IllegalStateException if inference fails.
+     * Used by: PaperEmbedder, RelevanceScorer (M5/M6).
+     * Example: {@code embed("Wave loads on piles", "")} -> 768 floats, norm 1
+     */
     @Override
     public float[] embed(String title, String text) {
         Encoding encoding = tokenizer.encode(title + SEPARATOR + text);
@@ -89,6 +124,7 @@ public final class Specter2EmbeddingProvider implements EmbeddingProvider {
         try (OnnxTensor idTensor = OnnxTensor.createTensor(environment, LongBuffer.wrap(ids), shape);
                 OnnxTensor maskTensor = OnnxTensor.createTensor(environment, LongBuffer.wrap(mask), shape);
                 OrtSession.Result result = session.run(Map.of("input_ids", idTensor, "attention_mask", maskTensor))) {
+            // Output 0 is the [CLS] vector, shape [1][768].
             float[][] output = (float[][]) result.get(0).getValue();
             return Vectors.normalize(output[0]);
         } catch (OrtException e) {
@@ -96,6 +132,12 @@ public final class Specter2EmbeddingProvider implements EmbeddingProvider {
         }
     }
 
+    /**
+     * Input: none.
+     * Output: none; the ONNX session and tokenizer are closed.
+     * Used by: try-with-resources around the provider.
+     * Example: {@code provider.close(); provider.embed(..)} -> fails, the session is closed
+     */
     @Override
     public void close() {
         try {

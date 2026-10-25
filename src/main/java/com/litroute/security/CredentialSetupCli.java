@@ -18,6 +18,12 @@ public final class CredentialSetupCli {
     private CredentialSetupCli() {
     }
 
+    /**
+     * Input: none on the command line; prompts for Gmail address, App Password and passphrase (twice).
+     * Output: the encrypted credential file, overwritten; exits 1 without a terminal or on mismatched passphrases.
+     * Used by: the user, once at setup or to rotate the App Password ({@code exec:java -Dexec.mainClass=...CredentialSetupCli}).
+     * Example: prof@gmail.com, "abcd efgh ijkl mnop", "secret" x2 -> "Saved. Existing credentials (if any) were overwritten."
+     */
     public static void main(String[] args) throws Exception {
         Console console = System.console();
         if (console == null) {
@@ -34,6 +40,7 @@ public final class CredentialSetupCli {
                 + "on disk): ");
         char[] passphraseConfirm = console.readPassword("Confirm master passphrase: ");
 
+        // Wipe every secret buffer whatever happens below.
         try {
             if (!Arrays.equals(passphrase, passphraseConfirm)) {
                 System.err.println("Passphrases did not match; aborting.");

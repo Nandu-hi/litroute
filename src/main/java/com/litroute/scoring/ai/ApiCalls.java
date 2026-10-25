@@ -25,6 +25,12 @@ final class ApiCalls {
 
     /** Waits out a pause; tests record the pause instead of sleeping. */
     interface Pauser {
+        /**
+         * Input: how long to wait.
+         * Output: none, after waiting; IOException if interrupted.
+         * Used by: {@link ApiCalls#post} between retries.
+         * Example: pause(Duration.ofSeconds(10)) -> returns after 10 s (tests: records it)
+         */
         void pause(Duration pause) throws IOException;
     }
 
@@ -38,6 +44,12 @@ final class ApiCalls {
      */
     record RetryPolicy(List<Duration> delays, Duration longestWait, Pauser pauser) {
 
+        /**
+         * Input: retry delays, the longest asked wait to honour, and the pauser.
+         * Output: the policy, with an immutable copy of the delays.
+         * Used by: {@link #DEFAULT}; GroqClientTest with short delays.
+         * Example: {@code new RetryPolicy(List.of(Duration.ofMillis(1)), Duration.ofMinutes(2), slept::add)}
+         */
         RetryPolicy {
             delays = List.copyOf(delays);
         }
@@ -56,12 +68,10 @@ final class ApiCalls {
      * POSTs the request, and posts it again after each of the policy's delays while the reply is a 429 or
      * 5xx - or after the wait the API asks for, if longer. When the API asks for a longer wait than the
      * policy's {@code longestWait}, the failure is reported at once.
-     *
-     * @param askedWait how long a failed reply asks the caller to wait, if it says
-     * @param api       the API's name, for messages
-     * @return the reply, which is a 2xx
-     * @throws IOException if the API can't be reached, still fails after the retries, refuses the request
-     *         (another 4xx), or replies with more than {@code maxBytes}
+     * Input: the poster, request (URI, headers, body, byte cap), retry policy, how to read an asked wait, and the API's name.
+     * Output: the 2xx reply; IOException if unreachable, still 429/5xx after the retries, asked to wait too long, refused (4xx) or truncated.
+     * Used by: GroqClient.generateJson.
+     * Example: 429 "try again in 7.6s", then 200 -> waits 10 s (ours is longer), returns the 200
      */
     static HttpReply post(JsonPoster poster, URI uri, Map<String, String> headers, byte[] body, long maxBytes,
             RetryPolicy policy, Function<HttpReply, Optional<Duration>> askedWait, String api) throws IOException {
@@ -95,6 +105,10 @@ final class ApiCalls {
     /**
      * The wait an error message asks for, as in "Please try again in 7.66s", "in 2m59.5s" or "in 1h2m3s";
      * empty if it names none.
+     * Input: an API error message.
+     * Output: the wait it asks for; empty if it names none.
+     * Used by: GroqClient.askedWait.
+     * Example: "Please try again in 2m59.5s" -> PT2M59.5S; "Bad request" -> empty
      */
     static Optional<Duration> tryAgainIn(String message) {
         Matcher wait = TRY_AGAIN_IN.matcher(message);
@@ -112,11 +126,23 @@ final class ApiCalls {
         return Optional.empty();
     }
 
-    /** Throttled or overloaded: worth asking again in a while. */
+    /**
+     * Throttled or overloaded: worth asking again in a while.
+     * Input: a reply.
+     * Output: true for 429 or 5xx.
+     * Used by: {@link #post}.
+     * Example: 503 -> true; 400 -> false
+     */
     private static boolean isTransient(HttpReply reply) {
         return reply.status() == 429 || reply.status() >= 500;
     }
 
+    /**
+     * Input: a pause.
+     * Output: none, after sleeping; IOException (interrupt flag restored) if interrupted.
+     * Used by: {@link RetryPolicy#DEFAULT}'s pauser.
+     * Example: sleep(Duration.ofSeconds(1)) -> returns after 1 s
+     */
     private static void sleep(Duration pause) throws IOException {
         try {
             Thread.sleep(pause.toMillis());
@@ -126,7 +152,13 @@ final class ApiCalls {
         }
     }
 
-    /** The API's own explanation of an error status ({@code error.message}, as both APIs send it), if any. */
+    /**
+     * The API's own explanation of an error status ({@code error.message}, as both APIs send it), if any.
+     * Input: an error reply.
+     * Output: ": " + its JSON error.message, or "" if it has none.
+     * Used by: {@link #post}, for its error messages.
+     * Example: {"error":{"message":"Rate limit reached"}} -> ": Rate limit reached"
+     */
     static String errorMessage(HttpReply reply) {
         try {
             String message = JSON.readTree(reply.body()).path("error").path("message").asText("");

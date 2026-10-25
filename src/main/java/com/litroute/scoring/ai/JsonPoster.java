@@ -14,9 +14,10 @@ public interface JsonPoster {
     /**
      * POSTs {@code body} as {@code application/json} with the given extra headers, and reads at most
      * {@code maxBytes} of the reply.
-     *
-     * @throws IOException if the host can't be reached or the request times out. An HTTP error status
-     *         is NOT an exception: it comes back as a reply for the caller to judge.
+     * Input: the URI, extra headers (e.g. Authorization), the JSON body and the most reply bytes to read.
+     * Output: the reply (an HTTP error status is a reply, not an exception); IOException if unreachable or timed out.
+     * Used by: ApiCalls.post, for every Groq request.
+     * Example: POST https://api.groq.com/openai/v1/chat/completions -> HttpReply(200, "application/json", {...choices...})
      */
     HttpReply post(URI uri, Map<String, String> headers, byte[] body, long maxBytes) throws IOException;
 }

@@ -41,6 +41,12 @@ final class ProfilesPane extends BorderPane {
     private final TableView<Profile> table = new TableView<>();
     private final LogPane log = new LogPane();
 
+    /**
+     * Input: the session and a way to open a folder in the desktop's file manager.
+     * Output: the Profiles tab: Rebuild / Open folder buttons, the profile table (M7d) and a log.
+     * Used by: LitRouteApp.start.
+     * Example: {@code new ProfilesPane(session, uri -> hostServices.showDocument(uri))}
+     */
     ProfilesPane(Session session, Consumer<String> openDocument) {
         this.session = session;
 
@@ -76,6 +82,12 @@ final class ProfilesPane extends BorderPane {
         reload();
     }
 
+    /**
+     * Input: none.
+     * Output: none; the table shows the profiles now in M7d (errors go to the log).
+     * Used by: the constructor, after a rebuild.
+     * Example: -> rows alice (40 papers), bob (12 papers), ...
+     */
     private void reload() {
         try {
             table.getItems().setAll(store.loadAll().values());
@@ -84,9 +96,21 @@ final class ProfilesPane extends BorderPane {
         }
     }
 
+    /**
+     * Input: none.
+     * Output: none; ProfileBuilder.syncAll runs as a job and its report is logged, then the table reloads.
+     * Used by: the Rebuild button.
+     * Example: -> "alice: 1 embedded, 39 unchanged, 0 skipped" ... "Rebuild finished."
+     */
     private void rebuild() {
         log.line("Rebuilding profiles from " + root + "...");
         session.runJob(new Task<BuildReport>() {
+            /**
+             * Input: none (job thread).
+             * Output: the sync's report, with LitRoute's log shown in the pane meanwhile.
+             * Used by: Session.runJob.
+             * Example: -> BuildReport([alice, bob], removed [])
+             */
             @Override
             protected BuildReport call() throws Exception {
                 try (AutoCloseable captured = log.capture()) {
@@ -94,6 +118,12 @@ final class ProfilesPane extends BorderPane {
                 }
             }
 
+            /**
+             * Input: none (UI thread).
+             * Output: none; each profile's counts and skipped PDFs are logged, then the table reloads.
+             * Used by: JavaFX, when call() returns.
+             * Example: -> "bob: 0 embedded, 12 unchanged, 1 skipped", "    skipped x.pdf: password-protected"
+             */
             @Override
             protected void succeeded() {
                 BuildReport report = getValue();
@@ -110,6 +140,12 @@ final class ProfilesPane extends BorderPane {
                 reload();
             }
 
+            /**
+             * Input: none (UI thread).
+             * Output: none; the error is logged and the table reloads.
+             * Used by: JavaFX, when call() throws.
+             * Example: model missing -> "Rebuild failed: java.io.IOException: SPECTER2 model not found ..."
+             */
             @Override
             protected void failed() {
                 log.line("Rebuild failed: " + getException());
@@ -118,6 +154,12 @@ final class ProfilesPane extends BorderPane {
         });
     }
 
+    /**
+     * Input: a header, a width and how to show a profile in it.
+     * Output: a read-only text column.
+     * Used by: the constructor.
+     * Example: column("Papers", 70, p -> "40")
+     */
     private static TableColumn<Profile, String> column(String name, double width, Function<Profile, String> value) {
         TableColumn<Profile, String> column = new TableColumn<>(name);
         column.setPrefWidth(width);

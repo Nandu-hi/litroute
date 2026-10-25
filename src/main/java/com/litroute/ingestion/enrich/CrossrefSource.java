@@ -24,20 +24,44 @@ public final class CrossrefSource implements MetadataSource {
     private final HttpFetcher fetcher;
     private final String baseUrl;
 
+    /**
+     * Input: the HTTP client used for every request.
+     * Output: a source querying https://api.crossref.org.
+     * Used by: OnlinePaperEnricher.create (M3).
+     * Example: {@code new CrossrefSource(pacedFetcher)}
+     */
     public CrossrefSource(HttpFetcher fetcher) {
         this(fetcher, DEFAULT_BASE_URL);
     }
 
+    /**
+     * Input: the HTTP client and the API root (no trailing slash).
+     * Output: a source querying that root.
+     * Used by: the public constructor; tests against recorded replies.
+     * Example: {@code new CrossrefSource(recorded, "http://localhost:8080")}
+     */
     CrossrefSource(HttpFetcher fetcher, String baseUrl) {
         this.fetcher = fetcher;
         this.baseUrl = baseUrl;
     }
 
+    /**
+     * Input: none.
+     * Output: {@code "Crossref"}.
+     * Used by: CompositeMetadataLookup (logs, failure counting), ApiJson error messages.
+     * Example: -> "Crossref"
+     */
     @Override
     public String name() {
         return "Crossref";
     }
 
+    /**
+     * Input: the paper's title, authors, and DOI/venue if known.
+     * Output: the exact work by DOI; else the best of 5 title-search hits with similarity &gt;= 0.88 (same journal &gt; published &gt; preprint); empty if none; IOException on outage.
+     * Used by: CompositeMetadataLookup.find (M3), as the first source.
+     * Example: title "Wave loads on piles", venue "Ocean Engineering" -> the Ocean Engineering record, not its SSRN preprint
+     */
     @Override
     public Optional<PaperMetadata> lookup(PaperQuery query) throws IOException {
         if (query.doi().isPresent()) {
@@ -53,6 +77,7 @@ public final class CrossrefSource implements MetadataSource {
         if (search.isEmpty()) {
             return Optional.empty();
         }
+        // Best = highest preference, then highest title similarity.
         PaperMetadata best = null;
         double bestScore = 0;
         int bestPreference = -1;
@@ -76,6 +101,10 @@ public final class CrossrefSource implements MetadataSource {
      * How much a hit whose title matches is preferred: 2 if it is in the journal the alert names, 1 if
      * it is a published version (not a preprint), 0 for a preprint of a paper whose journal is unknown
      * or different.
+     * Input: a title-matching hit, its raw JSON item, and the query.
+     * Output: 2 if in the journal the alert names, 1 if a published version, 0 for a preprint.
+     * Used by: {@link #lookup}, to rank title-search hits.
+     * Example: hit venue "Ocean Engineering" = query venue -> 2; type "posted-content" -> 0
      */
     private static int preference(PaperMetadata hit, JsonNode item, PaperQuery query) {
         boolean sameJournal = query.venue().isPresent() && hit.venue()
@@ -86,6 +115,12 @@ public final class CrossrefSource implements MetadataSource {
         return PREPRINT.equals(item.path("type").asText("")) ? 0 : 1;
     }
 
+    /**
+     * Input: one Crossref work object (exact lookup or search item).
+     * Output: its DOI, title, authors (given + family), journal, year, abstract, landing URL and PDF links.
+     * Used by: {@link #lookup}.
+     * Example: {@code {"DOI":"10.1/x","author":[{"given":"A.","family":"Rao"}],"issued":{"date-parts":[[2024]]}}} -> doi 10.1/x, authors [A. Rao], year 2024
+     */
     private static PaperMetadata toMetadata(JsonNode work) {
         List<String> authors = new ArrayList<>();
         for (JsonNode author : work.path("author")) {

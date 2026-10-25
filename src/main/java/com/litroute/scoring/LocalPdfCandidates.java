@@ -19,8 +19,10 @@ public final class LocalPdfCandidates {
     }
 
     /**
-     * @return a candidate titled as the PDF reads (its file name if the PDF is unreadable), with the
-     *         PDF attached so the scorer reads all of it
+     * Input: a PDF on disk.
+     * Output: a candidate titled as the PDF reads (its file name if unreadable), with the PDF attached.
+     * Used by: RelevanceScorerCli (score a dropped-in PDF), RelevanceScorerTest.
+     * Example: ~/x/wave_loads.pdf (unreadable) -> PaperCandidate("wave loads", pdfPath ~/x/wave_loads.pdf)
      */
     public static PaperCandidate of(Path pdf) {
         String title;

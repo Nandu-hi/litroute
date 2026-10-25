@@ -31,6 +31,12 @@ public final class PacedFetcher implements HttpFetcher {
     /** Waits; replaced in tests so they don't sleep. */
     @FunctionalInterface
     interface Sleeper {
+        /**
+         * Input: how long to wait.
+         * Output: none, after waiting.
+         * Used by: {@link PacedFetcher#pause}.
+         * Example: {@code sleep(Duration.ofMillis(250))} -> returns after 250 ms (tests: immediately)
+         */
         void sleep(Duration duration) throws InterruptedException;
     }
 
@@ -40,19 +46,33 @@ public final class PacedFetcher implements HttpFetcher {
     private final Map<String, Long> lastStart = new HashMap<>();
 
     /**
-     * @param fetcher   does the requests
-     * @param intervals the least time between two requests to each paced host, by host name
+     * Input: the fetcher that does the requests, and the least time between two requests per paced host.
+     * Output: a paced fetcher that really sleeps.
+     * Used by: OnlinePaperEnricher.create (M3).
+     * Example: {@code new PacedFetcher(jdk, Map.of("api.crossref.org", Duration.ofMillis(250)))}
      */
     public PacedFetcher(HttpFetcher fetcher, Map<String, Duration> intervals) {
         this(fetcher, intervals, duration -> Thread.sleep(duration.toMillis()));
     }
 
+    /**
+     * Input: as above, plus the Sleeper to wait with.
+     * Output: a paced fetcher.
+     * Used by: the public constructor; PacedFetcherTest with a recording sleeper.
+     * Example: {@code new PacedFetcher(fake, intervals, slept::add)}
+     */
     PacedFetcher(HttpFetcher fetcher, Map<String, Duration> intervals, Sleeper sleeper) {
         this.fetcher = fetcher;
         this.intervals = Map.copyOf(intervals);
         this.sleeper = sleeper;
     }
 
+    /**
+     * Input: a URI and the most body bytes to read.
+     * Output: the reply; for a paced host, after its interval, with one retry on a 429 asking &lt;= 5 s.
+     * Used by: ApiJson, ArticlePageReader, PdfDownloader (M3).
+     * Example: two Crossref calls 50 ms apart with a 250 ms interval -> second waits ~200 ms; publisher URL -> no wait
+     */
     @Override
     public HttpReply get(URI uri, long maxBytes) throws IOException {
         String host = uri.getHost() == null ? "" : uri.getHost().toLowerCase(Locale.ROOT);
@@ -71,7 +91,12 @@ public final class PacedFetcher implements HttpFetcher {
         return reply;
     }
 
-    /** One request, started no sooner than the interval after the host's previous one. */
+    /**
+     * Input: the host, its interval, the URI and the byte cap.
+     * Output: the reply of one request, started no sooner than the interval after the host's previous one.
+     * Used by: {@link #get}.
+     * Example: previous start 100 ms ago, interval 250 ms -> waits 150 ms, then fetches
+     */
     private synchronized HttpReply paced(String host, Duration interval, URI uri, long maxBytes) throws IOException {
         Long previous = lastStart.get(host);
         if (previous != null) {
@@ -84,7 +109,12 @@ public final class PacedFetcher implements HttpFetcher {
         return fetcher.get(uri, maxBytes);
     }
 
-    /** The reply's Retry-After in seconds, or one second when it states none. */
+    /**
+     * Input: a 429 reply.
+     * Output: its Retry-After in seconds; 1 s when none; more than the max (no retry) for an HTTP-date value.
+     * Used by: {@link #get}.
+     * Example: "3" -> 3 s; absent -> 1 s; "Wed, 21 Oct 2026 07:28:00 GMT" -> 6 s (not retried)
+     */
     private static Duration retryAfter(HttpReply reply) {
         try {
             return reply.retryAfter().map(value -> Duration.ofSeconds(Long.parseLong(value.strip())))
@@ -94,6 +124,12 @@ public final class PacedFetcher implements HttpFetcher {
         }
     }
 
+    /**
+     * Input: how long to wait.
+     * Output: none; IOException (interrupt flag restored) if interrupted.
+     * Used by: {@link #get}, {@link #paced}.
+     * Example: {@code pause(Duration.ofSeconds(1))} -> sleeps 1 s
+     */
     private void pause(Duration duration) throws IOException {
         try {
             sleeper.sleep(duration);

@@ -46,16 +46,14 @@ public final class PdfDownloader {
     /**
      * Creates a downloader that fetches through {@code fetcher} and saves into {@code directory}. The directory
      * doesn't have to exist yet.
-     *
-     * <p>Example:
-     *
+     * Input: fetcher - the HTTP client used for every download; directory - the folder the PDFs are saved in
+     * Output: a downloader saving into that folder.
+     * Used by: OnlinePaperEnricher.create (M3).
+     * Example:
      * <pre>{@code
      * Input:  new PdfDownloader(new JdkHttpFetcher("LitRoute/1.0 ..."), PdfDownloader.defaultDirectory())
      * Output: a downloader saving real downloads under ~/.litroute/data/pdfs
      * }</pre>
-     *
-     * @param fetcher the HTTP client used for every download
-     * @param directory the folder the PDFs are saved in
      */
     public PdfDownloader(HttpFetcher fetcher, Path directory) {
         this.fetcher = fetcher;
@@ -64,15 +62,14 @@ public final class PdfDownloader {
 
     /**
      * The folder PDFs are saved in by default: {@code ~/.litroute/data/pdfs}.
-     *
-     * <p>Example:
-     *
+     * Input: none.
+     * Output: the default PDF folder under the user's home directory
+     * Used by: PipelineRunner.atDefaultLocations (M9).
+     * Example:
      * <pre>{@code
-     * Input:  (user.home = "/home/srinandan")
-     * Output: /home/srinandan/.litroute/data/pdfs
+     * Input:  (user.home = "/home/u")
+     * Output: /home/u/.litroute/data/pdfs
      * }</pre>
-     *
-     * @return the default PDF folder under the user's home directory
      */
     public static Path defaultDirectory() {
         return Path.of(System.getProperty("user.home"), ".litroute", "data", "pdfs");
@@ -83,9 +80,10 @@ public final class PdfDownloader {
      * with no network access. Otherwise each http(s) URL is tried in order, and the first reply that is a 2xx,
      * not cut off at the 80 MB cap, and a real PDF (see {@link #isPdf}) is written atomically and returned.
      * Non-http URLs, error replies, HTML pages and network failures are skipped, never thrown.
-     *
-     * <p>Example:
-     *
+     * Input: candidateUrls - possible PDF locations, best first; fileStem - the file name without extension, from {@link #fileStem}
+     * Output: the saved (or already present) PDF, or empty if none of the URLs served a real PDF
+     * Used by: OnlinePaperEnricher.enrich (M3).
+     * Example:
      * <pre>{@code
      * Input:  download(List.of("https://ascelibrary.org/doi/pdf/10.1061/X",          // 403 -> skipped
      *                          "ftp://example.org/paper.pdf",                        // not http -> skipped
@@ -99,10 +97,6 @@ public final class PdfDownloader {
      * Input:  download(List.of("https://www.sciencedirect.com/.../pdf"), "10.1016_j.oceaneng.2024.117")   // HTML paywall
      * Output: Optional.empty
      * }</pre>
-     *
-     * @param candidateUrls possible PDF locations, best first
-     * @param fileStem the file name without extension, from {@link #fileStem}
-     * @return the saved (or already present) PDF, or empty if none of the URLs served a real PDF
      */
     public Optional<Path> download(List<String> candidateUrls, String fileStem) {
         Path target = directory.resolve(fileStem + ".pdf");
@@ -135,19 +129,16 @@ public final class PdfDownloader {
      * leading dots become one {@code _} (no hidden files), and the result is cut to 120 characters. Without a DOI,
      * the title is stripped of accents, case, spaces and punctuation before hashing, so small differences in how
      * two emails write the same title give the same file.
-     *
-     * <p>Example:
-     *
+     * Input: doi - the paper's DOI, if known; title - the paper's title, used only when there is no DOI
+     * Output: a file name stem safe on any filesystem
+     * Used by: OnlinePaperEnricher.enrich (M3), for the download's file name.
+     * Example:
      * <pre>{@code
      * Input:  Optional[10.1016/j.oceaneng.2024.117], any title   Output: "10.1016_j.oceaneng.2024.117"
      * Input:  Optional[10.1002/(SICI)1097-0258]                  Output: "10.1002__SICI_1097-0258"
      * Input:  Optional.empty, "Wave Loads: A Review"             Output: "title-b4e875f17d8ff795"   (SHA-256 of "waveloadsareview")
      * Input:  Optional.empty, "wave loads - a review"            Output: the same stem as the line above
      * }</pre>
-     *
-     * @param doi the paper's DOI, if known
-     * @param title the paper's title, used only when there is no DOI
-     * @return a file name stem safe on any filesystem
      */
     public static String fileStem(Optional<String> doi, String title) {
         if (doi.isPresent()) {
@@ -167,18 +158,16 @@ public final class PdfDownloader {
     /**
      * Tells whether a body is a PDF by looking for the {@code %PDF-} header in its first 1 KB (the PDF spec allows
      * some bytes before it). The content type isn't trusted, since servers often get it wrong.
-     *
-     * <p>Example:
-     *
+     * Input: body - the downloaded bytes
+     * Output: true if the {@code %PDF-} header appears in the first 1024 bytes
+     * Used by: {@link #download}, {@link #isPdfFile}; ArticlePageReader.read.
+     * Example:
      * <pre>{@code
      * Input:  bytes of "%PDF-1.7\n%..."                       Output: true
      * Input:  bytes of "\r\n%PDF-1.4 ..."                     Output: true    (header after a few junk bytes)
      * Input:  bytes of "<!DOCTYPE html><title>Sign in</title>"  Output: false
      * Input:  empty array                                     Output: false
      * }</pre>
-     *
-     * @param body the downloaded bytes
-     * @return true if the {@code %PDF-} header appears in the first 1024 bytes
      */
     static boolean isPdf(byte[] body) {
         int limit = Math.min(body.length, 1024);
@@ -188,17 +177,15 @@ public final class PdfDownloader {
     /**
      * Tells whether a file on disk is a real PDF, using the same header check as {@link #isPdf}. A missing file,
      * a directory, or a file that can't be read gives false, so the PDF is downloaded again.
-     *
-     * <p>Example:
-     *
+     * Input: file - the path to check
+     * Output: true if it is a regular file whose first 1 KB holds the PDF header
+     * Used by: {@link #download}, to reuse a PDF already on disk.
+     * Example:
      * <pre>{@code
      * Input:  pdfs/10.3390_jmse12030400.pdf, starting "%PDF-1.7"     Output: true
      * Input:  pdfs/10.1016_j.oceaneng.2024.117.pdf, not there         Output: false
      * Input:  pdfs/broken.pdf, containing an HTML page                Output: false
      * }</pre>
-     *
-     * @param file the path to check
-     * @return true if it is a regular file whose first 1 KB holds the PDF header
      */
     private static boolean isPdfFile(Path file) {
         if (!Files.isRegularFile(file)) {

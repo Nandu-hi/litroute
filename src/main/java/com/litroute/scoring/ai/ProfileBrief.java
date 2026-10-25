@@ -23,6 +23,12 @@ public record ProfileBrief(String name, List<String> keywords, List<String> pape
      */
     public static final int MAX_TITLES = 6;
 
+    /**
+     * Input: name (non-blank), keywords and paper titles.
+     * Output: the brief, with immutable copies of the lists; throws on a blank name.
+     * Used by: {@link #from}; tests.
+     * Example: {@code new ProfileBrief("alice", List.of("multi-hazard"), List.of("Wave loads on piles"))}
+     */
     public ProfileBrief {
         if (name == null || name.isBlank()) {
             throw new IllegalArgumentException("name must not be blank");
@@ -35,6 +41,10 @@ public record ProfileBrief(String name, List<String> keywords, List<String> pape
      * The brief for a stored profile: the keywords M5 kept for it, and the titles of the
      * {@value #MAX_TITLES} papers whose SPECTER2 vectors are closest to the mean of the student's papers -
      * the most typical of their work. Blank and repeated titles are skipped.
+     * Input: a stored profile (M7d).
+     * Output: its name, keywords and the titles of its {@value #MAX_TITLES} papers closest to the profile mean.
+     * Used by: AiPaperMatcher.of (M6 AI).
+     * Example: alice with 40 papers -> ProfileBrief(alice, [multi-hazard, ...], 6 most typical titles)
      */
     public static ProfileBrief from(Profile profile) {
         float[] centroid = Vectors.normalize(Vectors.mean(profile.papers().stream().map(ProfilePaper::embedding).toList()));

@@ -44,6 +44,12 @@ public final class ApprovedPaperSender {
      */
     public record Report(int emails, int papers, int attachments, List<String> unaddressed, List<String> failures) {
 
+        /**
+         * Input: what a send did.
+         * Output: the report, with immutable copies of its lists.
+         * Used by: {@link #send}.
+         * Example: {@code new Report(2, 5, 3, List.of(), List.of())}
+         */
         public Report {
             unaddressed = List.copyOf(unaddressed);
             failures = List.copyOf(failures);
@@ -56,11 +62,23 @@ public final class ApprovedPaperSender {
     private final GmailSmtpSender smtp;
     private final long attachmentBudget;
 
+    /**
+     * Input: the M7e queue, the sent-papers store, the M7d profiles and the SMTP sender.
+     * Output: a sender with Gmail's attachment budget.
+     * Used by: ReviewPane (M8) Send approved, {@link #atDefaultLocations}.
+     * Example: {@code new ApprovedPaperSender(queue, sent, ProfileStore.atDefaultLocation(), new GmailSmtpSender())}
+     */
     public ApprovedPaperSender(ScoredQueueStore queue, SentPaperStore sent, ProfileStore profiles, GmailSmtpSender smtp) {
         this(queue, sent, profiles, smtp, DigestComposer.GMAIL_ATTACHMENT_BUDGET);
     }
 
-    /** As above, attaching at most {@code attachmentBudget} bytes of PDF per email. */
+    /**
+     * As above, attaching at most {@code attachmentBudget} bytes of PDF per email.
+     * Input: as above, plus the PDF bytes per email.
+     * Output: a sender with that attachment budget.
+     * Used by: the public constructor; ApprovedPaperSenderTest (small budget to force parts).
+     * Example: attachmentBudget 1 MB -> big digests split into several emails
+     */
     ApprovedPaperSender(ScoredQueueStore queue, SentPaperStore sent, ProfileStore profiles, GmailSmtpSender smtp,
             long attachmentBudget) {
         this.queue = queue;
@@ -70,7 +88,13 @@ public final class ApprovedPaperSender {
         this.attachmentBudget = attachmentBudget;
     }
 
-    /** The review queue and profiles under {@code ~/.litroute/data}, sent through Gmail. */
+    /**
+     * The review queue and profiles under {@code ~/.litroute/data}, sent through Gmail.
+     * Input: none.
+     * Output: a sender over the default stores in ~/.litroute/data, sending through Gmail.
+     * Used by: PipelineRunnerCli --send-approved.
+     * Example: {@code atDefaultLocations().send(creds, System.out::println)}
+     */
     public static ApprovedPaperSender atDefaultLocations() {
         return new ApprovedPaperSender(ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation(),
                 ProfileStore.atDefaultLocation(), new GmailSmtpSender());
@@ -78,11 +102,10 @@ public final class ApprovedPaperSender {
 
     /**
      * Sends every approved paper in the queue.
-     *
-     * @param credentials the professor's Gmail account, which the emails come from; not cleared
-     * @param progress    told what is being sent, as it happens
-     * @throws IOException if a store cannot be read or written, or Gmail cannot be reached, refuses the login
-     *         or drops the connection; the papers already sent stay recorded as sent
+     * Input: the professor's Gmail credentials (not cleared) and a progress sink.
+     * Output: what was sent; each sent paper recorded in SentPaperStore then removed from M7e; IOException if a store or Gmail fails.
+     * Used by: ReviewPane (M8), PipelineRunnerCli.
+     * Example: alice 2 approved (has email), bob 1 approved (no email) -> Report(1 email, 2 papers, ..., unaddressed [bob (1 paper(s))])
      */
     public Report send(GmailCredentials credentials, Consumer<String> progress) throws IOException {
         settle();
@@ -149,6 +172,10 @@ public final class ApprovedPaperSender {
      * Takes out of the queue what has already gone: entries recorded as sent (left there by a crash
      * between recording and removing) and entries marked {@link ReviewStatus#SENT} by older versions,
      * which kept sent papers in the queue; the latter are recorded as sent first, at the time of this move.
+     * Input: none.
+     * Output: none; queue entries already sent (or marked SENT by older versions) are recorded and taken out of M7e.
+     * Used by: {@link #send}, first.
+     * Example: crash after sent.addAll but before queue.remove -> the paper is removed now, never sent twice
      */
     private void settle() throws IOException {
         List<ScoredPaper> queued = queue.load();

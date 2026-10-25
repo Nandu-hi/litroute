@@ -63,47 +63,51 @@ public final class GmailEmailSource implements EmailSource {
 
     /**
      * Input: none.
-     * Output: a new GmailEmailSource using a default AlertClassifier and real Gmail IMAP settings.
-     *
-     * Creates a production email source with default classification rules.
+     * Output: a source for imap.gmail.com:993 with the default classifier and {@value #DEFAULT_MAX_UNREAD} messages per run.
+     * Used by: tests and manual runs.
+     * Example: {@code new GmailEmailSource().fetchNewAlerts(creds, Set.of())} -> up to 50 newest unread alerts
      */
     public GmailEmailSource() {
         this(new AlertClassifier());
     }
 
     /**
-     * Input: maxUnread - how many unread, not yet processed messages one run examines, at least 1.
-     * Output: a new GmailEmailSource using a default AlertClassifier and real Gmail IMAP settings.
+     * Input: how many unread, not yet processed messages one run examines (at least 1).
+     * Output: a source for imap.gmail.com:993 with the default classifier.
+     * Used by: PipelineRunner.atDefaultLocations (M9), from the Pipeline tab's / CLI's max-unread setting.
+     * Example: {@code new GmailEmailSource(100)} -> examines the 100 newest unprocessed unread messages
      */
     public GmailEmailSource(int maxUnread) {
         this(new AlertClassifier(), GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, false, maxUnread);
     }
 
     /**
-     * Input: alertClassifier - decides whether an email is a publication alert.
-     * Output: a new GmailEmailSource pointed at imap.gmail.com:993 with full certificate checking.
-     *
-     * Creates a production email source with a caller-supplied classifier.
+     * Input: the classifier that decides whether an email is a publication alert.
+     * Output: a source for imap.gmail.com:993 with full certificate checking.
+     * Used by: {@link #GmailEmailSource()}.
+     * Example: {@code new GmailEmailSource(new AlertClassifier(Set.of("mdpi.com")))} -> also trusts mdpi.com alerts
      */
     public GmailEmailSource(AlertClassifier alertClassifier) {
         this(alertClassifier, GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, false);
     }
 
     /**
-     * Input: alertClassifier, imapHost, imapPort, and trustAnyServerCertificate (skip certificate checks).
-     * Output: a new GmailEmailSource connected to the given IMAP server.
-     *
-     * Creates an email source with fully configurable server settings.
-     *
-     * Visible for tests to point at a fake IMAP server (e.g. GreenMail) instead of real Gmail.
-     * trustAnyServerCertificate skips hostname/certificate validation, which is only ever
-     * appropriate against a local test server's self-signed certificate - never for real Gmail.
+     * Visible for tests (GreenMail). trustAnyServerCertificate skips certificate checks: local test servers only, never Gmail.
+     * Input: classifier, IMAP host and port, and whether to trust any certificate.
+     * Output: a source for that server, {@value #DEFAULT_MAX_UNREAD} messages per run.
+     * Used by: {@link #GmailEmailSource(AlertClassifier)}; GmailEmailSourceTest.
+     * Example: {@code new GmailEmailSource(c, "localhost", 3993, true)} -> talks to a local GreenMail server
      */
     GmailEmailSource(AlertClassifier alertClassifier, String imapHost, int imapPort, boolean trustAnyServerCertificate) {
         this(alertClassifier, imapHost, imapPort, trustAnyServerCertificate, DEFAULT_MAX_UNREAD);
     }
 
-    /** As above, examining at most {@code maxUnread} unread, not yet processed messages per run. */
+    /**
+     * Input: as above, plus how many unread, unprocessed messages a run examines.
+     * Output: the source; throws if maxUnread &lt; 1.
+     * Used by: every other constructor; tests.
+     * Example: maxUnread 0 -> throws "maxUnread must be at least 1, was 0"
+     */
     GmailEmailSource(AlertClassifier alertClassifier, String imapHost, int imapPort, boolean trustAnyServerCertificate,
             int maxUnread) {
         if (maxUnread < 1) {
@@ -117,10 +121,10 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
-     * Input: credentials (Gmail address and app password) and the message IDs already processed.
-     * Output: the new alert emails found in the INBOX, or an empty list if fetching fails.
-     *
-     * Logs in to Gmail over IMAP, reads the inbox, and always closes the connection and wipes the password.
+     * Input: credentials and the Message-IDs already processed (M7a).
+     * Output: the new alerts among the newest maxUnread unprocessed unread messages, oldest first; empty if fetching fails.
+     * Used by: PipelineRunner.run (M9).
+     * Example: 3 unread (1 alert, 1 newsletter, 1 processed) -> {@code [RawEmail(alert)]}
      */
     @Override
     public List<RawEmail> fetchNewAlerts(GmailCredentials credentials, Set<String> alreadyProcessedMessageIds) {
@@ -133,11 +137,11 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
-     * Input: credentials and the Message-IDs of alerts the pipeline has recorded in M7a.
-     * Output: how many of them were found unread in the INBOX and marked read; 0 if Gmail could not be reached.
-     *
-     * Opens the INBOX read-write, finds the unread messages by their Message-ID header alone, and sets the
-     * \Seen flag on those in the list; every other message is left as it was.
+     * Sets \Seen on the unread INBOX messages whose Message-ID is in the list; every other message is untouched.
+     * Input: credentials and the Message-IDs recorded in M7a.
+     * Output: how many were found unread and marked read; 0 if Gmail could not be reached.
+     * Used by: PipelineRunner.run (M9), after AlertBatchProcessor saved M7a.
+     * Example: {@code markRead(c, ["<a@x>"])} with a@x unread -> {@code 1}; already read -> {@code 0}
      */
     @Override
     public int markRead(GmailCredentials credentials, Collection<String> messageIds) {
@@ -171,12 +175,12 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
-     * Input: credentials and the Message-IDs of alerts the pipeline has processed.
-     * Output: how many of them were found in the INBOX; each is unread afterwards.
-     *
-     * Opens the INBOX read-write, lets the server find the messages by their Message-ID header (in groups of
-     * {@value #SEARCH_GROUP}, so no search command grows unbounded), and clears their \Seen flag. Unlike
-     * {@link #markRead}, a failure is thrown: the caller is about to forget these messages and must know.
+     * Server-side searches by Message-ID (groups of {@value #SEARCH_GROUP}) and clears \Seen. Unlike
+     * {@link #markRead}, failure is thrown: the caller is about to forget these messages and must know.
+     * Input: credentials and the Message-IDs recorded in M7a.
+     * Output: how many were found in the INBOX (each unread afterwards); IOException if Gmail failed.
+     * Used by: PipelineRunner.reset (M9).
+     * Example: {@code markUnread(c, ["<a@x>","<gone@x>"])} -> {@code 1}
      */
     @Override
     public int markUnread(GmailCredentials credentials, Collection<String> messageIds) throws IOException {
@@ -218,14 +222,21 @@ public final class GmailEmailSource implements EmailSource {
     /** What to do with a connected Store. */
     @FunctionalInterface
     private interface StoreWork<T> {
+        /**
+         * Input: a connected IMAP store.
+         * Output: the work's result.
+         * Used by: {@link #withStore}.
+         * Example: {@code store -> readInbox(store, ids)} -> list of alerts
+         */
         T run(Store store) throws MessagingException;
     }
 
     /**
-     * Input: credentials and the work to do while connected.
-     * Output: the work's result; throws MessagingException if connecting or the work fails.
-     *
      * Logs in over IMAP, runs the work, and always closes the connection and wipes the password copy.
+     * Input: credentials and the work to do while connected.
+     * Output: the work's result; MessagingException if connecting or the work fails.
+     * Used by: fetchNewAlerts, markRead, markUnread.
+     * Example: {@code withStore(c, store -> 42)} -> {@code 42}, connection closed
      */
     private <T> T withStore(GmailCredentials credentials, StoreWork<T> work) throws MessagingException {
         char[] appPassword = credentials.appPassword();
@@ -247,7 +258,9 @@ public final class GmailEmailSource implements EmailSource {
 
     /**
      * Input: an open folder.
-     * Output: its unread messages, oldest first, with only their Message-ID header fetched.
+     * Output: its unread messages, oldest first, with only their Message-ID header fetched (bodies not downloaded).
+     * Used by: readInbox, markRead.
+     * Example: INBOX with 3 unread of 10 -> 3 messages
      */
     private static Message[] unreadWithIds(Folder folder) throws MessagingException {
         Message[] unread = folder.search(new FlagTerm(new Flags(Flags.Flag.SEEN), false));
@@ -258,12 +271,11 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
-     * Input: a connected Store and the message IDs already processed.
-     * Output: the new alert emails among the newest maxUnread unread, unprocessed messages, oldest first;
-     * throws MessagingException if the folder cannot be read.
-     *
-     * Opens the INBOX read-only, picks the unread messages by their Message-ID header alone, and converts
-     * each new alert among them into a RawEmail.
+     * Opens the INBOX read-only, picks messages by Message-ID alone, then downloads and classifies only those.
+     * Input: a connected Store and the Message-IDs already processed.
+     * Output: the alerts among the newest maxUnread unprocessed unread messages, oldest first.
+     * Used by: {@link #fetchNewAlerts}.
+     * Example: maxUnread 2, unread [m1,m2,m3] none processed -> examines m2,m3 -> returns those that are alerts
      */
     private List<RawEmail> readInbox(Store store, Set<String> alreadyProcessedMessageIds) throws MessagingException {
         List<RawEmail> alerts = new ArrayList<>();
@@ -281,6 +293,7 @@ public final class GmailEmailSource implements EmailSource {
             }
             LOG.info("Examining " + chosen.size() + " of " + unread.length + " unread messages (limit " + maxUnread
                     + ", already processed ones skipped)");
+            // Back to oldest first.
             for (int i = chosen.size() - 1; i >= 0; i--) {
                 Optional<RawEmail> rawEmail = toRawEmailIfNewAlert(chosen.get(i), alreadyProcessedMessageIds);
                 rawEmail.ifPresent(alerts::add);
@@ -292,10 +305,10 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
-     * Input: one mail message and the message IDs already processed.
-     * Output: a RawEmail if the message is a new, readable alert; otherwise an empty Optional.
-     *
-     * Skips messages that lack an ID, were already processed, are not alerts, or cannot be read.
+     * Input: one message and the Message-IDs already processed.
+     * Output: a RawEmail if it is a new, readable alert; empty if it has no ID, was processed, is no alert or is unreadable.
+     * Used by: {@link #readInbox}.
+     * Example: from alerts@springeropen.com, subject "New articles" -> {@code Optional[RawEmail]}; a receipt -> empty
      */
     private Optional<RawEmail> toRawEmailIfNewAlert(Message message, Set<String> alreadyProcessedMessageIds) {
         try {
@@ -316,6 +329,7 @@ public final class GmailEmailSource implements EmailSource {
                 return Optional.empty();
             }
 
+            // Some servers omit the received date; "now" keeps the record valid.
             Instant receivedAt = message.getReceivedDate() != null
                     ? message.getReceivedDate().toInstant()
                     : Instant.now();
@@ -329,10 +343,10 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
-     * Input: a mail message and a header name.
-     * Output: the first value of that header, or null if the header is absent.
-     *
-     * Reads a single header value from a message.
+     * Input: a message and a header name.
+     * Output: the header's first value, or null if absent.
+     * Used by: markRead, markUnread, readInbox, toRawEmailIfNewAlert.
+     * Example: {@code firstHeaderOrNull(m, "Message-ID")} -> {@code "<a@x>"}
      */
     private static String firstHeaderOrNull(Message message, String headerName) throws MessagingException {
         String[] values = message.getHeader(headerName);
@@ -340,10 +354,10 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
-     * Input: a mail message.
-     * Output: the first sender's plain email address, or null if the message has no sender.
-     *
-     * Extracts the sender address from the From header, without the display name.
+     * Input: a message.
+     * Output: the first sender's bare address (no display name), or null if there is no sender.
+     * Used by: {@link #toRawEmailIfNewAlert}.
+     * Example: From {@code "Springer" <alerts@springer.com>} -> {@code "alerts@springer.com"}
      */
     private static String fromAddressOf(Message message) throws MessagingException {
         Address[] from = message.getFrom();
@@ -358,9 +372,9 @@ public final class GmailEmailSource implements EmailSource {
 
         /**
          * Input: another BodyParts.
-         * Output: a new BodyParts holding this one's HTML and plain text, filling any gap from the other.
-         *
-         * Combines two results, keeping the first HTML and first plain text found.
+         * Output: this one's HTML and plain text, with any gap filled from the other (first found wins).
+         * Used by: {@link GmailEmailSource#extractBodies} for multipart messages.
+         * Example: (html, -) merge (html2, text) -> (html, text)
          */
         BodyParts merge(BodyParts other) {
             return new BodyParts(html.or(other::html), plainText.or(other::plainText));
@@ -368,10 +382,11 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
+     * Walks the MIME tree, recursing into multiparts, for the first text/html and first text/plain body.
      * Input: a message or message part.
-     * Output: its HTML and plain-text bodies; throws MessagingException or IOException if content cannot be read.
-     *
-     * Walks the MIME structure, recursing into multipart sections, to find the text bodies.
+     * Output: its HTML and plain-text bodies (either may be empty).
+     * Used by: {@link #toRawEmailIfNewAlert}.
+     * Example: multipart/alternative[text/plain, text/html] -> BodyParts(html, plain)
      */
     private BodyParts extractBodies(Part part) throws MessagingException, IOException {
         if (part.isMimeType("text/html") && part.getContent() instanceof String htmlContent) {
@@ -392,10 +407,10 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
-     * Input: none (uses the host, port and trust settings of this instance).
-     * Output: the Jakarta Mail properties for an SSL IMAP connection.
-     *
-     * Builds the connection settings, including 10-second timeouts and optional certificate trust.
+     * Input: none (this instance's host, port and trust settings).
+     * Output: Jakarta Mail properties for IMAPS with 10 s timeouts, PEEK reads and optional trust-all.
+     * Used by: {@link #withStore}.
+     * Example: -> {@code {mail.imaps.host=imap.gmail.com, mail.imaps.port=993, mail.imaps.peek=true, ...}}
      */
     private Properties imapProperties() {
         Properties properties = new Properties();

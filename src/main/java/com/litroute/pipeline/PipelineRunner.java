@@ -66,10 +66,22 @@ public final class PipelineRunner {
 
         private final String label;
 
+        /**
+         * Input: the label shown in the UI.
+         * Output: the matcher kind.
+         * Used by: the enum constants.
+         * Example: HYBRID -> "Words + SPECTER2 (offline)"
+         */
         MatcherKind(String label) {
             this.label = label;
         }
 
+        /**
+         * Input: none.
+         * Output: the UI label.
+         * Used by: PipelinePane's matcher choice box (M8).
+         * Example: AI.toString() -> "Groq language model"
+         */
         @Override
         public String toString() {
             return label;
@@ -79,6 +91,12 @@ public final class PipelineRunner {
     /** Builds the M6 matcher for the profiles as they stand after this run's sync. */
     @FunctionalInterface
     public interface MatcherFactory {
+        /**
+         * Input: the profiles as they stand after this run's sync.
+         * Output: the M6 matcher for them; IOException if it can't be built.
+         * Used by: {@link PipelineRunner#run}, step 5.
+         * Example: {@code students -> new RelevanceScorer(provider, students)}
+         */
         PaperMatcher create(Collection<Profile> profiles) throws IOException;
     }
 
@@ -121,6 +139,11 @@ public final class PipelineRunner {
     private final boolean markRead;
 
     /**
+     * Input: every stage and store (listed below).
+     * Output: a runner that marks processed alerts read.
+     * Used by: tests wiring their own stages; the other constructor.
+     * Example: {@code new PipelineRunner(builder, profiles, fakeGmail, m7a, batches, matchers, queue, log, sent)}
+     *
      * @param profileBuilder  syncs the profile folders into {@code profiles}
      * @param profiles        M7d, read after the sync
      * @param emails          M1
@@ -138,9 +161,10 @@ public final class PipelineRunner {
     }
 
     /**
-     * As above.
-     *
-     * @param markRead whether processed alerts are marked read in Gmail; false leaves them unread, for testing
+     * Input: as above, plus whether processed alerts are marked read in Gmail (false: left unread, for testing).
+     * Output: the runner.
+     * Used by: {@link #atDefaultLocations}, the other constructor, PipelineRunnerTest.
+     * Example: markRead false -> step 4 is skipped; M7a still prevents reprocessing
      */
     public PipelineRunner(ProfileBuilder profileBuilder, ProfileStore profiles, EmailSource emails,
             EmailCacheStore processedEmails, AlertBatchProcessor batches, MatcherFactory matchers,
@@ -160,10 +184,10 @@ public final class PipelineRunner {
     /**
      * The real pipeline over the default locations under {@code ~/.litroute}: Gmail, the live enrichment
      * services, and the stores in {@code ~/.litroute/data}.
-     *
-     * @param provider  the SPECTER2 model, for the profile sync (and the hybrid matcher); the caller closes it
-     * @param maxUnread how many unread, not yet processed Gmail messages a run examines, at least 1
-     * @param markRead  whether processed alerts are marked read in Gmail; false leaves them unread, for testing
+     * Input: the SPECTER2 model (caller closes it), the matcher kind, the max unread messages per run, and whether to mark alerts read.
+     * Output: the real pipeline over Gmail, the live enrichment services and the stores in ~/.litroute/data.
+     * Used by: PipelinePane (M8) Run / Clear and re-run, PipelineRunnerCli.
+     * Example: {@code atDefaultLocations(specter2, HYBRID, 50, true).run(creds, log::line)}
      */
     public static PipelineRunner atDefaultLocations(EmbeddingProvider provider, MatcherKind kind, int maxUnread,
             boolean markRead) {
@@ -179,7 +203,13 @@ public final class PipelineRunner {
                 SentPaperStore.atDefaultLocation(), markRead);
     }
 
-    /** The factory for the chosen matcher; the AI one reads its key from the environment when used. */
+    /**
+     * The factory for the chosen matcher; the AI one reads its key from the environment when used.
+     * Input: the matcher kind and the SPECTER2 model.
+     * Output: a factory building that M6 matcher (the AI one reads its key from the environment when built).
+     * Used by: {@link #atDefaultLocations}; PipelineRunnerTest.
+     * Example: matcher(AI, p).create(profiles) -> AiPaperMatcher on GroqClient.fromEnvironment()
+     */
     public static MatcherFactory matcher(MatcherKind kind, EmbeddingProvider provider) {
         return switch (kind) {
             case HYBRID -> students -> new RelevanceScorer(provider, students);
@@ -195,10 +225,10 @@ public final class PipelineRunner {
      * nothing, and a crash part-way leaves M7a for last: its emails are skipped, never lost. Downloaded
      * PDFs stay where M2 saved them, and the record of papers already sent is kept, so the re-run never
      * queues a paper for a student who has received it.
-     *
-     * @param credentials the Gmail account the emails were read from; not cleared
-     * @param progress    told what each step is doing
-     * @throws IOException if Gmail could not be reached (nothing was cleared) or a store could not be written
+     * Input: the Gmail account (not cleared) and a progress sink.
+     * Output: how many emails were processed / marked unread and queue entries discarded; IOException if Gmail failed (then nothing is cleared).
+     * Used by: PipelinePane (M8) Clear and re-run, before run().
+     * Example: M7a holds 6 IDs, 6 in inbox, queue of 9 -> ResetReport(6, 6, 9); M7a/M7c/M7e/scored log empty
      */
     public ResetReport reset(GmailCredentials credentials, Consumer<String> progress) throws IOException {
         Set<String> processed = processedEmails.load();
@@ -207,6 +237,7 @@ public final class PipelineRunner {
         int unread = emails.markUnread(credentials, processed);
         progress.accept(unread + " of " + processed.size() + " are unread again"
                 + (unread < processed.size() ? "; the rest are no longer in the inbox and won't be fetched again." : "."));
+        // Only now that Gmail agreed: clear M7e, the scored log, then M7c and M7a (last).
         int queued = queue.clear();
         scored.clear();
         batches.forgetAll();
@@ -216,24 +247,26 @@ public final class PipelineRunner {
 
     /**
      * Runs the pipeline once.
-     *
-     * @param credentials the Gmail account to read; not cleared
-     * @param progress    told what each step is doing and what it found, as it happens
-     * @throws IOException if a store cannot be read or written, or the matcher's service could not answer;
-     *         the steps already finished keep their results, and the next run picks up from there
+     * Input: the Gmail account (not cleared) and a progress sink.
+     * Output: what the run did; M7d, M7a, M7c, M7e and the scored log updated; IOException if a store or the matcher's service failed.
+     * Used by: PipelinePane (M8) Run, PipelineRunnerCli.
+     * Example: 6 new alerts, 31 papers, 8 profiles -> Report(newAlerts 6, papersHeld 31, papersScored 31, matches 11, ...)
      */
     public Report run(GmailCredentials credentials, Consumer<String> progress) throws IOException {
+        // 1. M5: embed new or changed profile PDFs into M7d.
         progress.accept("Syncing profiles with their folders...");
         BuildReport built = profileBuilder.syncAll();
         Map<String, Profile> students = profiles.loadAll();
         progress.accept(describe(built, students.size()));
 
+        // 2. M1: unread alerts not yet in M7a.
         progress.accept("Fetching new alert emails from Gmail (" + credentials.emailAddress() + ")...");
         List<RawEmail> alerts = emails.fetchNewAlerts(credentials, processedEmails.load());
         progress.accept(alerts.size() + " new alert email(s).");
         if (!alerts.isEmpty()) {
             progress.accept("Extracting, enriching and deduplicating their papers...");
         }
+        // 3. M2-M4: extract, enrich, dedup -> M7c, then M7a. 4. M1: mark read only after M7a holds them.
         List<PaperCandidate> held = batches.process(alerts);
         if (!alerts.isEmpty() && !markRead) {
             progress.accept("Left " + alerts.size() + " alert email(s) unread in Gmail.");
@@ -242,6 +275,7 @@ public final class PipelineRunner {
             progress.accept("Marked " + marked + " of " + alerts.size() + " alert email(s) as read in Gmail.");
         }
 
+        // 5. M6 on papers neither scored before nor already queued.
         Set<String> done = scored.load();
         for (ScoredPaper queued : queue.load()) {
             done.add(ScoredPaper.paperKey(queued.candidate()));
@@ -272,6 +306,7 @@ public final class PipelineRunner {
             progress.accept(resent + " match(es) already sent to their student earlier; not queued again.");
         }
         List<ScoredPaper> matched = matches.values().stream().flatMap(List::stream).toList();
+        // Queue (M7e) first, then the scored log: a crash in between scores the batch again, never loses it.
         List<ScoredPaper> updated = queue.addAll(matched);
         scored.addAll(fresh.stream().map(ScoredPaper::paperKey).toList());
 
@@ -288,6 +323,12 @@ public final class PipelineRunner {
         return new Report(built, alerts.size(), held.size(), fresh.size(), 0, matched.size(), recommended, updated.size());
     }
 
+    /**
+     * Input: the profile sync's report and how many profiles are stored.
+     * Output: a one-line summary for the progress log.
+     * Used by: {@link #run}.
+     * Example: -> "8 profile(s) ready, 2 new or changed PDF(s) embedded, removed bob."
+     */
     private static String describe(BuildReport built, int stored) {
         int embedded = built.profiles().stream().mapToInt(ProfileReport::embedded).sum();
         int skipped = built.profiles().stream().mapToInt(report -> report.skipped().size()).sum();

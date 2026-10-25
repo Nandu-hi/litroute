@@ -17,7 +17,13 @@ final class MatchEvaluation {
     private MatchEvaluation() {
     }
 
-    /** How many of the filed papers were assigned to the student they are filed under. */
+    /**
+     * How many of the filed papers were assigned to the student they are filed under.
+     * Input: a matcher's output, and the student each test paper is filed under.
+     * Output: how many matches went to the student the paper is filed under.
+     * Used by: RelevanceScorerCli, RelevanceScorerTest.
+     * Example: {alice=[P1, P2]}, filed {P1=alice, P2=bob} -> 1
+     */
     static int assignedCorrectly(Map<String, List<ScoredPaper>> matches, Map<PaperCandidate, String> filedUnder) {
         int correct = 0;
         for (List<ScoredPaper> student : matches.values()) {
@@ -35,6 +41,10 @@ final class MatchEvaluation {
      * Of a student's best-scored recommended papers, the first k count, where k is the smaller of
      * {@code perStudent} and the number of papers filed under the student - so a student with one
      * filed paper is judged on one recommendation. A missing recommendation counts as a miss.
+     * Input: a matcher's output, the filed students, and k per student.
+     * Output: precision@min(k, filed) of each student's best recommendations, averaged over filed students.
+     * Used by: RelevanceScorerCli (k=3), RelevanceScorerTest.
+     * Example: alice filed 2, top-2 recommended [P1 alice, P3 bob] -> alice 0.5; averaged with the others
      */
     static double recommendationPrecision(Map<String, List<ScoredPaper>> matches, Map<PaperCandidate, String> filedUnder,
             int perStudent) {

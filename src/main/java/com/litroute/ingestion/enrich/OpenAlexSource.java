@@ -40,15 +40,14 @@ public final class OpenAlexSource implements MetadataSource {
 
     /**
      * Creates a source that queries the public OpenAlex API at {@code https://api.openalex.org}.
-     *
-     * <p>Example:
-     *
+     * Input: fetcher - the HTTP client used for every request
+     * Output: a source querying https://api.openalex.org.
+     * Used by: OnlinePaperEnricher.create (M3).
+     * Example:
      * <pre>{@code
      * Input:  new OpenAlexSource(new JdkHttpFetcher("LitRoute/1.0 ..."))
      * Output: a source whose lookups go to https://api.openalex.org/works...
      * }</pre>
-     *
-     * @param fetcher the HTTP client used for every request
      */
     public OpenAlexSource(HttpFetcher fetcher) {
         this(fetcher, DEFAULT_BASE_URL);
@@ -56,16 +55,14 @@ public final class OpenAlexSource implements MetadataSource {
 
     /**
      * Creates a source that queries an OpenAlex-compatible API at another address, e.g. a local test server.
-     *
-     * <p>Example:
-     *
+     * Input: fetcher - the HTTP client used for every request; baseUrl - the API root, without a trailing slash
+     * Output: a source querying that root.
+     * Used by: the public constructor; tests against recorded replies.
+     * Example:
      * <pre>{@code
      * Input:  new OpenAlexSource(fetcher, "http://localhost:8080")
      * Output: a source whose DOI lookups go to http://localhost:8080/works/https://doi.org/...
      * }</pre>
-     *
-     * @param fetcher the HTTP client used for every request
-     * @param baseUrl the API root, without a trailing slash
      */
     OpenAlexSource(HttpFetcher fetcher, String baseUrl) {
         this.fetcher = fetcher;
@@ -74,15 +71,14 @@ public final class OpenAlexSource implements MetadataSource {
 
     /**
      * The source's name, used in log and exception messages.
-     *
-     * <p>Example:
-     *
+     * Input: none.
+     * Output: {@code "OpenAlex"}
+     * Used by: CompositeMetadataLookup (logs, failure counting).
+     * Example:
      * <pre>{@code
      * Input:  (none)
      * Output: "OpenAlex"
      * }</pre>
-     *
-     * @return {@code "OpenAlex"}
      */
     @Override
     public String name() {
@@ -101,9 +97,10 @@ public final class OpenAlexSource implements MetadataSource {
      *
      * The search asks only for the fields in {@code FIELDS}, which doesn't include {@code abstract_inverted_index},
      * so only a DOI lookup can return an abstract.
-     *
-     * <p>Example:
-     *
+     * Input: query - the paper's title, authors and DOI if known
+     * Output: the matching record, or empty if OpenAlex has none that matches well enough; IOException if OpenAlex is unreachable, throttling (429), failing (5xx) or returns invalid JSON
+     * Used by: CompositeMetadataLookup.find (M3), after Crossref.
+     * Example:
      * <pre>{@code
      * Input:  PaperQuery(title "Advancing soil-structure interaction (SSI): ...", doi Optional[10.1186/s43065-025-00118-2])
      * Output: Optional[PaperMetadata[doi=Optional[10.1186/s43065-025-00118-2], ...]]   (exact DOI record)
@@ -119,10 +116,6 @@ public final class OpenAlexSource implements MetadataSource {
      * Input:  any query while OpenAlex answers HTTP 429
      * Output: throws IOException("OpenAlex unavailable: HTTP 429")
      * }</pre>
-     *
-     * @param query the paper's title, authors and DOI if known
-     * @return the matching record, or empty if OpenAlex has none that matches well enough
-     * @throws IOException if OpenAlex is unreachable, throttling (429), failing (5xx) or returns invalid JSON
      */
     @Override
     public Optional<PaperMetadata> lookup(PaperQuery query) throws IOException {
@@ -164,9 +157,10 @@ public final class OpenAlexSource implements MetadataSource {
      *   <li>PDF URLs from {@code best_oa_location}, then {@code primary_location}, then every entry in
      *       {@code locations}, without duplicates.
      * </ul>
-     *
-     * <p>Example:
-     *
+     * Input: work - one work object, from a DOI lookup or from a search's {@code results}
+     * Output: the record's metadata; fields OpenAlex doesn't have are empty
+     * Used by: {@link #lookup}.
+     * Example:
      * <pre>{@code
      * Input:  {"doi": "https://doi.org/10.1186/s43065-025-00118-2",
      *          "display_name": "Advancing soil-structure interaction (SSI): ...",
@@ -182,9 +176,6 @@ public final class OpenAlexSource implements MetadataSource {
      *         landingUrl=Optional[https://doi.org/10.1186/s43065-025-00118-2],
      *         pdfUrls=[https://jipr.springeropen.com/counter/pdf/10.1186/s43065-025-00118-2]]
      * }</pre>
-     *
-     * @param work one work object, from a DOI lookup or from a search's {@code results}
-     * @return the record's metadata; fields OpenAlex doesn't have are empty
      */
     private static PaperMetadata toMetadata(JsonNode work) {
         List<String> authors = new ArrayList<>();
@@ -213,9 +204,10 @@ public final class OpenAlexSource implements MetadataSource {
      * OpenAlex stores an abstract "inverted" - each word with the positions it occurs at - for
      * licensing reasons; putting every word back at its positions restores the text. A leading "Abstract" heading
      * is removed (see {@link ApiJson#abstractText}).
-     *
-     * <p>Example:
-     *
+     * Input: invertedIndex - the work's {@code abstract_inverted_index} (word -> positions), possibly missing
+     * Output: the abstract as plain text, or empty if there is none
+     * Used by: {@link #toMetadata}.
+     * Example:
      * <pre>{@code
      * Input:  {"Abstract": [0], "We": [1], "study": [2], "wave": [3, 6], "loads.": [4], "Each": [5]}
      * Output: Optional[We study wave loads. Each wave]
@@ -223,9 +215,6 @@ public final class OpenAlexSource implements MetadataSource {
      * Input:  missing node or {}
      * Output: Optional.empty
      * }</pre>
-     *
-     * @param invertedIndex the work's {@code abstract_inverted_index} (word -> positions), possibly missing
-     * @return the abstract as plain text, or empty if there is none
      */
     private static Optional<String> abstractOf(JsonNode invertedIndex) {
         Map<Integer, String> byPosition = new TreeMap<>();
@@ -236,9 +225,10 @@ public final class OpenAlexSource implements MetadataSource {
 
     /**
      * Appends a location's {@code pdf_url} to the list, unless it is missing, blank or already there.
-     *
-     * <p>Example:
-     *
+     * Input: pdfUrls - the list being built, changed in place; location - one OpenAlex location object, possibly missing
+     * Output: none; the location's pdf_url is appended if present and not already listed.
+     * Used by: {@link #toMetadata}, for best_oa_location and every other location.
+     * Example:
      * <pre>{@code
      * Input:  pdfUrls = [https://a.org/x.pdf], location {"pdf_url": "https://b.org/y.pdf"}
      * Output: pdfUrls = [https://a.org/x.pdf, https://b.org/y.pdf]
@@ -246,9 +236,6 @@ public final class OpenAlexSource implements MetadataSource {
      * Input:  pdfUrls = [https://a.org/x.pdf], location {"pdf_url": "https://a.org/x.pdf"} or {"pdf_url": null}
      * Output: pdfUrls unchanged
      * }</pre>
-     *
-     * @param pdfUrls the list being built, changed in place
-     * @param location one OpenAlex location object, possibly missing
      */
     private static void addPdf(List<String> pdfUrls, JsonNode location) {
         ApiJson.text(location.path("pdf_url")).filter(url -> !pdfUrls.contains(url)).ifPresent(pdfUrls::add);

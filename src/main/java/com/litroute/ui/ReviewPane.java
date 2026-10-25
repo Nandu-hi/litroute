@@ -79,14 +79,32 @@ final class ReviewPane extends BorderPane {
 
         private final String label;
 
+        /**
+         * Input: the label shown in the Show box.
+         * Output: the filter constant.
+         * Used by: the enum constants.
+         * Example: APPROVED -> "Approved"
+         */
         Filter(String label) {
             this.label = label;
         }
 
+        /**
+         * Input: a paper's status.
+         * Output: true if this filter shows it (ALL shows everything).
+         * Used by: {@link ReviewPane#applyFilter}.
+         * Example: PENDING.accepts(APPROVED) -> false; ALL.accepts(SENT) -> true
+         */
         boolean accepts(ReviewStatus status) {
             return this == ALL || name().equals(status.name());
         }
 
+        /**
+         * Input: none.
+         * Output: the label shown in the Show box.
+         * Used by: the filter ComboBox.
+         * Example: SENT -> "Sent"
+         */
         @Override
         public String toString() {
             return label;
@@ -112,7 +130,12 @@ final class ReviewPane extends BorderPane {
     private final BooleanProperty noneApproved = new SimpleBooleanProperty(true);
     private final Detail detail = new Detail();
 
-    /** @param showCredentials brings up the Gmail tab, for a send started while the credentials are locked */
+    /**
+     * Input: the session, the M7e queue, the sent papers, a way to open files/links, and a way to show the Gmail tab.
+     * Output: the Review tab: student list, paper table, detail pane, Show/Recommended filters, Send approved and Refresh.
+     * Used by: LitRouteApp.start.
+     * Example: {@code new ReviewPane(session, ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation(), open, showGmail)}
+     */
     ReviewPane(Session session, ScoredQueueStore queue, SentPaperStore sent, Consumer<String> openDocument,
             Runnable showCredentials) {
         this.session = session;
@@ -122,6 +145,12 @@ final class ReviewPane extends BorderPane {
         this.showCredentials = showCredentials;
 
         studentList.setCellFactory(list -> new ListCell<>() {
+            /**
+             * Input: a student name (or "All students") and whether the cell is empty.
+             * Output: none; the cell shows the name and its pending count.
+             * Used by: JavaFX, for each student list cell.
+             * Example: "alice" -> "alice   (3 pending)"
+             */
             @Override
             protected void updateItem(String student, boolean empty) {
                 super.updateItem(student, empty);
@@ -157,7 +186,13 @@ final class ReviewPane extends BorderPane {
         reload();
     }
 
-    /** Reads the queue and the sent papers again, keeping the chosen student; call after the pipeline adds papers. */
+    /**
+     * Reads the queue and the sent papers again, keeping the chosen student; call after the pipeline adds papers.
+     * Input: none.
+     * Output: none; the queue (M7e) and sent papers are read again, keeping the chosen student; a paper both queued and sent shows as sent.
+     * Used by: LitRouteApp (on selecting the tab), PipelinePane (after a run), Refresh, sendApproved.
+     * Example: after a run added 2 papers for alice -> "alice   (5 pending)"
+     */
     void reload() {
         try {
             List<Sent> sentPapers = sent.load();
@@ -179,6 +214,12 @@ final class ReviewPane extends BorderPane {
         }
     }
 
+    /**
+     * Input: none.
+     * Output: none; the table's columns, best-score-first order, double-click/Enter to open, and A/D/P keys.
+     * Used by: the constructor.
+     * Example: press A on a selected row -> decide(APPROVED)
+     */
     private void buildTable() {
         table.getColumns().add(column("", 32, paper -> paper.recommended() ? "★" : ""));
         table.getColumns().add(explained(column("Score", 60, paper -> String.format(Locale.ROOT, "%.2f", paper.score())),
@@ -237,7 +278,13 @@ final class ReviewPane extends BorderPane {
             + "closer still. \"–\" means the matcher did not measure it (the AI matcher).",
             RelevanceScorer.RELEVANCE_FLOOR, RelevanceScorer.TITLE_FLOOR);
 
-    /** Puts the column's explanation on its header and a paper-specific one on each of its cells. */
+    /**
+     * Puts the column's explanation on its header and a paper-specific one on each of its cells.
+     * Input: a column, its header help, and per-paper cell help.
+     * Output: the column with tooltips on its header and cells.
+     * Used by: {@link #buildTable} (Score, Relevance).
+     * Example: hover a Score cell -> "0.62 = relevance 0.81 × share 0.76 ..."
+     */
     private static TableColumn<ScoredPaper, String> explained(TableColumn<ScoredPaper, String> column, String help,
             Function<ScoredPaper, String> cellHelp) {
         Label header = new Label(column.getText());
@@ -245,6 +292,12 @@ final class ReviewPane extends BorderPane {
         column.setText("");
         column.setGraphic(header);
         column.setCellFactory(view -> new TableCell<>() {
+            /**
+             * Input: the cell's text and whether it is empty.
+             * Output: none; the cell shows the text and the paper's own tooltip.
+             * Used by: JavaFX, for each Score/Relevance cell.
+             * Example: value "0.62" -> text 0.62 with the score explanation as tooltip
+             */
             @Override
             protected void updateItem(String value, boolean empty) {
                 super.updateItem(value, empty);
@@ -256,6 +309,12 @@ final class ReviewPane extends BorderPane {
         return column;
     }
 
+    /**
+     * Input: tooltip text.
+     * Output: a wrapping tooltip (420 px wide, 250 ms delay, shown 30 s).
+     * Used by: explained.
+     * Example: tooltip("Score = relevance × share ...")
+     */
     private static Tooltip tooltip(String text) {
         Tooltip tooltip = new Tooltip(text);
         tooltip.setWrapText(true);
@@ -265,6 +324,12 @@ final class ReviewPane extends BorderPane {
         return tooltip;
     }
 
+    /**
+     * Input: a scored paper.
+     * Output: an explanation of its score: relevance × share, or the AI matcher's 0-100 score.
+     * Used by: explained, for Score cells.
+     * Example: score 0.40, relevance 0.80 -> "0.40 = relevance 0.80 × share 0.50 ..."
+     */
     private static String scoreHelp(ScoredPaper paper) {
         if (paper.relevance().isEmpty()) {
             return String.format(Locale.ROOT, "%.2f: the AI matcher's score for %s (0-100, divided by 100).", paper.score(),
@@ -279,6 +344,12 @@ final class ReviewPane extends BorderPane {
                         : "");
     }
 
+    /**
+     * Input: a scored paper.
+     * Output: what its relevance means against the floor, and what it was measured from.
+     * Used by: explained, for Relevance cells.
+     * Example: 0.75 from a full PDF -> "0.75 for alice: close enough to match (at least 0.70 ...). Measured from its full PDF."
+     */
     private static String relevanceHelp(ScoredPaper paper) {
         if (paper.relevance().isEmpty()) {
             return "Not measured: the AI matcher scores papers without comparing them with the students' papers.";
@@ -296,6 +367,12 @@ final class ReviewPane extends BorderPane {
                 basis == null ? "" : "\n\nMeasured from " + basis + ".");
     }
 
+    /**
+     * Input: a header, a width and how to show a paper in it.
+     * Output: a read-only text column.
+     * Used by: {@link #buildTable}.
+     * Example: column("Year", 55, p -> "2024")
+     */
     private static TableColumn<ScoredPaper, String> column(String name, double width,
             Function<ScoredPaper, String> value) {
         TableColumn<ScoredPaper, String> column = new TableColumn<>(name);
@@ -304,6 +381,12 @@ final class ReviewPane extends BorderPane {
         return column;
     }
 
+    /**
+     * Input: none.
+     * Output: none; the table shows the chosen student's papers with the chosen status (and star), the counts and Send button update.
+     * Used by: the student list, filter boxes, reload, decide.
+     * Example: Show: Approved, student alice -> only alice's approved papers; "Send approved (4)"
+     */
     private void applyFilter() {
         String student = studentList.getSelectionModel().getSelectedItem();
         Filter status = filter.getValue();
@@ -326,6 +409,12 @@ final class ReviewPane extends BorderPane {
         detail.show(table.getSelectionModel().getSelectedItem());
     }
 
+    /**
+     * Input: a student name or "All students".
+     * Output: how many of their papers are pending.
+     * Used by: the student list cells.
+     * Example: pending("alice") -> 3
+     */
     private long pending(String student) {
         return entries.stream()
                 .filter(paper -> paper.status() == ReviewStatus.PENDING)
@@ -333,7 +422,13 @@ final class ReviewPane extends BorderPane {
                 .count();
     }
 
-    /** Records the decision for every selected paper, then shows it in the table. */
+    /**
+     * Records the decision for every selected paper, then shows it in the table.
+     * Input: the professor's decision.
+     * Output: none; written to M7e for every selected non-sent paper (off the UI thread), then shown.
+     * Used by: A/D/P keys and the Approve/Drop/Back to pending buttons.
+     * Example: select 2 papers, press A -> both APPROVED in scored_queue.json
+     */
     private void decide(ReviewStatus status) {
         List<ScoredPaper> chosen = table.getSelectionModel().getSelectedItems().stream()
                 .filter(paper -> paper.status() != ReviewStatus.SENT).toList();
@@ -345,6 +440,12 @@ final class ReviewPane extends BorderPane {
         }
         int next = table.getSelectionModel().getSelectedIndex();
         session.runIo(new Task<Map<String, ScoredPaper>>() {
+            /**
+             * Input: none (io thread).
+             * Output: the papers whose status changed, by queue key.
+             * Used by: Session.runIo.
+             * Example: -> {"alice\ndoi:10.1/x" = alice/X APPROVED}
+             */
             @Override
             protected Map<String, ScoredPaper> call() throws Exception {
                 Map<String, ScoredPaper> decided = new LinkedHashMap<>();
@@ -356,6 +457,12 @@ final class ReviewPane extends BorderPane {
                 return decided;
             }
 
+            /**
+             * Input: none (UI thread).
+             * Output: none; the decided papers are updated in the table and the next row is selected.
+             * Used by: JavaFX, when call() returns.
+             * Example: approve row 3 of 10 -> row 3 now shows the next pending paper
+             */
             @Override
             protected void succeeded() {
                 Map<String, ScoredPaper> decided = getValue();
@@ -368,6 +475,12 @@ final class ReviewPane extends BorderPane {
                 table.requestFocus();
             }
 
+            /**
+             * Input: none (UI thread).
+             * Output: none; the error is shown in the bar.
+             * Used by: JavaFX, when call() throws.
+             * Example: -> "Could not save the decision: ..."
+             */
             @Override
             protected void failed() {
                 error("Could not save the decision", getException());
@@ -375,7 +488,13 @@ final class ReviewPane extends BorderPane {
         });
     }
 
-    /** Emails the approved papers on the job thread (it shares Gmail and the queue with a pipeline run). */
+    /**
+     * Emails the approved papers on the job thread (it shares Gmail and the queue with a pipeline run).
+     * Input: none.
+     * Output: none; M10 sends every approved paper as a job, then the summary shows what went.
+     * Used by: the Send approved button.
+     * Example: -> "Sent 4 paper(s) in 2 email(s), 3 PDF(s) attached."
+     */
     private void sendApproved() {
         if (!session.unlocked()) {
             error("Not sent", new IllegalStateException("unlock the Gmail credentials first (Gmail tab)."));
@@ -387,6 +506,12 @@ final class ReviewPane extends BorderPane {
         ApprovedPaperSender sender = new ApprovedPaperSender(queue, sent, ProfileStore.atDefaultLocation(),
                 new GmailSmtpSender());
         session.runJob(new Task<Report>() {
+            /**
+             * Input: none (job thread).
+             * Output: the send's report; the credentials are cleared afterwards.
+             * Used by: Session.runJob.
+             * Example: -> Report(2 emails, 4 papers, 3 attachments, [], [])
+             */
             @Override
             protected Report call() throws Exception {
                 GmailCredentials gmail = session.gmail();
@@ -397,6 +522,12 @@ final class ReviewPane extends BorderPane {
                 }
             }
 
+            /**
+             * Input: none (UI thread).
+             * Output: none; the queue reloads and the bar shows what was sent (red if some couldn't be).
+             * Used by: JavaFX, when call() returns.
+             * Example: bob has no email.txt -> "Sent 2 paper(s) in 1 email(s), ...; no address for bob (1 paper(s))."
+             */
             @Override
             protected void succeeded() {
                 Report report = getValue();
@@ -414,6 +545,12 @@ final class ReviewPane extends BorderPane {
                         + (problems.isEmpty() ? "." : "; " + String.join("; ", problems) + "."));
             }
 
+            /**
+             * Input: none (UI thread).
+             * Output: none; the queue reloads and the error is shown in the bar.
+             * Used by: JavaFX, when call() throws.
+             * Example: wrong App Password -> "Sending stopped (...): Gmail refused the login ..."
+             */
             @Override
             protected void failed() {
                 reload();
@@ -422,7 +559,13 @@ final class ReviewPane extends BorderPane {
         });
     }
 
-    /** Opens the paper's PDF if it has one, else its landing page. */
+    /**
+     * Opens the paper's PDF if it has one, else its landing page.
+     * Input: a scored paper.
+     * Output: none; its PDF opens if it has one, else its landing page.
+     * Used by: double-click, Enter.
+     * Example: paper with pdfPath -> file:///.../matched/alice/x.pdf opens
+     */
     private void open(ScoredPaper paper) {
         PaperCandidate candidate = paper.candidate();
         Optional<String> target = candidate.pdfPath().map(path -> path.toUri().toString())
@@ -430,11 +573,23 @@ final class ReviewPane extends BorderPane {
         target.ifPresent(openDocument);
     }
 
+    /**
+     * Input: a candidate.
+     * Output: its URL, else https://doi.org/DOI, else empty.
+     * Used by: open, Detail.show.
+     * Example: no url, doi 10.1/x -> "https://doi.org/10.1/x"
+     */
     private static Optional<String> link(PaperCandidate candidate) {
         return candidate.url().or(() -> candidate.doi().map("https://doi.org/"::concat));
     }
 
-    /** Shown in the bar rather than a dialog, which a tiling window manager would tile out of sight. */
+    /**
+     * Shown in the bar rather than a dialog, which a tiling window manager would tile out of sight.
+     * Input: what failed and why.
+     * Output: none; shown in red in the bar (not a dialog).
+     * Used by: reload, decide, sendApproved.
+     * Example: -> "Could not save the decision: disk full"
+     */
     private void error(String what, Throwable cause) {
         summary.setStyle("-fx-text-fill: #b00020;");
         summary.setText(what + ": " + cause.getMessage());
@@ -455,6 +610,12 @@ final class ReviewPane extends BorderPane {
         private final Button reset = new Button("Back to pending (P)");
         private ScoredPaper paper;
 
+        /**
+         * Input: none.
+         * Output: the detail pane: title, authors, source, link, match line, rationale and decision buttons.
+         * Used by: ReviewPane's field.
+         * Example: {@code new Detail()} -> shows "No paper selected"
+         */
         Detail() {
             super(6);
             setPadding(new Insets(10));
@@ -481,6 +642,12 @@ final class ReviewPane extends BorderPane {
             show(null);
         }
 
+        /**
+         * Input: the selected paper, or null.
+         * Output: none; the pane shows its details and rationale, or "No paper selected" with the buttons disabled.
+         * Used by: the table's selection listener, applyFilter.
+         * Example: -> "Matched to alice, score 0.62, relevance 0.81, recommended, pending"
+         */
         void show(ScoredPaper chosen) {
             paper = chosen;
             boolean none = chosen == null;

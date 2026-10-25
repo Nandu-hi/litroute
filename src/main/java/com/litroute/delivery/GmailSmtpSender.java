@@ -30,6 +30,12 @@ public final class GmailSmtpSender {
     private final int smtpPort;
     private final boolean trustAnyServerCertificate;
 
+    /**
+     * Input: none.
+     * Output: a sender for smtp.gmail.com:465 with full certificate checks.
+     * Used by: ReviewPane (M8), ApprovedPaperSender.atDefaultLocations.
+     * Example: {@code new GmailSmtpSender().connect(creds)}
+     */
     public GmailSmtpSender() {
         this(GMAIL_SMTP_HOST, GMAIL_SMTP_PORT, false);
     }
@@ -37,6 +43,10 @@ public final class GmailSmtpSender {
     /**
      * Visible for tests to point at a local SMTP server (GreenMail) instead of Gmail. trustAnyServerCertificate
      * skips certificate checks, which is only ever appropriate against a test server's self-signed certificate.
+     * Input: host, port, and whether to trust any certificate (test servers only).
+     * Output: a sender for that server.
+     * Used by: the public constructor; tests with GreenMail.
+     * Example: {@code new GmailSmtpSender("localhost", 3465, true)}
      */
     GmailSmtpSender(String smtpHost, int smtpPort, boolean trustAnyServerCertificate) {
         this.smtpHost = smtpHost;
@@ -46,9 +56,10 @@ public final class GmailSmtpSender {
 
     /**
      * Logs in to send as the credentials' address.
-     *
-     * @param credentials not cleared; the copy of the password used to log in is wiped
-     * @throws IOException if the server cannot be reached or refuses the login
+     * Input: the professor's credentials (not cleared; the password copy is wiped).
+     * Output: a logged-in connection; IOException if unreachable or the login is refused.
+     * Used by: ApprovedPaperSender.send.
+     * Example: wrong App Password -> IOException "Gmail refused the login for prof@gmail.com: check the App Password"
      */
     public Connection connect(GmailCredentials credentials) throws IOException {
         Session session = Session.getInstance(smtpProperties());
@@ -74,27 +85,46 @@ public final class GmailSmtpSender {
         private final Transport transport;
         private final String fromAddress;
 
+        /**
+         * Input: the mail session, the connected transport and the sender address.
+         * Output: the connection.
+         * Used by: {@link GmailSmtpSender#connect}.
+         * Example: {@code new Connection(session, transport, "prof@gmail.com").fromAddress()} -> "prof@gmail.com"
+         */
         private Connection(Session session, Transport transport, String fromAddress) {
             this.session = session;
             this.transport = transport;
             this.fromAddress = fromAddress;
         }
 
-        /** The address the emails are sent from. */
+        /**
+         * The address the emails are sent from.
+         * Input: none.
+         * Output: the address the emails are sent from.
+         * Used by: {@link #send}.
+         * Example: -> "prof@gmail.com"
+         */
         public String fromAddress() {
             return fromAddress;
         }
 
-        /** Whether the server is still connected; false after a failure that ended the session. */
+        /**
+         * Whether the server is still connected; false after a failure that ended the session.
+         * Input: none.
+         * Output: whether the server is still connected.
+         * Used by: ApprovedPaperSender.send, to decide whether later emails can still go.
+         * Example: after the server dropped the session -> false
+         */
         public boolean isOpen() {
             return transport.isConnected();
         }
 
         /**
          * Sends one email from {@link #fromAddress()}, replies going back to it.
-         *
-         * @throws IOException if a recipient address is malformed or refused, a PDF cannot be read, or the
-         *         server fails; see {@link #isOpen()} for whether later emails can still go
+         * Input: one digest.
+         * Output: none; the email (text + PDF attachments) is sent, Reply-To the professor; IOException on a bad address, unreadable PDF or server failure.
+         * Used by: ApprovedPaperSender.send.
+         * Example: DigestEmail(alice, [a@x.edu], "LitRoute: 2 new papers for alice", ...) -> delivered, copy in Gmail's Sent
          */
         public void send(DigestEmail email) throws IOException {
             try {
@@ -125,6 +155,12 @@ public final class GmailSmtpSender {
             }
         }
 
+        /**
+         * Input: none.
+         * Output: none; the session is closed (a failed QUIT is ignored).
+         * Used by: try-with-resources in ApprovedPaperSender.send.
+         * Example: {@code try (Connection c = smtp.connect(creds)) { c.send(email); }} -> closed after the block
+         */
         @Override
         public void close() {
             try {
@@ -135,6 +171,12 @@ public final class GmailSmtpSender {
         }
     }
 
+    /**
+     * Input: none (this sender's host, port, trust).
+     * Output: Jakarta Mail properties for SMTPS with auth and 10 s / 60 s timeouts.
+     * Used by: {@link #connect}.
+     * Example: -> {mail.smtps.host=smtp.gmail.com, mail.smtps.port=465, mail.smtps.auth=true, ...}
+     */
     private Properties smtpProperties() {
         Properties properties = new Properties();
         properties.put("mail.transport.protocol", "smtps");

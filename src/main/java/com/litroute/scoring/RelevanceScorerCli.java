@@ -38,6 +38,12 @@ public final class RelevanceScorerCli {
     private RelevanceScorerCli() {
     }
 
+    /**
+     * Input: optional PDF or folder of PDFs; none to match M7c's papers.
+     * Output: with a path: each PDF's score per student (and, for a folder filed by student, accuracy per strategy); without: M7c matched and added to M7e.
+     * Used by: the user, from the terminal ({@code exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli}).
+     * Example: ~/.litroute/match-test -> "alice/rao.pdf  ok ..." then "HYBRID 46 of 48 matched ..."
+     */
     public static void main(String[] args) throws Exception {
         Path pdfOrFolder = args.length > 0 ? Path.of(args[0]) : null;
         Map<String, Profile> profiles = ProfileStore.atDefaultLocation().loadAll();
@@ -55,6 +61,12 @@ public final class RelevanceScorerCli {
         }
     }
 
+    /**
+     * Input: the scorer and the profiles.
+     * Output: none; M7c's papers matched, added to the M7e queue, and a per-student summary printed.
+     * Used by: {@link #main} without arguments.
+     * Example: -> "alice: 2 matched ... 5 of 31 papers matched a student; the review queue now holds 9."
+     */
     private static void matchDeduplicatedPapers(RelevanceScorer scorer, Map<String, Profile> profiles)
             throws IOException {
         List<PaperCandidate> deduplicated = EnrichmentCacheStore.atDefaultLocation().load().enriched();
@@ -80,6 +92,10 @@ public final class RelevanceScorerCli {
     /**
      * Prints each PDF's score for every profile, best first, marking the one it is filed under; then,
      * for labelled folders, how each strategy matched the whole folder as one batch.
+     * Input: the scorer, a PDF or folder, and the profiles.
+     * Output: none; prints every PDF's scores and rationale, then each strategy's accuracy on the filed ones.
+     * Used by: {@link #main} with a path.
+     * Example: folder alice/x.pdf -> "alice/x.pdf  ok", "0.62 alice filed here", ...
      */
     private static void scorePdfs(RelevanceScorer scorer, Path pdfOrFolder, Map<String, Profile> profiles)
             throws IOException {

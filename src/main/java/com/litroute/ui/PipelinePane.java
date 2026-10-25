@@ -55,8 +55,11 @@ final class PipelinePane extends BorderPane {
     private final LogPane log = new LogPane();
 
     /**
-     * @param queueChanged    called on the UI thread after a run that may have added papers to the queue
-     * @param showCredentials brings up the Gmail tab, for a run started while the credentials are locked
+     * Input: session - the app session; queueChanged - called on the UI thread after a run that may have added papers;
+     * showCredentials - brings up the Gmail tab.
+     * Output: the Pipeline tab: matcher, max-unread, keep-unread, Run and Clear-and-re-run controls, a log and a summary.
+     * Used by: LitRouteApp.start.
+     * Example: {@code new PipelinePane(session, review::reload, showCredentials)}
      */
     PipelinePane(Session session, Runnable queueChanged, Runnable showCredentials) {
         this.session = session;
@@ -93,12 +96,24 @@ final class PipelinePane extends BorderPane {
         BorderPane.setMargin(log, new Insets(0, 8, 0, 8));
     }
 
+    /**
+     * Input: none.
+     * Output: none; warns when the AI matcher is chosen but GROQ_API_KEY is not set.
+     * Used by: the constructor and the matcher box's listener.
+     * Example: choose AI without the key -> "Set GROQ_API_KEY before starting LitRoute to use the AI matcher."
+     */
     private void updateHint() {
         boolean missingKey = matcher.getValue() == MatcherKind.AI && System.getenv(GroqClient.KEY_VARIABLE) == null;
         hint.setText(missingKey ? "Set " + GroqClient.KEY_VARIABLE + " before starting LitRoute to use the AI matcher." : "");
     }
 
-    /** Asks before discarding anything, saying exactly what will go, then resets and runs. */
+    /**
+     * Asks before discarding anything, saying exactly what will go, then resets and runs.
+     * Input: none.
+     * Output: none; after the professor confirms (told how many emails, papers and decisions are affected), resets and runs.
+     * Used by: the Clear and re-run button.
+     * Example: 6 processed emails, 9 queued (3 decided) -> dialog stating those numbers; OK -> run(true)
+     */
     private void clearAndRerun() {
         if (!session.unlocked()) {
             summary.setText("Not run: unlock the Gmail credentials first (Gmail tab).");
@@ -133,7 +148,12 @@ final class PipelinePane extends BorderPane {
         }
     }
 
-    /** @param resetFirst undo every run so far before running (see {@link PipelineRunner#reset}) */
+    /**
+     * Input: whether to undo every run first (PipelineRunner.reset).
+     * Output: none; one pipeline run as a job, its progress in the log and its report in the summary.
+     * Used by: the Run button (false), {@link #clearAndRerun} (true).
+     * Example: locked credentials -> "Not run: unlock the Gmail credentials first" and the Gmail tab opens
+     */
     private void run(boolean resetFirst) {
         if (!session.unlocked()) {
             summary.setText("Not run: unlock the Gmail credentials first (Gmail tab).");
@@ -147,6 +167,12 @@ final class PipelinePane extends BorderPane {
                 + (markRead ? "." : ", leaving them unread."));
         summary.setText("Running...");
         session.runJob(new Task<Report>() {
+            /**
+             * Input: none (job thread).
+             * Output: the run's report (after the reset, if asked); the credentials are cleared afterwards.
+             * Used by: Session.runJob.
+             * Example: -> Report(newAlerts 6, papersScored 31, matches 11, ...)
+             */
             @Override
             protected Report call() throws Exception {
                 try (AutoCloseable captured = log.capture()) {
@@ -166,6 +192,12 @@ final class PipelinePane extends BorderPane {
                 }
             }
 
+            /**
+             * Input: none (UI thread).
+             * Output: none; the summary shows the run's numbers and the review queue reloads.
+             * Used by: JavaFX, when call() returns.
+             * Example: -> "Last run: 6 new alert(s), 31 paper(s) scored, 11 match(es) queued (11 recommended). The review queue holds 11."
+             */
             @Override
             protected void succeeded() {
                 Report report = getValue();
@@ -177,6 +209,12 @@ final class PipelinePane extends BorderPane {
                 queueChanged.run();
             }
 
+            /**
+             * Input: none (UI thread).
+             * Output: none; the error goes to the log and summary, and the queue reloads.
+             * Used by: JavaFX, when call() throws.
+             * Example: Groq down -> "Last run failed: Groq unavailable: HTTP 503 ... run again to continue."
+             */
             @Override
             protected void failed() {
                 Throwable cause = getException();

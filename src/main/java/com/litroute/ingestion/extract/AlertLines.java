@@ -46,10 +46,10 @@ final class AlertLines {
     record Line(List<Seg> segs, boolean heading, boolean rule) {
 
         /**
-         * The line's visible text.
-         *
-         * @return every segment's text (links included) concatenated in order, then cleaned up by
-         *         {@link AlertLines#normalize(String)}
+         * Input: none (this line's segments).
+         * Output: every segment's text, links included, concatenated and {@link AlertLines#normalize normalized}.
+         * Used by: AlertHtmlParser for every line test (authors, venue, type, issue lines).
+         * Example: segs [("Deep ", link), ("Learning", null)] -> "Deep Learning"
          */
         String text() {
             StringBuilder joined = new StringBuilder();
@@ -58,22 +58,22 @@ final class AlertLines {
         }
 
         /**
-         * Links on this line that have visible text.
-         *
-         * @return the segments that have an href and non-blank normalized text, in line order; icon-only
-         *         links such as ORCID badges have empty text and are left out
+         * Input: none.
+         * Output: the segments with an href and non-blank text, in order (icon-only links like ORCID badges left out).
+         * Used by: {@link #soleAnchor}; AlertHtmlParser to collect a paper's links.
+         * Example: [("Title", "https://x"), ("", "https://orcid.org/..")] -> [("Title", "https://x")]
          */
         List<Seg> anchors() {
             return segs.stream().filter(seg -> seg.href() != null && !normalize(seg.text()).isEmpty()).toList();
         }
 
         /**
-         * The link, if the whole line is nothing but one link - the shape of a paper title. A format tag
-         * beside the link does not count as other text: Google Scholar sets "[PDF]" in a span of its own
-         * before the title link.
-         *
-         * @return the single anchor when {@link #anchors()} has exactly one entry and no non-link segment
-         *         has visible text other than format tags; empty otherwise
+         * The link, if the whole line is nothing but one link - the shape of a paper title. A "[PDF]"-style
+         * format tag beside it (Google Scholar) does not count as other text.
+         * Input: none.
+         * Output: the single anchor if there is exactly one and no other visible non-link text; empty otherwise.
+         * Used by: AlertHtmlParser to find title lines and to skip them as authors/venue/type.
+         * Example: [("[PDF] ", null), ("Wave loads", url)] -> Seg("Wave loads", url); "See Wave loads here" -> empty
          */
         Optional<Seg> soleAnchor() {
             List<Seg> anchors = anchors();
@@ -99,14 +99,14 @@ final class AlertLines {
     }
 
     /**
-     * Flattens an alert email's HTML into the lines a reader would see.
-     *
-     * @param html the raw HTML body of the alert email
-     * @return the visible lines in reading order, after head/style/script, hidden elements and Gmail
-     *         forwarding scaffolding are removed and the body is walked by {@link Builder}
+     * Input: the raw HTML body of an alert email.
+     * Output: its visible lines in reading order (head/style/script, hidden elements, Gmail forward scaffolding removed).
+     * Used by: AlertHtmlParser.parse (M2).
+     * Example: see the class javadoc: a td with a link, br, authors, br, venue + hr -> 4 lines
      */
     static List<Line> parse(String html) {
         Document doc = Jsoup.parse(html);
+        // Drop what a reader never sees, and the forwarder's own text.
         doc.select("head, style, script, noscript").remove();
         doc.select("[style~=(?i)display\\s*:\\s*none]").remove();
         doc.select("div.gmail_attr, .gmail_signature").remove();
@@ -118,11 +118,10 @@ final class AlertLines {
     }
 
     /**
-     * Cleans up raw HTML text for comparison and display.
-     *
-     * @param text raw text taken from the HTML
-     * @return the text with non-breaking spaces turned into plain spaces, zero-width characters removed,
-     *         whitespace runs collapsed to one space, and leading/trailing whitespace trimmed
+     * Input: raw text taken from the HTML.
+     * Output: NBSPs as spaces, zero-width characters removed, whitespace collapsed, trimmed.
+     * Used by: {@link Line#text}, {@link Line#anchors}; AlertHtmlParser for link text.
+     * Example: "[NBSP] Deep[ZWSP]  Learning [newline]" -> {@code "Deep Learning"}
      */
     static String normalize(String text) {
         return text.replace(' ', ' ')
@@ -140,11 +139,11 @@ final class AlertLines {
         private int headingDepth;
 
         /**
-         * Visits a node and its subtree depth-first, adding text and links to the current line.
-         * Returns nothing; a block tag or {@code <br>} closes the current line, {@code <hr>} adds a rule
-         * line, {@code <img>} is skipped, and {@code <a href>} becomes a single link segment.
-         *
-         * @param node the DOM node to visit (text nodes add text; elements are handled by tag)
+         * Input: a DOM node.
+         * Output: none; its subtree's text and links go onto lines: block/{@code <br>} ends a line, {@code <hr>} adds a
+         * rule, {@code <img>} is skipped, {@code <a href>} becomes one link segment.
+         * Used by: {@link AlertLines#parse}, recursively.
+         * Example: {@code <p>A<br>B</p>} -> lines "A", "B"
          */
         void walk(Node node) {
             if (node instanceof TextNode textNode) {
@@ -157,6 +156,7 @@ final class AlertLines {
             String tag = element.normalName();
             switch (tag) {
                 case "br" -> {
+                    // Inside a link a <br> is just a space: the title stays one segment.
                     if (anchorHref != null) {
                         anchorText.append(' ');
                     } else {
@@ -193,11 +193,10 @@ final class AlertLines {
         }
 
         /**
-         * Turns a link and everything inside it into one segment on the current line.
-         * Returns nothing; pending plain text is saved first, then the anchor's text is collected (block
-         * tags and {@code <br>} inside it do not split the line) and stored with its href.
-         *
-         * @param anchor the {@code <a>} element; it must have an href
+         * Input: an {@code <a>} element with an href.
+         * Output: none; it becomes one segment on the current line (blocks and {@code <br>} inside it don't split it).
+         * Used by: {@link #walk}.
+         * Example: {@code <a href="u"><div>Deep</div><b>Learning</b></a>} -> Seg("DeepLearning", "u")
          */
         private void walkAnchor(Element anchor) {
             pushText();
@@ -210,10 +209,10 @@ final class AlertLines {
         }
 
         /**
-         * Moves pending plain text into the current line as a non-link segment.
-         *
-         * Returns nothing; if the text buffer is non-empty it becomes a segment with a null href and the
-         * buffer is cleared.
+         * Input: none.
+         * Output: none; pending plain text (if any) becomes a non-link segment and the buffer is cleared.
+         * Used by: {@link #walkAnchor}, {@link #flush}.
+         * Example: text buffer "A. Smith" -> segs += Seg("A. Smith", null)
          */
         private void pushText() {
             if (!text.isEmpty()) {
@@ -223,10 +222,10 @@ final class AlertLines {
         }
 
         /**
-         * Ends the current line.
-         *
-         * Returns nothing; pending text is saved, the line is added to {@link #lines} (marked as a heading
-         * when inside an h1-h6) if any segment has visible text, and a new empty line is started.
+         * Input: none.
+         * Output: none; the current line is added (as a heading inside h1-h6) if it has visible text, and a new one started.
+         * Used by: {@link #walk}, {@link AlertLines#parse}.
+         * Example: segs [("  ", null)] -> nothing added; [("Nature", null)] -> line "Nature" added
          */
         void flush() {
             pushText();

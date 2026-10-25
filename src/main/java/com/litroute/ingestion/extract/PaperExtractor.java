@@ -28,15 +28,32 @@ public final class PaperExtractor {
     private final AlertHtmlParser parser = new AlertHtmlParser();
     private final PaperEnricher enricher;
 
+    /**
+     * Input: the enricher for stage 2 (M3).
+     * Output: an extractor that parses with AlertHtmlParser and enriches each paper with it.
+     * Used by: PipelineRunner.atDefaultLocations (M9), wrapping a CachingPaperEnricher over M7c's lookups.
+     * Example: {@code new PaperExtractor(new CachingPaperEnricher(online, lookups))}
+     */
     public PaperExtractor(PaperEnricher enricher) {
         this.enricher = enricher;
     }
 
-    /** Parse-only extractor: no network access and no downloads. */
+    /**
+     * Input: none.
+     * Output: a parse-only extractor: no network access and no downloads.
+     * Used by: tests and offline runs.
+     * Example: {@code offline().extract(email)} -> candidates with only what the email states
+     */
     public static PaperExtractor offline() {
         return new PaperExtractor(PaperEnricher.NONE);
     }
 
+    /**
+     * Input: one alert email.
+     * Output: its papers, enriched where possible (a paper whose enrichment threw is kept as parsed); [] if none.
+     * Used by: AlertBatchProcessor.process (M2-M4) for each email in the batch.
+     * Example: SpringerOpen alert listing 3 papers -> 3 candidates with DOI, abstract and pdfPath filled
+     */
     public List<PaperCandidate> extract(RawEmail email) {
         List<PaperCandidate> candidates = new ArrayList<>();
         for (ParsedPaper parsed : parser.parse(email)) {

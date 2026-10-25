@@ -40,6 +40,12 @@ public record PaperCandidate(
         Optional<String> abstractSnippet,
         Optional<Path> pdfPath) {
 
+    /**
+     * Input: every field; title must be non-blank.
+     * Output: the candidate, with an immutable copy of the authors; throws if the title is blank.
+     * Used by: AlertHtmlParser (M2), the M3 enrichers, Deduplicator (M4), StoredCandidate (M7c/M7e).
+     * Example: {@code new PaperCandidate("<id@x>", "Wave Loads", List.of("A. Rao"), ...)} -> candidate; title {@code " "} -> throws
+     */
     public PaperCandidate {
         if (title == null || title.isBlank()) {
             throw new IllegalArgumentException("title must not be blank");
@@ -60,16 +66,24 @@ public record PaperCandidate(
             + "|reply\\s+to\\b)");
 
     /**
-     * Whether this is a research paper rather than a note about one: a book review, a discussion or its
-     * closure, an erratum or correction, an editorial and the like, by the alert's section label or by
-     * the title. A book review can read exactly like a student's papers, so notes never reach M6.
+     * Whether this is a research paper rather than a note about one (book review, discussion, erratum,
+     * editorial...), by section label or title. A book review can read like a student's papers, so notes never reach M6.
+     * Input: none (this candidate's articleType and title).
+     * Output: true for a research paper, false for a note.
+     * Used by: AlertHtmlParser (M2) to drop notes; RelevanceScorer (M6) as a guard.
+     * Example: articleType "Book Reviews" -> false; title "Erratum: Wave loads" -> false; "Wave loads on piles" -> true
      */
     public boolean isResearch() {
         boolean noteSection = articleType.map(type -> NON_RESEARCH_TYPE.matcher(type.strip()).matches()).orElse(false);
         return !noteSection && !NON_RESEARCH_TITLE.matcher(title).find();
     }
 
-    /** The same paper with its PDF saved elsewhere (or not at all). */
+    /**
+     * Input: the new PDF location, or empty for none.
+     * Output: a copy of this candidate with only pdfPath changed.
+     * Used by: ScoredQueueStore (M7e) to point an entry at the student's copy of the PDF.
+     * Example: {@code withPdfPath(Optional.of(matched/alice/x.pdf))} -> same paper, pdfPath = matched/alice/x.pdf
+     */
     public PaperCandidate withPdfPath(Optional<Path> newPdfPath) {
         return new PaperCandidate(sourceMessageId, title, authors, venue, year, articleType, doi, url, abstractSnippet,
                 newPdfPath);

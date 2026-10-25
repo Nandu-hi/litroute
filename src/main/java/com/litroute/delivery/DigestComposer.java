@@ -37,11 +37,10 @@ final class DigestComposer {
     }
 
     /**
-     * @param professor        the Gmail address the emails are sent from
-     * @param papers           the student's papers; only those with status APPROVED are composed
-     * @param attachmentBudget the most bytes of PDF one email carries
-     * @return the emails, in the order to send them; together they list every approved paper once, and no
-     *         email is ever empty - none at all when no paper is approved
+     * Input: the student, their addresses, the professor's address, their queued papers, and the PDF budget per email.
+     * Output: the emails to send (recommended first, then by score), split into parts when PDFs exceed the budget; [] if none approved.
+     * Used by: ApprovedPaperSender.send (M10), once per student.
+     * Example: alice, 3 approved papers with 10 MB PDFs each, budget 15 MiB -> 3 emails "... (part 1 of 3)"
      */
     static List<DigestEmail> compose(String profileName, List<String> recipients, String professor,
             List<ScoredPaper> papers, long attachmentBudget) {
@@ -86,6 +85,12 @@ final class DigestComposer {
         return emails;
     }
 
+    /**
+     * Input: the student, the professor and one email's papers.
+     * Output: the plain-text body: greeting, then each paper's title, authors, venue/year/type, link, PDF note and abstract, then a signature.
+     * Used by: {@link #compose}.
+     * Example: -> "Hello,\n\nprof@gmail.com has approved this paper for your research profile \"alice\". ..."
+     */
     private static String body(String profileName, String professor, List<Item> items) {
         StringBuilder text = new StringBuilder("Hello,\n\n")
                 .append(professor).append(" has approved ").append(items.size() == 1 ? "this paper" : "these papers")
@@ -115,6 +120,12 @@ final class DigestComposer {
                 .append(". Reply to this email to reach them.\n").toString();
     }
 
+    /**
+     * Input: a PDF path.
+     * Output: its size in bytes; -1 if missing or unreadable.
+     * Used by: {@link #compose}.
+     * Example: a 2 MB file -> 2097152; deleted file -> -1
+     */
     private static long sizeOrMinusOne(Path pdf) {
         try {
             return Files.isRegularFile(pdf) ? Files.size(pdf) : -1;
@@ -123,6 +134,12 @@ final class DigestComposer {
         }
     }
 
+    /**
+     * Input: a number and a noun.
+     * Output: "n noun", plural unless n is 1.
+     * Used by: {@link #compose} (subject line).
+     * Example: count(1, "new paper") -> "1 new paper"; count(3, ..) -> "3 new papers"
+     */
     private static String count(int n, String noun) {
         return n + " " + noun + (n == 1 ? "" : "s");
     }

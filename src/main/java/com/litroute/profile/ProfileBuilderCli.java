@@ -30,6 +30,12 @@ public final class ProfileBuilderCli {
     private ProfileBuilderCli() {
     }
 
+    /**
+     * Input: optional PROFILES_DIR (default ~/.litroute/profiles).
+     * Output: prints per profile what was embedded/reused/skipped, its keywords and how well each paper fits; M7d updated.
+     * Used by: the user, from the terminal ({@code exec:java -Dexec.mainClass=com.litroute.profile.ProfileBuilderCli}).
+     * Example: no args, alice/ with 3 PDFs -> "alice: 3 embedded, 0 unchanged ..." then keywords and similarities
+     */
     public static void main(String[] args) throws Exception {
         Path root = args.length > 0 ? Path.of(args[0]) : ProfileBuilder.defaultProfilesRoot();
         ProfileStore store = ProfileStore.atDefaultLocation();
@@ -66,6 +72,12 @@ public final class ProfileBuilderCli {
         }
     }
 
+    /**
+     * Input: a stored profile.
+     * Output: prints min/mean/max paper-to-paper cosine and each paper's cosine to the profile mean, best fit first.
+     * Used by: {@link #main}.
+     * Example: -> "paper-to-paper similarity: min 0.712, mean 0.801, max 0.903" ...
+     */
     private static void printPapers(Profile profile) {
         var papers = profile.papers();
         double min = 1;

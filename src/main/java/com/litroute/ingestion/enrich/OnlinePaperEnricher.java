@@ -41,13 +41,25 @@ public final class OnlinePaperEnricher implements PaperEnricher {
     private final CompositeMetadataLookup lookup;
     private final PdfDownloader pdfs;
 
+    /**
+     * Input: the publisher-page reader, the API lookup and the PDF downloader.
+     * Output: an enricher using them.
+     * Used by: {@link #create}; tests with recorded replies.
+     * Example: {@code new OnlinePaperEnricher(pages, lookup, pdfs)}
+     */
     public OnlinePaperEnricher(ArticlePageReader pages, CompositeMetadataLookup lookup, PdfDownloader pdfs) {
         this.pages = pages;
         this.lookup = lookup;
         this.pdfs = pdfs;
     }
 
-    /** Real network: Crossref + OpenAlex + the publisher site, PDFs saved under {@code pdfDirectory}. */
+    /**
+     * Real network: Crossref + OpenAlex + the publisher site, PDFs saved under {@code pdfDirectory}.
+     * Input: the folder to save PDFs in.
+     * Output: an enricher on the real network: paced Crossref + OpenAlex + publisher pages.
+     * Used by: PipelineRunner.atDefaultLocations (M9), wrapped in a CachingPaperEnricher.
+     * Example: {@code create(PdfDownloader.defaultDirectory())}
+     */
     public static OnlinePaperEnricher create(Path pdfDirectory) {
         HttpFetcher fetcher = new PacedFetcher(new JdkHttpFetcher(USER_AGENT), API_PACE);
         return new OnlinePaperEnricher(
@@ -56,8 +68,15 @@ public final class OnlinePaperEnricher implements PaperEnricher {
                 new PdfDownloader(fetcher, pdfDirectory));
     }
 
+    /**
+     * Input: a parsed paper and its link kind.
+     * Output: the paper with DOI, missing metadata, completed abstract and downloaded PDF; unchanged if everything is offline.
+     * Used by: CachingPaperEnricher on a cache miss (M3).
+     * Example: ("Wave loads on piles", READABLE ascelibrary link) -> doi, venue, year from page/APIs, pdfPath ~/.litroute/data/pdfs/10.1061_x.pdf
+     */
     @Override
     public PaperCandidate enrich(PaperCandidate paper, LinkKind linkKind) {
+        // Only a readable link is worth fetching; an opaque tracker is never contacted.
         Optional<PaperMetadata> page = linkKind == LinkKind.READABLE && paper.url().isPresent()
                 ? pages.read(paper.url().get())
                 : Optional.empty();
@@ -65,6 +84,7 @@ public final class OnlinePaperEnricher implements PaperEnricher {
         Optional<String> knownDoi = paper.doi().or(() -> page.flatMap(PaperMetadata::doi));
         Optional<PaperMetadata> apis = lookup.find(new PaperQuery(paper.title(), paper.authors(), knownDoi, paper.venue()));
 
+        // The publisher's own page outranks the APIs.
         PaperMetadata found = page.orElse(PaperMetadata.EMPTY).mergedWith(apis.orElse(PaperMetadata.EMPTY));
 
         Optional<String> doi = paper.doi().or(() -> found.doi());
@@ -89,9 +109,10 @@ public final class OnlinePaperEnricher implements PaperEnricher {
      * The alert's abstract, unless a looked-up one begins with the same text and goes on: then the alert
      * had cut it short (the Wiley "Recommended articles" alert stops after a dozen words), and the
      * looked-up one is the same abstract, whole.
-     *
-     * <p>Example:
-     *
+     * Input: the alert's abstract and the looked-up one.
+     * Output: the looked-up abstract if it starts with the alert's and goes on (the alert cut it short), else the alert's.
+     * Used by: {@link #enrich}.
+     * Example:
      * <pre>{@code
      * Input:  "In current dynamic time history assessment protocols, ground motion recordings are",
      *         "In current dynamic time history assessment protocols, ground motion recordings are mostly oriented ..."

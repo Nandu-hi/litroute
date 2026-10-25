@@ -194,6 +194,11 @@ public class RelevanceScorerTest {
         assertTrue(detail, hybridCorrect > semanticCorrect || hybridPrecision > semanticPrecision);
     }
 
+    /**
+     * Scoring one paper against every student, without matching it: one score per student, each
+     * between 0 and 1, best first, still pending and not recommended, with a rationale naming the
+     * student's closest work and what the score was computed from.
+     */
     @Test
     public void everyScoreIsBetweenZeroAndOneAndExplained() {
         matches(fullText(), Strategy.HYBRID); // every candidate read and embedded once
@@ -259,6 +264,10 @@ public class RelevanceScorerTest {
         assertTrue(alone.rationale(), alone.rationale().contains("title alone"));
     }
 
+    /**
+     * A profile embedded with a different model than the scorer's is refused: its vectors live in
+     * another space, so comparing against them would give meaningless scores.
+     */
     @Test(expected = IllegalArgumentException.class)
     public void profilesFromAnotherModelAreRejected() {
         Profile real = TestProfiles.profiles().values().iterator().next();

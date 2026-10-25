@@ -19,6 +19,12 @@ import java.util.List;
 public record PaperText(String title, String abstractText, List<String> headings, List<String> bodyChunks,
         List<String> keywords) {
 
+    /**
+     * Input: every field; title and abstractText non-blank.
+     * Output: the record, with immutable copies of the lists; throws on a blank title or abstract.
+     * Used by: PdfTextExtractor (M5), RelevanceScorer (M6) for a candidate's PDF.
+     * Example: {@code new PaperText("Wave loads", "", ...)} -> throws "abstractText must not be blank"
+     */
     public PaperText {
         if (title == null || title.isBlank()) {
             throw new IllegalArgumentException("title must not be blank");
@@ -31,12 +37,24 @@ public record PaperText(String title, String abstractText, List<String> headings
         keywords = List.copyOf(keywords);
     }
 
-    /** A paper's text without author keywords. */
+    /**
+     * A paper's text without author keywords.
+     * Input: title, abstract, headings and body chunks.
+     * Output: a PaperText with no keywords.
+     * Used by: tests.
+     * Example: {@code new PaperText(t, a, h, b).keywords()} -> []
+     */
     public PaperText(String title, String abstractText, List<String> headings, List<String> bodyChunks) {
         this(title, abstractText, headings, bodyChunks, List.of());
     }
 
-    /** The headings and body passages as one text: what the paper says beyond its title and abstract. */
+    /**
+     * The headings and body passages as one text: what the paper says beyond its title and abstract.
+     * Input: none.
+     * Output: the headings joined by "; ", then ". ", then the body passages joined by spaces.
+     * Used by: PaperEmbedder (kept on ProfilePaper), ProfileBuilder, RelevanceScorer for lexical matching.
+     * Example: headings [1 Intro, 2 Method], chunks [a, b] -> "1 Intro; 2 Method. a b"
+     */
     public String bodyText() {
         return String.join("; ", headings) + ". " + String.join(" ", bodyChunks);
     }

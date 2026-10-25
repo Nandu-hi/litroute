@@ -86,6 +86,12 @@ public final class ProfileBuilder {
     private final PdfTextExtractor extractor = new PdfTextExtractor();
     private final PaperEmbedder embedder;
 
+    /**
+     * Input: the folder holding one subfolder per student, the M7d store and the embedding model.
+     * Output: a builder (nothing is read yet).
+     * Used by: PipelineRunner.atDefaultLocations (M9), ProfilesPane (M8), ProfileBuilderCli.
+     * Example: {@code new ProfileBuilder(defaultProfilesRoot(), ProfileStore.atDefaultLocation(), specter2)}
+     */
     public ProfileBuilder(Path profilesRoot, ProfileStore store, EmbeddingProvider provider) {
         this.profilesRoot = profilesRoot;
         this.store = store;
@@ -93,6 +99,12 @@ public final class ProfileBuilder {
         this.embedder = new PaperEmbedder(provider);
     }
 
+    /**
+     * Input: none.
+     * Output: {@code ~/.litroute/profiles}.
+     * Used by: PipelineRunner (M9), ProfilesPane (M8), ProfileBuilderCli.
+     * Example: -> /home/u/.litroute/profiles
+     */
     public static Path defaultProfilesRoot() {
         return Path.of(System.getProperty("user.home"), ".litroute", "profiles");
     }
@@ -101,12 +113,15 @@ public final class ProfileBuilder {
      * Brings every profile up to date with its folder; creates the profiles root if it is missing.
      * A changed profile is saved as soon as it is rebuilt, so an interrupted run keeps the finished
      * ones; an unchanged one is left untouched, keeping its {@code updatedAt}.
-     *
-     * @throws IOException if the profiles root cannot be listed or the store cannot be read/written
+     * Input: none (reads every folder under the profiles root, and M7d).
+     * Output: a report per folder, plus the profiles removed because their folder is gone; IOException if the root or store fails.
+     * Used by: PipelineRunner.run (M9) step 1, ProfilesPane (M8) Rebuild, ProfileBuilderCli.
+     * Example: folders alice/ (2 PDFs, 1 new) and bob/ deleted -> [alice: embedded 1, reused 1], removed [bob]
      */
     public BuildReport syncAll() throws IOException {
         Files.createDirectories(profilesRoot);
         Map<String, Profile> saved = store.loadAll();
+        // Every paper already embedded by this model, by hash: reused even if moved between folders.
         Map<String, ProfilePaper> known = new HashMap<>();
         for (Profile profile : saved.values()) {
             if (profile.modelId().equals(provider.modelId())) {
@@ -122,6 +137,7 @@ public final class ProfileBuilder {
             reports.add(sync(folder, name, known, saved.get(name)));
         }
 
+        // A profile whose folder was deleted goes too.
         List<String> removed = new ArrayList<>();
         for (String name : saved.keySet()) {
             if (!folderNames.contains(name)) {
@@ -133,7 +149,12 @@ public final class ProfileBuilder {
         return new BuildReport(reports, removed);
     }
 
-    /** @param previous the saved profile of this name, or null */
+    /**
+     * Input: one student folder, its name, the papers already embedded (by hash), and its saved profile (or null).
+     * Output: what was embedded, reused or skipped; the profile is saved to M7d if anything changed, removed if no PDF is readable.
+     * Used by: {@link #syncAll}.
+     * Example: alice/ with a.pdf (known hash) and b.pdf (new) -> ProfileReport(alice, embedded 1, reused 1, ...)
+     */
     private ProfileReport sync(Path folder, String name, Map<String, ProfilePaper> known, Profile previous)
             throws IOException {
         List<String> emails = readEmails(folder.resolve(EMAIL_FILE));
@@ -148,6 +169,7 @@ public final class ProfileBuilder {
             Path pdf = pdfs.get(index);
             String relativePath = folder.relativize(pdf).toString();
             String sha256 = sha256(pdf);
+            // The same PDF twice in one folder counts once.
             if (pathBySha.containsKey(sha256)) {
                 skipped.add(new SkippedPdf(relativePath, "same file as " + pathBySha.get(sha256)));
                 continue;
@@ -201,7 +223,13 @@ public final class ProfileBuilder {
         return new ProfileReport(name, embedded, reused, textAdded, skipped, emails, true);
     }
 
-    /** Whether saving would change nothing but the timestamp: same model, addresses, files and keywords. */
+    /**
+     * Whether saving would change nothing but the timestamp: same model, addresses, files and keywords.
+     * Input: the saved profile and the freshly built emails, papers and keywords.
+     * Output: true if saving would change nothing but the timestamp.
+     * Used by: {@link #sync}.
+     * Example: same files, emails and keywords -> true; a new email.txt address -> false
+     */
     private boolean unchanged(Profile previous, List<String> emails, List<ProfilePaper> papers, List<String> keywords) {
         return previous.modelId().equals(provider.modelId())
                 && previous.emails().equals(emails)
@@ -209,10 +237,22 @@ public final class ProfileBuilder {
                 && previous.keywords().equals(keywords);
     }
 
+    /**
+     * Input: papers.
+     * Output: their "path\nsha256" identities, in order.
+     * Used by: {@link #unchanged}.
+     * Example: [a.pdf hash ab12] -> ["a.pdf\nab12"]
+     */
     private static List<String> files(List<ProfilePaper> papers) {
         return papers.stream().map(paper -> paper.relativePath() + "\n" + paper.sha256()).toList();
     }
 
+    /**
+     * Input: none.
+     * Output: the non-hidden subfolders of the profiles root, sorted.
+     * Used by: {@link #syncAll}.
+     * Example: profiles/{alice, bob, .git} -> [alice, bob]
+     */
     private List<Path> profileFolders() throws IOException {
         try (Stream<Path> entries = Files.list(profilesRoot)) {
             return entries.filter(Files::isDirectory)
@@ -222,6 +262,12 @@ public final class ProfileBuilder {
         }
     }
 
+    /**
+     * Input: a student folder.
+     * Output: every non-hidden .pdf in it (any depth, any case), sorted.
+     * Used by: {@link #sync}.
+     * Example: alice/{a.pdf, sub/B.PDF, notes.txt} -> [a.pdf, sub/B.PDF]
+     */
     private static List<Path> pdfsIn(Path folder) throws IOException {
         try (Stream<Path> files = Files.walk(folder)) {
             return files.filter(Files::isRegularFile)
@@ -236,6 +282,10 @@ public final class ProfileBuilder {
      * Addresses in email.txt: one or more per line (comma, semicolon or space separated); blank lines
      * and lines starting with '#' are ignored, and anything that is not an address is logged and
      * dropped. Duplicates (ignoring case) are kept once, in file order.
+     * Input: the folder's email.txt path.
+     * Output: its addresses in file order, duplicates (ignoring case) once; [] if no file.
+     * Used by: {@link #sync}; ProfileBuilderTest.
+     * Example: "# prof\na@x.edu, A@x.edu; b@y.org\nnot-an-email" -> [a@x.edu, b@y.org]
      */
     static List<String> readEmails(Path emailFile) throws IOException {
         if (!Files.isRegularFile(emailFile)) {
@@ -258,6 +308,12 @@ public final class ProfileBuilder {
         return List.copyOf(byLowerCase.values());
     }
 
+    /**
+     * Input: a file.
+     * Output: the SHA-256 of its bytes, as lowercase hex.
+     * Used by: {@link #sync}, so an unchanged PDF is never embedded twice.
+     * Example: empty file -> "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+     */
     static String sha256(Path file) throws IOException {
         MessageDigest digest;
         try {

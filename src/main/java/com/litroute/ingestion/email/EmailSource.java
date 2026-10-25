@@ -17,31 +17,29 @@ import java.util.Set;
 public interface EmailSource {
 
     /**
-     * @param alreadyProcessedMessageIds Message-IDs already recorded in M7a;
-     *         matching messages are skipped without being parsed.
-     * @return newly-seen publication alert emails, oldest first.
+     * Input: Gmail credentials and the Message-IDs already recorded in M7a (skipped without being parsed).
+     * Output: the newly seen publication alerts, oldest first; empty if the mailbox can't be reached.
+     * Used by: PipelineRunner.run (M9), step 2.
+     * Example: inbox has 2 unread alerts, one ID in M7a -> {@code [RawEmail(the other one)]}
      */
     List<RawEmail> fetchNewAlerts(GmailCredentials credentials, Set<String> alreadyProcessedMessageIds);
 
     /**
-     * Marks these messages read in the mailbox. Fetching leaves mail unread
-     * and only looks at unread mail, so call this only once the messages are
-     * recorded in M7a: marked any earlier, a message the run then failed to
-     * record would never be fetched again.
-     *
-     * @param messageIds Message-IDs of alerts the pipeline has processed
-     * @return how many messages were marked read; 0 if the mailbox could not be reached
+     * Marks these messages read. Fetching only looks at unread mail, so call this only once they are in M7a:
+     * marked any earlier, a message the run then failed to record would never be fetched again.
+     * Input: credentials and the Message-IDs of the alerts just processed.
+     * Output: how many were marked read; 0 if the mailbox could not be reached.
+     * Used by: PipelineRunner.run (M9), step 4, unless "keep emails unread" is on.
+     * Example: {@code markRead(c, ["<a@x>","<b@x>"])} -> {@code 2}
      */
     int markRead(GmailCredentials credentials, Collection<String> messageIds);
 
     /**
-     * Marks these messages unread again, read or not, so the next fetch sees them: what re-running the
-     * pipeline over mail it has already processed needs. Messages no longer in the inbox are skipped.
-     *
-     * @param messageIds Message-IDs of alerts the pipeline has processed
-     * @return how many of them were found in the inbox; each of those is unread afterwards
-     * @throws IOException if the mailbox could not be reached or refused the change; then the caller must
-     *         not assume any message is unread
+     * Marks these messages unread again so the next fetch sees them; messages no longer in the inbox are skipped.
+     * Input: credentials and the Message-IDs held in M7a.
+     * Output: how many were found in the inbox (all now unread); IOException if the mailbox failed (assume none are).
+     * Used by: PipelineRunner.reset (M9, Clear and re-run), before M7a is cleared.
+     * Example: 6 IDs, 5 still in the inbox -> {@code 5}
      */
     int markUnread(GmailCredentials credentials, Collection<String> messageIds) throws IOException;
 }

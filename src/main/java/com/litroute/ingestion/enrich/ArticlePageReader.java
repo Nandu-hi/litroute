@@ -54,15 +54,14 @@ public final class ArticlePageReader {
 
     /**
      * Creates a reader that fetches pages through the given client.
-     *
-     * <p>Example:
-     *
+     * Input: fetcher - the HTTP client used for every page fetch
+     * Output: a reader fetching pages through that client.
+     * Used by: OnlinePaperEnricher.create (M3).
+     * Example:
      * <pre>{@code
      * Input:  new ArticlePageReader(new JdkHttpFetcher("LitRoute/1.0 (personal research-paper alert reader)"))
      * Output: a reader that does real network GETs (tests pass a RecordedHttp fetcher instead)
      * }</pre>
-     *
-     * @param fetcher the HTTP client used for every page fetch
      */
     public ArticlePageReader(HttpFetcher fetcher) {
         this.fetcher = fetcher;
@@ -81,9 +80,10 @@ public final class ArticlePageReader {
      *
      * A page that answers 200 but carries no meta tags (e.g. a challenge page) gives metadata with only the
      * landing URL set. Fields the page doesn't state are left empty; the abstract is never read from the page.
-     *
-     * <p>Example:
-     *
+     * Input: url - the paper's readable link from the email
+     * Output: what the page says about the paper, or empty if it couldn't be read
+     * Used by: OnlinePaperEnricher.enrich (M3), for READABLE links only.
+     * Example:
      * <pre>{@code
      * Input:  "https://www.mdpi.com/2077-1312/12/3/400"   -> HTTP 200 HTML with citation_* tags
      * Output: Optional[PaperMetadata[doi=Optional[10.3390/jmse12030400], title=Optional[Wave Loads on ...], ...,
@@ -95,9 +95,6 @@ public final class ArticlePageReader {
      * Input:  "https://ascelibrary.org/doi/10.1061/JWPED5.WWENG-2001"   -> HTTP 403
      * Output: Optional.empty
      * }</pre>
-     *
-     * @param url the paper's readable link from the email
-     * @return what the page says about the paper, or empty if it couldn't be read
      */
     public Optional<PaperMetadata> read(String url) {
         HttpReply reply;
@@ -142,9 +139,10 @@ public final class ArticlePageReader {
     /**
      * Content of the first meta tag matching any of the names, tried in the order given (names are case-insensitive).
      * Tags with blank content are skipped, so a later name can still supply the value.
-     *
-     * <p>Example:
-     *
+     * Input: page - the parsed HTML page; names - meta tag names, most preferred first
+     * Output: the trimmed content of the first non-blank match, or empty if none
+     * Used by: {@link #read}, for each citation_* / DC / PRISM field.
+     * Example:
      * <pre>{@code
      * Page:   <meta name="DC.Date" content="2023-11-02">
      *         <meta name="citation_date" content="">
@@ -158,10 +156,6 @@ public final class ArticlePageReader {
      * Input:  firstMeta(page, "citation_doi")
      * Output: Optional.empty
      * }</pre>
-     *
-     * @param page the parsed HTML page
-     * @param names meta tag names, most preferred first
-     * @return the trimmed content of the first non-blank match, or empty if none
      */
     private static Optional<String> firstMeta(Document page, String... names) {
         for (String name : names) {
@@ -176,19 +170,16 @@ public final class ArticlePageReader {
 
     /**
      * Resolves a possibly relative URL against the page's own location (its final URL after redirects).
-     *
-     * <p>Example:
-     *
+     * Input: page - the parsed page, whose location is the base URL; maybeRelative - a URL from the page, absolute or relative
+     * Output: the absolute URL
+     * Used by: {@link #read}, for PDF links on the page.
+     * Example:
      * <pre>{@code
      * Page location: "https://www.mdpi.com/2077-1312/12/3/400"
      * Input:  "/2077-1312/12/3/400/pdf"                Output: "https://www.mdpi.com/2077-1312/12/3/400/pdf"
      * Input:  " pdf "                                  Output: "https://www.mdpi.com/2077-1312/12/3/pdf"
      * Input:  "https://cdn.example.org/paper.pdf"      Output: "https://cdn.example.org/paper.pdf"
      * }</pre>
-     *
-     * @param page the parsed page, whose location is the base URL
-     * @param maybeRelative a URL from the page, absolute or relative
-     * @return the absolute URL
      */
     private static String absolute(Document page, String maybeRelative) {
         return URI.create(page.location()).resolve(maybeRelative.trim()).toString();
@@ -196,17 +187,15 @@ public final class ArticlePageReader {
 
     /**
      * Pulls the first four-digit year from 1900 to 2099 out of a date in any format.
-     *
-     * <p>Example:
-     *
+     * Input: date - a date string from a meta tag
+     * Output: the year, or empty if none is found
+     * Used by: {@link #read}.
+     * Example:
      * <pre>{@code
      * Input:  "2024/03/15"       Output: Optional[2024]
      * Input:  "15 March 2023"    Output: Optional[2023]
      * Input:  "n.d."             Output: Optional.empty
      * }</pre>
-     *
-     * @param date a date string from a meta tag
-     * @return the year, or empty if none is found
      */
     private static Optional<Integer> yearOf(String date) {
         Matcher matcher = YEAR.matcher(date);

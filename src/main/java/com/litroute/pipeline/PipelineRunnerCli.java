@@ -35,6 +35,12 @@ public final class PipelineRunnerCli {
     private PipelineRunnerCli() {
     }
 
+    /**
+     * Input: --matcher=hybrid|ai, --max-unread=N, --keep-unread, --send-approved (all optional).
+     * Output: one pipeline run printed to the terminal, then (with --send-approved) the approved papers emailed; exit 1/2 on missing credentials, wrong passphrase or a bad argument.
+     * Used by: the user or cron ({@code exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCli}).
+     * Example: --matcher=ai --send-approved -> "Done: 3 new alert(s), 17 paper(s) scored, ..." then "Sent 4 paper(s) in 2 email(s) ..."
+     */
     public static void main(String[] args) throws Exception {
         MatcherKind kind = MatcherKind.HYBRID;
         int maxUnread = GmailEmailSource.DEFAULT_MAX_UNREAD;
@@ -99,6 +105,12 @@ public final class PipelineRunnerCli {
         }
     }
 
+    /**
+     * Input: none.
+     * Output: the master passphrase from the terminal, else from {@value #PASSPHRASE_VARIABLE}; null if neither.
+     * Used by: {@link #main}.
+     * Example: run from cron with LITROUTE_PASSPHRASE=secret -> "secret".toCharArray()
+     */
     private static char[] readPassphrase() {
         Console console = System.console();
         if (console != null) {

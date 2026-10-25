@@ -29,15 +29,32 @@ public final class ScoredPaperLog {
 
     private final Path storeFile;
 
+    /**
+     * Input: the JSON file to keep this store in.
+     * Output: a store for that file (nothing is read yet).
+     * Used by: {@link #atDefaultLocation}; tests with a temp folder.
+     * Example: {@code new ScoredPaperLog(tmp.resolve("scored_papers.json")).load()} -> empty
+     */
     public ScoredPaperLog(Path storeFile) {
         this.storeFile = storeFile;
     }
 
+    /**
+     * Input: none.
+     * Output: a store for {@code ~/.litroute/data/scored_papers.json}.
+     * Used by: PipelineRunner.atDefaultLocations (M9).
+     * Example: {@code atDefaultLocation()} -> store for /home/u/.litroute/data/scored_papers.json
+     */
     public static ScoredPaperLog atDefaultLocation() {
         return new ScoredPaperLog(Path.of(System.getProperty("user.home"), ".litroute", "data", "scored_papers.json"));
     }
 
-    /** Returns an empty set if nothing has been scored yet. */
+    /**
+     * Input: none.
+     * Output: a modifiable set of the paper keys already scored; empty if no file yet.
+     * Used by: PipelineRunner (M9) to send only unscored papers to M6; {@link #addAll}.
+     * Example: file {@code ["doi:10.1/x"]} -> {@code {"doi:10.1/x"}}
+     */
     public Set<String> load() throws IOException {
         if (!Files.exists(storeFile)) {
             return new LinkedHashSet<>();
@@ -45,12 +62,24 @@ public final class ScoredPaperLog {
         return new LinkedHashSet<>(JSON.readValue(Files.readAllBytes(storeFile), KEY_SET));
     }
 
-    /** Forgets every paper recorded, so the next run scores them all again. */
+    /**
+     * Forgets every paper recorded, so the next run scores them all again.
+     * Input: none.
+     * Output: none; the file is deleted.
+     * Used by: PipelineRunner.reset (M9, Clear and re-run).
+     * Example: {@code clear(); load()} -> {@code {}}
+     */
     public void clear() throws IOException {
         Files.deleteIfExists(storeFile);
     }
 
-    /** Records these paper keys as scored, keeping the ones already recorded. */
+    /**
+     * Records these paper keys as scored, keeping the ones already recorded.
+     * Input: paper keys ({@link ScoredPaper#paperKey}).
+     * Output: none; the file holds the union of old and new keys.
+     * Used by: PipelineRunner (M9), only after the batch's matches are in M7e.
+     * Example: file {@code ["doi:a"]}, {@code addAll(["doi:b"])} -> {@code ["doi:a","doi:b"]}
+     */
     public void addAll(Collection<String> paperKeys) throws IOException {
         Set<String> keys = load();
         keys.addAll(paperKeys);

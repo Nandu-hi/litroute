@@ -45,8 +45,10 @@ public final class AiPaperMatcher implements PaperMatcher {
     private final List<ProfileBrief> profiles;
 
     /**
-     * @param model    the language model to ask
-     * @param profiles every student, as the model should see them; names must be distinct
+     * Input: the language model and every student as the model should see them (distinct names).
+     * Output: the matcher; throws if there are no profiles or two share a name.
+     * Used by: {@link #of}; tests.
+     * Example: {@code new AiPaperMatcher(groq, List.of(aliceBrief, bobBrief))}
      */
     public AiPaperMatcher(LlmClient model, List<ProfileBrief> profiles) {
         if (profiles.isEmpty()) {
@@ -62,18 +64,33 @@ public final class AiPaperMatcher implements PaperMatcher {
         this.profiles = List.copyOf(profiles);
     }
 
-    /** A matcher for the stored profiles, described by their keywords and their papers' titles. */
+    /**
+     * A matcher for the stored profiles, described by their keywords and their papers' titles.
+     * Input: the model and the stored profiles (M7d).
+     * Output: a matcher briefing each profile by keywords and typical titles.
+     * Used by: PipelineRunner.matcher (M9, AI matcher), AiRecorder/AiPaperMatcherTest.
+     * Example: {@code of(GroqClient.fromEnvironment(), profiles.values())}
+     */
     public static AiPaperMatcher of(LlmClient model, Collection<Profile> profiles) {
         return new AiPaperMatcher(model, profiles.stream().map(ProfileBrief::from).toList());
     }
 
-    /** The students, as the model is told about them. */
+    /**
+     * The students, as the model is told about them.
+     * Input: none.
+     * Output: the students as the model is told about them.
+     * Used by: AiPaperMatcherTest (prompt size checks).
+     * Example: -> [ProfileBrief(alice, ...), ProfileBrief(bob, ...)]
+     */
     public List<ProfileBrief> profiles() {
         return profiles;
     }
 
     /**
-     * @throws IOException if the model could not be asked or its answer is not of the requested shape
+     * Input: deduplicated papers (M4/M7c).
+     * Output: every student mapped to the papers the model matched them to, best first, one recommended each; IOException if the model can't be asked or answers wrongly.
+     * Used by: PipelineRunner.run (M9) through PaperMatcher.
+     * Example: [P1, P2] -> {alice=[P1 0.85 recommended, P2 0.40], bob=[P2 0.70 recommended]}
      */
     @Override
     public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch) throws IOException {
@@ -103,6 +120,10 @@ public final class AiPaperMatcher implements PaperMatcher {
      * The batch as the requests it is sent in: as few as keep every prompt within the model's token
      * window, splitting the batch into runs of near-equal length in batch order. A paper whose prompt is
      * too long even alone is sent alone, for the API to judge.
+     * Input: a batch.
+     * Output: as few near-equal runs (in order) as keep every prompt within maxPromptTokens; one paper per request as a last resort.
+     * Used by: {@link #match}; AiPaperMatcherTest.
+     * Example: 30 papers, prompt ~12,000 tokens, budget 5,500 -> 3 runs of 10
      */
     List<List<PaperCandidate>> requests(List<PaperCandidate> batch) {
         int budget = model.maxPromptTokens();
@@ -118,7 +139,13 @@ public final class AiPaperMatcher implements PaperMatcher {
         return split(batch, batch.size());
     }
 
-    /** The batch cut into {@code count} runs in order, whose lengths differ by at most one. */
+    /**
+     * The batch cut into {@code count} runs in order, whose lengths differ by at most one.
+     * Input: a batch and a run count.
+     * Output: count consecutive runs whose lengths differ by at most one.
+     * Used by: {@link #requests}.
+     * Example: 7 papers, 3 runs -> sizes [2, 2, 3]
+     */
     private static List<List<PaperCandidate>> split(List<PaperCandidate> batch, int count) {
         List<List<PaperCandidate>> runs = new ArrayList<>();
         for (int i = 0; i < count; i++) {
@@ -130,6 +157,10 @@ public final class AiPaperMatcher implements PaperMatcher {
     /**
      * Asks the model about one run of the batch, which starts at batch index {@code first}, and adds what it
      * answers to {@code scores} and {@code focus}, by batch index.
+     * Input: one run, its first batch index, the student names, and the score/focus maps to fill.
+     * Output: none; the model's matches and focus picks are added by batch index (unknown names/ids dropped and logged); IOException on a malformed answer.
+     * Used by: {@link #match}, once per request.
+     * Example: answer alice P2 score 85 for the run starting at 10 -> scores[alice][11] = 85
      */
     private void ask(List<PaperCandidate> papers, int first, Set<String> names, Map<String, Map<Integer, Integer>> scores,
             Map<String, Map<Integer, String>> focus) throws IOException {
@@ -164,6 +195,10 @@ public final class AiPaperMatcher implements PaperMatcher {
     /**
      * One student's matches, best first. Recommended: the best-scored of the papers the model picked as
      * the student's focus (one per request), or, if it matched none of them, the student's best match.
+     * Input: a student, their scores and focus reasons by batch index, and the batch.
+     * Output: their ScoredPapers best first; the best-scored focus pick (else the best match) is recommended.
+     * Used by: {@link #match}.
+     * Example: scores {3=85, 5=90}, focus {3} -> [P6 0.90, P4 0.85 recommended]
      */
     private List<ScoredPaper> scored(String name, Map<Integer, Integer> own, Map<Integer, String> focus,
             List<PaperCandidate> batch) {
@@ -190,7 +225,13 @@ public final class AiPaperMatcher implements PaperMatcher {
         return List.copyOf(papers);
     }
 
-    /** The index a paper id refers to in a request of {@code size} papers; empty (and logged) for an id it did not contain. */
+    /**
+     * The index a paper id refers to in a request of {@code size} papers; empty (and logged) for an id it did not contain.
+     * Input: a paper id from the answer, the run size, and the student (for the log).
+     * Output: its 0-based index in the run; empty (logged) if it is not P1..Psize.
+     * Used by: {@link #ask}.
+     * Example: ("P3", 5, alice) -> 2; ("P9", 5, alice) -> empty
+     */
     private Optional<Integer> paperIndex(String id, int size, String student) {
         if (id.startsWith("P")) {
             try {
@@ -206,6 +247,12 @@ public final class AiPaperMatcher implements PaperMatcher {
         return Optional.empty();
     }
 
+    /**
+     * Input: a JSON answer.
+     * Output: its text, cut to 200 chars.
+     * Used by: {@link #ask}, for error messages.
+     * Example: a 5 KB answer -> first 200 chars + "..."
+     */
     private static String abbreviate(JsonNode node) {
         String text = node.toString();
         return text.length() <= 200 ? text : text.substring(0, 200) + "...";

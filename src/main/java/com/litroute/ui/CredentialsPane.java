@@ -35,6 +35,12 @@ final class CredentialsPane extends VBox {
     private final PasswordField confirm = new PasswordField();
     private final Label setUpMessage = message();
 
+    /**
+     * Input: the app session.
+     * Output: the Gmail tab: an unlock form and a set-up/change form.
+     * Used by: LitRouteApp.start.
+     * Example: {@code new CredentialsPane(session)}
+     */
     CredentialsPane(Session session) {
         super(12);
         this.session = session;
@@ -70,11 +76,23 @@ final class CredentialsPane extends VBox {
         refresh();
     }
 
-    /** Puts the cursor where the professor has to type next. */
+    /**
+     * Puts the cursor where the professor has to type next.
+     * Input: none.
+     * Output: none; focus goes to the passphrase if credentials are stored and locked, else to the Gmail address.
+     * Used by: LitRouteApp (showCredentials).
+     * Example: stored and locked -> cursor in "Master passphrase"
+     */
     void focusNextField() {
         (session.credentialStore().exists() && !session.unlocked() ? unlockPassphrase : email).requestFocus();
     }
 
+    /**
+     * Input: none.
+     * Output: none; the state line and the unlock form follow whether credentials are stored and unlocked.
+     * Used by: the constructor, unlock, save.
+     * Example: nothing stored -> "No Gmail credentials yet: set them up below.", unlock disabled
+     */
     private void refresh() {
         boolean stored = session.credentialStore().exists();
         boolean unlocked = session.unlocked();
@@ -85,6 +103,12 @@ final class CredentialsPane extends VBox {
         unlock.setDisable(!stored || unlocked);
     }
 
+    /**
+     * Input: none (the passphrase field).
+     * Output: none; the session is unlocked, or "Wrong passphrase." shown; the field is cleared.
+     * Used by: the Unlock button and Enter in the passphrase field.
+     * Example: wrong passphrase -> red "Wrong passphrase."
+     */
     private void unlock() {
         try {
             if (session.unlock(chars(unlockPassphrase))) {
@@ -99,6 +123,12 @@ final class CredentialsPane extends VBox {
         refresh();
     }
 
+    /**
+     * Input: none (the set-up form).
+     * Output: none; credentials saved under the new passphrase and unlocked, or an error shown; secrets wiped.
+     * Used by: the Save credentials button and Enter in the confirm field.
+     * Example: passphrases differ -> red "The passphrases do not match."
+     */
     private void save() {
         char[] password = chars(appPassword);
         char[] secret = chars(newPassphrase);
@@ -130,6 +160,12 @@ final class CredentialsPane extends VBox {
         refresh();
     }
 
+    /**
+     * Input: a password field.
+     * Output: a copy of its characters, without making a String.
+     * Used by: unlock, save.
+     * Example: field "secret" -> ['s','e','c','r','e','t']
+     */
     private static char[] chars(PasswordField field) {
         CharSequence text = field.getCharacters();
         char[] copy = new char[text.length()];
@@ -139,16 +175,34 @@ final class CredentialsPane extends VBox {
         return copy;
     }
 
+    /**
+     * Input: a message label and text.
+     * Output: none; the text is shown in red.
+     * Used by: unlock, save.
+     * Example: error(msg, "Wrong passphrase.")
+     */
     private static void error(Label label, String text) {
         label.setStyle("-fx-text-fill: #b00020;");
         label.setText(text);
     }
 
+    /**
+     * Input: a message label and text.
+     * Output: none; the text is shown in green.
+     * Used by: save.
+     * Example: success(msg, "Saved, and unlocked for this session.")
+     */
     private static void success(Label label, String text) {
         label.setStyle("-fx-text-fill: #1b5e20;");
         label.setText(text);
     }
 
+    /**
+     * Input: none.
+     * Output: a grid with 10 px / 8 px gaps.
+     * Used by: the constructor's two forms.
+     * Example: -> GridPane(hgap 10, vgap 8)
+     */
     private static GridPane grid() {
         GridPane grid = new GridPane();
         grid.setHgap(10);
@@ -156,6 +210,12 @@ final class CredentialsPane extends VBox {
         return grid;
     }
 
+    /**
+     * Input: none.
+     * Output: an empty wrapping label for messages.
+     * Used by: the unlock and set-up message fields.
+     * Example: -> Label("")
+     */
     private static Label message() {
         Label label = new Label();
         label.setWrapText(true);
