@@ -26,6 +26,12 @@ record StoredCandidate(
         String abstractSnippet,
         String pdfPath) {
 
+    /**
+     * Input: a candidate.
+     * Output: its JSON shape: empty optionals as null (left out of the file), pdfPath as a string.
+     * Used by: EnrichmentCacheStore (M7c) and ScoredQueueStore/SentPaperStore (M7e) when saving.
+     * Example: candidate without a DOI -> StoredCandidate with {@code doi == null}
+     */
     static StoredCandidate from(PaperCandidate candidate) {
         return new StoredCandidate(
                 candidate.sourceMessageId(),
@@ -40,7 +46,12 @@ record StoredCandidate(
                 candidate.pdfPath().map(Path::toString).orElse(null));
     }
 
-    /** @throws IOException if the stored entry is not a valid candidate (e.g. a hand-edited file lost its title) */
+    /**
+     * Input: none (this stored entry).
+     * Output: the candidate; IOException if it is no longer valid (e.g. a hand-edited file lost its title).
+     * Used by: EnrichmentCacheStore (M7c) and the M7e stores when loading.
+     * Example: {@code {title:"X", pdfPath:"/p/x.pdf"}} -> PaperCandidate("X", pdfPath=Optional[/p/x.pdf])
+     */
     PaperCandidate toCandidate() throws IOException {
         try {
             return new PaperCandidate(
@@ -59,6 +70,12 @@ record StoredCandidate(
         }
     }
 
+    /**
+     * Input: stored entries.
+     * Output: the candidates, in order; IOException at the first invalid one.
+     * Used by: EnrichmentCacheStore.load (M7c).
+     * Example: {@code toCandidates([s1, s2])} -> {@code [c1, c2]}
+     */
     static List<PaperCandidate> toCandidates(List<StoredCandidate> stored) throws IOException {
         List<PaperCandidate> candidates = new ArrayList<>();
         for (StoredCandidate entry : stored) {

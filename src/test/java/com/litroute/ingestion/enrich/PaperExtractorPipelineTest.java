@@ -114,6 +114,8 @@ public class PaperExtractorPipelineTest {
         assertEquals(Optional.of(2026), paper.year());
         assertTrue(paper.abstractSnippet().orElseThrow()
                 .startsWith("In current dynamic time history assessment protocols"));
+        assertTrue("the alert cuts the abstract off after a dozen words; Crossref's completes it",
+                paper.abstractSnippet().orElseThrow().contains("mostly oriented along fixed sensor directions"));
     }
 
     /** Taylor & Francis states no year in the alert; enrichment supplies it without inventing one. */
@@ -147,13 +149,13 @@ public class PaperExtractorPipelineTest {
                 http.requested("click.notification.elsevier.com"));
     }
 
-    /** A 22-paper table of contents: every entry keeps its own DOI, section and title. */
+    /** A 22-entry table of contents: each of its 17 research papers keeps its own DOI, section and title. */
     @Test
-    public void theAsceTableOfContentsResolvesAllTwentyTwoPapersSeparately() {
+    public void theAsceTableOfContentsResolvesAllSeventeenResearchPapersSeparately() {
         List<PaperCandidate> papers = run(SampleMails.ASCE);
 
-        assertEquals(22, papers.size());
-        assertEquals("every paper has a DOI of its own", 22,
+        assertEquals(17, papers.size());
+        assertEquals("every paper has a DOI of its own", 17,
                 papers.stream().map(p -> p.doi().orElseThrow()).distinct().count());
         assertTrue("all of them are Natural Hazards Review DOIs",
                 papers.stream().allMatch(p -> p.doi().orElseThrow().startsWith("10.1061/nhrefo.nheng-")));
@@ -164,8 +166,8 @@ public class PaperExtractorPipelineTest {
                 + "A BibliometricAnalysis Based on Web of Science", papers.get(0).title());
         assertEquals(Optional.of("10.1061/nhrefo.nheng-2717"), papers.get(0).doi());
         assertEquals(Optional.of("State-of-the-Art Reviews"), papers.get(0).articleType());
-        assertEquals(Optional.of("10.1061/nhrefo.nheng-2953"), papers.get(21).doi());
-        assertEquals(Optional.of("Corrections"), papers.get(21).articleType());
+        assertEquals(Optional.of("10.1061/nhrefo.nheng-2711"), papers.get(16).doi());
+        assertEquals(Optional.of("Technical Notes"), papers.get(16).articleType());
     }
 
     /**

@@ -57,18 +57,42 @@ public final class CredentialStore {
     private final Path storeFile;
     private final CredentialCipher cipher = new CredentialCipher();
 
+    /**
+     * Input: the encrypted file's path.
+     * Output: a store for that file (nothing is read yet).
+     * Used by: {@link #atDefaultLocation}; tests with a temp file.
+     * Example: {@code new CredentialStore(tmp.resolve("c.enc")).exists()} -> false
+     */
     public CredentialStore(Path storeFile) {
         this.storeFile = storeFile;
     }
 
+    /**
+     * Input: none.
+     * Output: a store for {@code ~/.litroute/credentials.enc}.
+     * Used by: Session (M8), CredentialSetupCli, PipelineRunnerCli.
+     * Example: {@code atDefaultLocation()} -> store for /home/u/.litroute/credentials.enc
+     */
     public static CredentialStore atDefaultLocation() {
         return new CredentialStore(Path.of(System.getProperty("user.home"), ".litroute", "credentials.enc"));
     }
 
+    /**
+     * Input: none.
+     * Output: whether a credential file is on disk.
+     * Used by: CredentialsPane (M8) to choose between "set up" and "unlock"; PipelineRunnerCli.
+     * Example: before first setup -> false
+     */
     public boolean exists() {
         return Files.exists(storeFile);
     }
 
+    /**
+     * Input: the master passphrase (borrowed, not cleared).
+     * Output: the decrypted credentials; empty if there is no file; throws on a corrupt file or wrong passphrase.
+     * Used by: Session (M8) on unlock and passphrase check, PipelineRunnerCli.
+     * Example: {@code load("secret")} after {@code save(creds, "secret")} -> {@code Optional[prof@gmail.com]}
+     */
     public Optional<GmailCredentials> load(char[] passphrase) throws IOException, GeneralSecurityException {
         byte[] fileBytes;
         try {
@@ -88,6 +112,7 @@ public final class CredentialStore {
 
         byte[] plaintext = cipher.decrypt(blob, passphrase);
         char[] appPassword = null;
+        // Stream the JSON so the password goes char[] -> char[] and never becomes a String.
         try {
             String emailAddress = null;
             try (JsonParser parser = JSON.getFactory().createParser(plaintext)) {
@@ -118,6 +143,12 @@ public final class CredentialStore {
         }
     }
 
+    /**
+     * Input: credentials and the master passphrase (borrowed, not cleared).
+     * Output: none; the file is atomically replaced by a freshly encrypted envelope.
+     * Used by: Session (M8) when credentials are entered, CredentialSetupCli.
+     * Example: {@code save(new GmailCredentials("prof@gmail.com", pw), "secret")} -> {@code {"salt":"..","iv":"..","ciphertext":".."}}
+     */
     public void save(GmailCredentials credentials, char[] passphrase) throws IOException, GeneralSecurityException {
         char[] appPassword = credentials.appPassword();
         byte[] plaintext;
@@ -139,10 +170,22 @@ public final class CredentialStore {
         }
     }
 
+    /**
+     * Input: none.
+     * Output: none; the credential file is deleted if present.
+     * Used by: tests (to start from no credentials).
+     * Example: {@code clear(); exists()} -> false
+     */
     public void clear() throws IOException {
         Files.deleteIfExists(storeFile);
     }
 
+    /**
+     * Input: the address and the App Password.
+     * Output: UTF-8 JSON bytes {@code {"emailAddress":..,"appPassword":..}}, written without making the password a String.
+     * Used by: {@link #save}.
+     * Example: {@code serializePayload("a@b.com", "pw")} -> {@code {"emailAddress":"a@b.com","appPassword":"pw"}}
+     */
     private static byte[] serializePayload(String emailAddress, char[] appPassword) throws IOException {
         ByteArrayOutputStream buffer = new ByteArrayOutputStream();
         try (JsonGenerator generator = JSON.getFactory().createGenerator(buffer)) {
@@ -155,11 +198,13 @@ public final class CredentialStore {
         return buffer.toByteArray();
     }
 
+    /** The on-disk JSON: base64 salt, IV and ciphertext. */
     private record Envelope(
             @JsonProperty("salt") String salt,
             @JsonProperty("iv") String iv,
             @JsonProperty("ciphertext") String ciphertext) {
 
+        /** Jackson's constructor for reading the file; no checks (load checks for missing fields). */
         @JsonCreator
         Envelope {
         }

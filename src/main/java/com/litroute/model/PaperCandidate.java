@@ -3,6 +3,7 @@ package com.litroute.model;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * Output of M2 PaperExtractor: one paper mentioned in an alert email. Anything the alert doesn't
@@ -39,10 +40,52 @@ public record PaperCandidate(
         Optional<String> abstractSnippet,
         Optional<Path> pdfPath) {
 
+    /**
+     * Input: every field; title must be non-blank.
+     * Output: the candidate, with an immutable copy of the authors; throws if the title is blank.
+     * Used by: AlertHtmlParser (M2), the M3 enrichers, Deduplicator (M4), StoredCandidate (M7c/M7e).
+     * Example: {@code new PaperCandidate("<id@x>", "Wave Loads", List.of("A. Rao"), ...)} -> candidate; title {@code " "} -> throws
+     */
     public PaperCandidate {
         if (title == null || title.isBlank()) {
             throw new IllegalArgumentException("title must not be blank");
         }
         authors = List.copyOf(authors);
+    }
+
+    /**
+     * Alert sections that hold notes rather than research papers, as publishers label them (ASCE's
+     * "Discussions and Closures", "Book Reviews", "Corrections", ...).
+     */
+    private static final Pattern NON_RESEARCH_TYPE = Pattern.compile("(?i)^(?:book reviews?|discussions?(?: and closures?)?"
+            + "|closures?|errat(?:a|um)|corrections?|corrigend(?:a|um)|retractions?(?: notes?)?|editorials?"
+            + "|obituar(?:y|ies)|letters? to the editor|comments?(?: and repl(?:y|ies))?|repl(?:y|ies))$");
+    /** The same notes recognized by their titles, for alerts that do not label their sections. */
+    private static final Pattern NON_RESEARCH_TITLE = Pattern.compile("(?i)^\\s*(?:errat(?:a|um)\\b|corrigend(?:a|um)\\b"
+            + "|correction(?:\\s+to\\b|\\s*:)|retraction\\b|discussion\\s+of\\b|closure\\s+to\\b|comment\\s+on\\b"
+            + "|reply\\s+to\\b)");
+
+    /**
+     * Whether this is a research paper rather than a note about one (book review, discussion, erratum,
+     * editorial...), by section label or title. A book review can read like a student's papers, so notes never reach M6.
+     * Input: none (this candidate's articleType and title).
+     * Output: true for a research paper, false for a note.
+     * Used by: AlertHtmlParser (M2) to drop notes; RelevanceScorer (M6) as a guard.
+     * Example: articleType "Book Reviews" -> false; title "Erratum: Wave loads" -> false; "Wave loads on piles" -> true
+     */
+    public boolean isResearch() {
+        boolean noteSection = articleType.map(type -> NON_RESEARCH_TYPE.matcher(type.strip()).matches()).orElse(false);
+        return !noteSection && !NON_RESEARCH_TITLE.matcher(title).find();
+    }
+
+    /**
+     * Input: the new PDF location, or empty for none.
+     * Output: a copy of this candidate with only pdfPath changed.
+     * Used by: ScoredQueueStore (M7e) to point an entry at the student's copy of the PDF.
+     * Example: {@code withPdfPath(Optional.of(matched/alice/x.pdf))} -> same paper, pdfPath = matched/alice/x.pdf
+     */
+    public PaperCandidate withPdfPath(Optional<Path> newPdfPath) {
+        return new PaperCandidate(sourceMessageId, title, authors, venue, year, articleType, doi, url, abstractSnippet,
+                newPdfPath);
     }
 }

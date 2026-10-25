@@ -26,7 +26,7 @@ PaperCandidate (deduplicated, in M7c)
 ScoredPaper  (status = ReviewStatus.PENDING)              in M7e review queue
    │  M8 professor approves / drops
    ▼
-ScoredPaper  (status = APPROVED ─▶ M10 sends to the student, or DROPPED)
+ScoredPaper  (status = APPROVED ─▶ M10 sends to the student ─▶ SENT, or DROPPED)
 ```
 
 ## The records
@@ -49,7 +49,8 @@ One Gmail message that looked like a publication alert, **before** any HTML pars
 One paper mentioned in an alert email.
 
 - **`title` is the only required field.** Everything else is `Optional` and stays empty when it can't be found. Nothing is guessed.
-- **The email's text takes priority.** Values taken from the email are never overwritten. Data looked up from Crossref, OpenAlex or the publisher's page only fills fields the email left empty.
+- **The email's text takes priority.** Values taken from the email are never overwritten. Data looked up from Crossref, OpenAlex or the publisher's page only fills fields the email left empty. The one exception is an abstract the alert cut short: a looked-up abstract that begins with the same text completes it.
+- **[isResearch()](PaperCandidate.java)** is false for notes about papers rather than papers: book reviews, discussions and closures, errata and corrections, editorials, letters, comments and replies. They are recognized by the alert's section label or, for alerts without labels, by the title ("Erratum for …", "Discussion of …"). M2 drops them, so they never reach enrichment or matching.
 - Fields: `sourceMessageId`, `title`, `authors` (placeholders like "others" or "…" removed), `venue`, `year` (the paper's year, never the email's date), `articleType` (the alert's own section label, e.g. "Research article"), `doi` (bare, no URL prefix), `url` (redirect wrappers removed), `abstractSnippet`, and `pdfPath` (where the PDF was saved locally, if one could be downloaded).
 
 ### [Profile](Profile.java): output of M5, input of M6 and M10
@@ -60,11 +61,12 @@ What one student works on, built from the PDFs in their profile folder. A profil
 |---|---|
 | `name` | The folder's name. Must not be blank. |
 | `emails` | Addresses from the folder's `email.txt`, where M10 will send approved papers. |
-| `papers` | One [ProfilePaper](Profile.java#L57) per readable PDF. **Never empty.** |
+| `papers` | One [ProfilePaper](Profile.java#L80) per readable PDF. **Never empty.** |
+| `keywords` | Up to 10 of the author keywords of the student's papers, those running through the most of them first ([ProfileKeywords](../profile/ProfileKeywords.java)). M6's language model is told them. Empty if no paper lists keywords. |
 | `modelId` | The embedding model that produced every vector. Vectors from different models can't be compared. |
 | `updatedAt` | When the profile last actually changed. |
 
-- **`ProfilePaper`** holds one reference paper: its relative path, SHA-256 (so an unchanged file is never embedded twice), title, the **combined** `embedding` used for scoring, the three view vectors (`abstractView`, optional `structureView` and `bodyView`), and the extracted `abstractText` and `bodyText`. M6 matches words in that text without opening the PDF again. `hasText()` is false for papers saved before text was stored. The vector arrays are shared, not copied, so treat them as read-only.
+- **`ProfilePaper`** holds one reference paper: its relative path, SHA-256 (so an unchanged file is never embedded twice), title, the **combined** `embedding` used for scoring, the three view vectors (`abstractView`, optional `structureView` and `bodyView`), the extracted `abstractText` and `bodyText`, and the author `keywords` the PDF lists (possibly none). M6 matches words in that text without opening the PDF again. `hasText()` and `hasKeywords()` are false for papers saved before text or keywords were stored. The vector arrays are shared, not copied, so treat them as read-only.
 
 ### [ScoredPaper](ScoredPaper.java): output of M6, held in M7e, used by M8 and M10
 
@@ -77,14 +79,30 @@ How relevant one candidate is to one student, and why.
 | `score` | 0.0–1.0: *relevance* times *share*. The constructor rejects values outside this range. |
 | `rationale` | Readable evidence: the share, the relevance, shared words, the closest of the student's papers, and what the paper was scored from. |
 | `status` | The professor's decision so far ([ReviewStatus](ReviewStatus.java)). |
-| `recommended` | Whether M6 picked it as one of the student's top 2–3 papers in its batch. The professor still decides. |
+| `recommended` | Whether M6 recommends it to the professor (★ in the review screen). The words-and-meaning matcher only returns papers it recommends; the AI matcher recommends one focus paper per student. The professor still decides. |
+| `relevance` | 0.0–1.0, optional: how close the paper is to the student's own work whoever else it suits (0.9 as close as their own papers, 0.1 as close as another student's). Empty when the matcher doesn't measure it (the AI matcher). |
 
 - `withStatus(...)` and `withRecommended(...)` return changed copies; the record itself never changes.
-- **[queueKey()](ScoredPaper.java#L57)** identifies an entry in the review queue: the student plus the paper, identified by `doi:<lowercased DOI>` or, without a DOI, `title:<compacted title>` (the same way M4 identifies papers). M7e uses it to update a re-scored paper instead of adding it twice.
+- **[queueKey()](ScoredPaper.java#L100)** identifies an entry in the review queue: the student plus the paper, identified by `doi:<lowercased DOI>` or, without a DOI, `title:<compacted title>` (the same way M4 identifies papers). M7e uses it to update a re-scored paper instead of adding it twice.
 
 ### [ReviewStatus](ReviewStatus.java)
 
-An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10) or `DROPPED` (not to be sent).
+An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10), `DROPPED` (not to be sent) or `SENT` (emailed to the student by M10: such a paper leaves the queue for [SentPaperStore](../store/SentPaperStore.java) and is never queued for that student again).
+
+## Interaction with M7 (the stores)
+
+The records are what the stores hold, but the stores never serialize them directly: each store has its own plain JSON shape with nullable fields, so Jackson needs no `Optional`/`Path`/`Instant` modules, and converting back runs the record's constructor, so a hand-edited or corrupt entry is rejected as an `IOException` instead of loading invalid data.
+
+| Record | Stored in | As | Key |
+|---|---|---|---|
+| `RawEmail` | **M7a** `email_cache.json` (only its `messageId`) | a JSON array of IDs | `messageId` |
+| `PaperCandidate` | **M7c** `enrichment_cache.json` (`enriched` and `lookups`), and inside every M7e / sent entry | [StoredCandidate](../store/StoredCandidate.java) | M7c lookups: `Titles.compact(title)` |
+| `Profile` / `ProfilePaper` | **M7d** `profiles.json` | `StoredProfile` / `StoredPaper` in [ProfileStore](../store/ProfileStore.java) | profile `name` |
+| `ScoredPaper` | **M7e** `scored_queue.json`; `sent_papers.json` once sent | `StoredScoredPaper` in [ScoredQueueStore](../store/ScoredQueueStore.java) | `queueKey()` |
+| `ScoredPaper.paperKey` | `scored_papers.json` ([ScoredPaperLog](../store/ScoredPaperLog.java)) | a JSON array of keys | `paperKey()` |
+| `ReviewStatus` | inside each M7e / sent entry | its name | — |
+
+The `with...` copies are how a store changes a record: M7e's `setStatus` stores `withStatus(...)`, and filing a matched PDF into a student's folder stores `candidate.withPdfPath(copy)`.
 
 ## How it's tested
 

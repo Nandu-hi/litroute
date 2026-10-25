@@ -22,7 +22,7 @@
 2f7f018d9fe3bc1380de.json	200	application/json	7927	7927	https://api.openalex.org/works/https://doi.org/10.1061/nhrefo.nheng-2818
 30a6bfeec286824d5d60.html	403	text/html; charset=UTF-8	5651	0	https://ascelibrary.org/doi/10.1061/nhrefo.nheng-2686?af=R
 35b2fab1c09d4c57414b.json	200	application/json	4815	4815	https://api.crossref.org/works/10.1061/nhrefo.nheng-2953
-366c33e6e0543b3d058e.json	200	application/json	4174	4174	https://api.crossref.org/works?query.bibliographic=An+efficient+ground+motion+model+coupling+spatial+correlations+for+large-scale+field+simulation&rows=5&select=DOI,title,author,container-title,issued,URL,link
+366c33e6e0543b3d058e.json	200	application/json	4174	4174	https://api.crossref.org/works?query.bibliographic=An+efficient+ground+motion+model+coupling+spatial+correlations+for+large-scale+field+simulation&rows=5&select=DOI,title,author,container-title,issued,URL,link,type
 392f8b61fab20ee38ed2.html	403	text/html; charset=UTF-8	5633	0	https://ascelibrary.org/doi/pdf/10.1061/NHREFO.NHENG-2771
 3c972326cf2242261e56.json	200	application/json	11635	11635	https://api.openalex.org/works/https://doi.org/10.1061/nhrefo.nheng-2496
 3dbba9dd728649e53e9d.json	200	application/json	19962	19962	https://api.openalex.org/works/https://doi.org/10.1061/nhrefo.nheng-2752
@@ -64,7 +64,7 @@
 a0d40dd2c26b37a8c7f3.json	200	application/json	18610	18610	https://api.openalex.org/works/https://doi.org/10.1061/nhrefo.nheng-2673
 a17eb4e347d3969e8cd4.json	200	application/json	23872	23872	https://api.crossref.org/works/10.1061/nhrefo.nheng-2859
 a4ea60612cf267eaee87.html	200	text/html; charset=utf-8	185105	95911	https://www.sciencedirect.com/science/article/pii/S2212420924008781?dgcid=raven_sd_recommendations_email
-a6141458727c566786de.json	200	application/json	4433	4433	https://api.crossref.org/works?query.bibliographic=Hygrothermal+analysis+of+ceramic+coating+durability+under+thermal+fluctuations+on+building+facades+in+Bras%C3%ADlia&rows=5&select=DOI,title,author,container-title,issued,URL,link
+a6141458727c566786de.json	200	application/json	4433	4433	https://api.crossref.org/works?query.bibliographic=Hygrothermal+analysis+of+ceramic+coating+durability+under+thermal+fluctuations+on+building+facades+in+Bras%C3%ADlia&rows=5&select=DOI,title,author,container-title,issued,URL,link,type
 aa65df375a49626dce47.json	200	application/json	17626	17626	https://api.openalex.org/works/https://doi.org/10.1061/nhrefo.nheng-2502
 b1bc1f481ce2693e32c9.json	200	application/json	2728	2728	https://api.crossref.org/works/10.1061/nhrefo.nheng-3008
 b4a3236007ba72c85aa7.json	200	application/json	15189	15189	https://api.openalex.org/works/https://doi.org/10.1061/nhrefo.nheng-2870
@@ -78,7 +78,7 @@ ccb6bdfc92095852fe3e.html	403	text/html; charset=UTF-8	5651	0	https://ascelibrar
 ce45aebcdef547af6b2c.json	200	application/json	21152	21152	https://api.openalex.org/works/https://doi.org/10.1016/j.ijdrr.2024.105116
 d188626c37e159f106e4.html	403	text/html; charset=UTF-8	5651	0	https://ascelibrary.org/doi/10.1061/nhrefo.nheng-3008?af=R
 d42d71e911835ebeeaf4.json	200	application/json	18284	18284	https://api.openalex.org/works/https://doi.org/10.1061/nhrefo.nheng-2770
-e3ca93df962b3f762b23.json	200	application/json	6674	6674	https://api.crossref.org/works?query.bibliographic=A+review+of+deformation+and+fragmentation+behavior+of+high-strength+steels+under+impact%3A+Mechanisms%2C+models%2C+and+future+directions&rows=5&select=DOI,title,author,container-title,issued,URL,link
+e3ca93df962b3f762b23.json	200	application/json	6674	6674	https://api.crossref.org/works?query.bibliographic=A+review+of+deformation+and+fragmentation+behavior+of+high-strength+steels+under+impact%3A+Mechanisms%2C+models%2C+and+future+directions&rows=5&select=DOI,title,author,container-title,issued,URL,link,type
 e502fdcc276fe9dbf272.pdf	200	application/pdf	1825482	8192	https://link.springer.com/content/pdf/10.1186/s43065-024-00115-x.pdf
 e534bf51de95b4aca20a.json	200	application/json	6278	6278	https://api.openalex.org/works/https://doi.org/10.1061/nhrefo.nheng-2979
 e54c0b2da7085d4a10bd.json	200	application/json	26918	26918	https://api.openalex.org/works/https://doi.org/10.1186/s43065-025-00118-2
@@ -93,5 +93,5 @@ f610cbc9d37918adb594.json	200	application/json	18399	18399	https://api.openalex.
 f7db906069e9f405d9bd.json	200	application/json	20267	20267	https://api.openalex.org/works/https://doi.org/10.1016/j.soildyn.2025.109696
 fa5350ebfce555b00421.json	200	application/json	17796	17796	https://api.openalex.org/works/https://doi.org/10.1061/nhrefo.nheng-2711
 fcc60047c13f7b5d6cce.html	200	text/html; charset=utf-8	177784	95900	https://www.sciencedirect.com/science/article/pii/S002980182402290X?dgcid=raven_sd_recommendations_email
-0f14b73e21479bf38a4f.json	200	application/json	1826	1826	https://api.crossref.org/works?query.bibliographic=Ultrasonic+levitation+of+Antarctic+basket-weaving+looms+under+Martian+gravity&rows=5&select=DOI,title,author,container-title,issued,URL,link
+0f14b73e21479bf38a4f.json	200	application/json	1826	1826	https://api.crossref.org/works?query.bibliographic=Ultrasonic+levitation+of+Antarctic+basket-weaving+looms+under+Martian+gravity&rows=5&select=DOI,title,author,container-title,issued,URL,link,type
 062076cd00bfe039c0d4.json	200	application/json	12409	12409	https://api.crossref.org/works/10.1186/s43065-024-00115-x

@@ -37,56 +37,99 @@ public final class ProfileStore {
     @JsonInclude(JsonInclude.Include.NON_NULL)
     @JsonIgnoreProperties({"clusters"})
     private record StoredProfile(
-            String name, List<String> emails, List<StoredPaper> papers, String modelId, String updatedAt) {
+            String name, List<String> emails, List<StoredPaper> papers, List<String> keywords, String modelId,
+            String updatedAt) {
 
+        /**
+         * Input: a profile.
+         * Output: its JSON shape (updatedAt as an ISO string).
+         * Used by: {@link ProfileStore#write}.
+         * Example: profile updated 2026-10-01T09:00Z -> {@code updatedAt = "2026-10-01T09:00:00Z"}
+         */
         static StoredProfile from(Profile profile) {
             return new StoredProfile(profile.name(), profile.emails(),
-                    profile.papers().stream().map(StoredPaper::from).toList(), profile.modelId(),
+                    profile.papers().stream().map(StoredPaper::from).toList(), profile.keywords(), profile.modelId(),
                     profile.updatedAt().toString());
         }
 
+        /**
+         * Input: none (this stored entry).
+         * Output: the profile (missing emails/keywords become []); IOException if the entry is invalid.
+         * Used by: {@link ProfileStore#loadAll}.
+         * Example: entry with no "keywords" field -> Profile with keywords []
+         */
         Profile toProfile() throws IOException {
             try {
                 return new Profile(name, emails == null ? List.of() : emails,
-                        papers.stream().map(StoredPaper::toPaper).toList(), modelId, Instant.parse(updatedAt));
+                        papers.stream().map(StoredPaper::toPaper).toList(), keywords == null ? List.of() : keywords,
+                        modelId, Instant.parse(updatedAt));
             } catch (RuntimeException e) {
                 throw new IOException("Corrupt profile entry \"" + name + "\": " + e.getMessage(), e);
             }
         }
     }
 
-    /** Text is absent in stores written before it was kept; such papers load without it. */
+    /**
+     * Text and keywords are absent in stores written before they were kept; such papers load without them.
+     * A paper read for keywords that lists none stores an empty list.
+     */
     @JsonInclude(JsonInclude.Include.NON_NULL)
     private record StoredPaper(
             String relativePath, String sha256, String title, float[] embedding, float[] abstractView,
-            float[] structureView, float[] bodyView, String abstractText, String bodyText) {
+            float[] structureView, float[] bodyView, String abstractText, String bodyText, List<String> keywords) {
 
+        /**
+         * Input: a profile paper.
+         * Output: its JSON shape; absent views, text and keywords become null (left out of the file).
+         * Used by: {@link StoredProfile#from}.
+         * Example: paper with no bodyView -> StoredPaper with {@code bodyView == null}
+         */
         static StoredPaper from(ProfilePaper paper) {
             return new StoredPaper(paper.relativePath(), paper.sha256(), paper.title(), paper.embedding(),
                     paper.abstractView(), paper.structureView().orElse(null), paper.bodyView().orElse(null),
-                    paper.abstractText().orElse(null), paper.bodyText().orElse(null));
+                    paper.abstractText().orElse(null), paper.bodyText().orElse(null), paper.keywords().orElse(null));
         }
 
+        /**
+         * Input: none (this stored entry).
+         * Output: the profile paper, with null fields as empty optionals.
+         * Used by: {@link StoredProfile#toProfile}.
+         * Example: entry without abstractText (old store) -> paper with {@code hasText() == false}
+         */
         ProfilePaper toPaper() {
             return new ProfilePaper(relativePath, sha256, title, embedding, abstractView,
                     Optional.ofNullable(structureView), Optional.ofNullable(bodyView), Optional.ofNullable(abstractText),
-                    Optional.ofNullable(bodyText));
+                    Optional.ofNullable(bodyText), Optional.ofNullable(keywords));
         }
     }
 
     private final Path storeFile;
 
+    /**
+     * Input: the JSON file to keep this store in.
+     * Output: a store for that file (nothing is read yet).
+     * Used by: {@link #atDefaultLocation}; tests with a temp folder.
+     * Example: {@code new ProfileStore(tmp.resolve("profiles.json")).loadAll()} -> empty
+     */
     public ProfileStore(Path storeFile) {
         this.storeFile = storeFile;
     }
 
+    /**
+     * Input: none.
+     * Output: a store for {@code ~/.litroute/data/profiles.json}.
+     * Used by: PipelineRunner.atDefaultLocations (M9), ProfilesPane/ReviewPane (M8), ApprovedPaperSender (M10), ProfileBuilderCli, RelevanceScorerCli.
+     * Example: {@code atDefaultLocation()} -> store for /home/u/.litroute/data/profiles.json
+     */
     public static ProfileStore atDefaultLocation() {
         return new ProfileStore(Path.of(System.getProperty("user.home"), ".litroute", "data", "profiles.json"));
     }
 
     /**
-     * @return every saved profile by name, in the order they were first saved; empty if none yet
-     * @throws IOException if the file exists but is unreadable or not a valid profile store
+     * Input: none.
+     * Output: every saved profile by name, in first-saved order; empty if none yet; IOException if corrupt.
+     * Used by: ProfileBuilder.syncAll (M5), PipelineRunner (M9) for M6, ApprovedPaperSender (M10) for addresses, ProfilesPane (M8).
+     * Example: file {@code {"alice":{...},"bob":{...}}} -> {@code {alice=Profile, bob=Profile}}
      */
     public Map<String, Profile> loadAll() throws IOException {
         Map<String, Profile> profiles = new LinkedHashMap<>();
@@ -99,19 +142,35 @@ public final class ProfileStore {
         return profiles;
     }
 
-    /** @return the named profile, or empty if it has not been built yet */
+    /**
+     * Input: a profile name.
+     * Output: that profile, or empty if it has not been built yet.
+     * Used by: tests (callers in main use {@link #loadAll}).
+     * Example: {@code load("alice")} -> {@code Optional[alice]}; {@code load("zoe")} -> empty
+     */
     public Optional<Profile> load(String name) throws IOException {
         return Optional.ofNullable(loadAll().get(name));
     }
 
-    /** Adds the profile, or replaces the saved one with the same name. */
+    /**
+     * Adds the profile, or replaces the saved one with the same name.
+     * Input: a profile.
+     * Output: none; the file is rewritten with it.
+     * Used by: ProfileBuilder (M5) after (re)embedding a folder.
+     * Example: {@code save(alice')} where alice exists -> alice replaced, still first in order
+     */
     public void save(Profile profile) throws IOException {
         Map<String, Profile> profiles = loadAll();
         profiles.put(profile.name(), profile);
         write(profiles);
     }
 
-    /** @return whether a profile by that name existed */
+    /**
+     * Input: a profile name.
+     * Output: whether it existed; if so, the file is rewritten without it.
+     * Used by: ProfileBuilder (M5) when a folder is deleted or has no readable PDFs.
+     * Example: {@code remove("bob")} -> true; again -> false
+     */
     public boolean remove(String name) throws IOException {
         Map<String, Profile> profiles = loadAll();
         boolean existed = profiles.remove(name) != null;
@@ -121,6 +180,12 @@ public final class ProfileStore {
         return existed;
     }
 
+    /**
+     * Input: every profile to keep.
+     * Output: none; the file is atomically replaced.
+     * Used by: {@link #save}, {@link #remove}.
+     * Example: {@code write({alice})} -> file {@code {"alice":{...}}}
+     */
     private void write(Map<String, Profile> profiles) throws IOException {
         Map<String, StoredProfile> file = new LinkedHashMap<>();
         profiles.forEach((name, profile) -> file.put(name, StoredProfile.from(profile)));

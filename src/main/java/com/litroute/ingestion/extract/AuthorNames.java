@@ -32,8 +32,9 @@ final class AuthorNames {
     }
 
     /**
-     * The names on the line in order, or an empty list if the line is not an author list.
-     *
+     * Input: one line of text from the email (null allowed).
+     * Output: the names in order, "others"/"et al." dropped; [] if null, blank, over 600 chars, or any piece is not a name.
+     * Used by: AlertHtmlParser (M2) for author lines and combined "authors - venue" lines.
      * Example:
      * <pre>{@code
      * "R. Abc, M. Def, M. A. Ghi & others"   -> [R. Abc, M. Def, M. A. Ghi]
@@ -43,10 +44,6 @@ final class AuthorNames {
      * "Smith, Jones"                         -> []   (a name needs at least two words)
      * "This paper studies wave loads"        -> []   ("paper" is not capitalised)
      * }</pre>
-     *
-     * @param line one line of text from the email; may be null
-     * @return the trimmed names after splitting on separators and dropping "others"/"et al." pieces; empty
-     *         if the line is null, blank, over 600 characters, or any remaining piece fails the name pattern
      */
     static List<String> parse(String line) {
         if (line == null || line.isBlank() || line.length() > 600) {
@@ -60,6 +57,7 @@ final class AuthorNames {
             if (name.isEmpty() || isPlaceholder(name)) {
                 continue;
             }
+            // One non-name piece means this is not an author line at all.
             if (!NAME.matcher(name).matches()) {
                 return List.of();
             }
@@ -69,12 +67,10 @@ final class AuthorNames {
     }
 
     /**
-     * Whether a piece stands for omitted authors rather than a real name.
-     *
-     * Example: "others" -> true; "Et Al." -> true; "A. Smith" -> false.
-     *
-     * @param name one trimmed piece of the author line
-     * @return true if the piece is "others", "et al" or "et al.", ignoring case
+     * Input: one trimmed piece of an author line.
+     * Output: true if it is "others", "et al" or "et al." (any case), i.e. stands for omitted authors.
+     * Used by: {@link #parse}.
+     * Example: "others" -> true; "Et Al." -> true; "A. Smith" -> false
      */
     private static boolean isPlaceholder(String name) {
         return name.equalsIgnoreCase("others") || name.equalsIgnoreCase("et al") || name.equalsIgnoreCase("et al.");

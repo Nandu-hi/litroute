@@ -44,15 +44,15 @@ A Gmail address and an IMAP **App Password** (not the account's real login passw
 
 ### [CredentialCipher](CredentialCipher.java): the cryptography (package-private)
 
-- **[encrypt](CredentialCipher.java#L34):** generates a random 16-byte salt and 12-byte IV, derives the key, encrypts with `AES/GCM/NoPadding` and a 128-bit authentication tag, and returns an `EncryptedBlob(salt, iv, ciphertext)`.
+- **[encrypt](CredentialCipher.java#L41):** generates a random 16-byte salt and 12-byte IV, derives the key, encrypts with `AES/GCM/NoPadding` and a 128-bit authentication tag, and returns an `EncryptedBlob(salt, iv, ciphertext)`.
 - **`decrypt`:** derives the key again from the stored salt and decrypts. GCM checks that the data hasn't been altered, so a wrong passphrase or a modified file **fails** instead of producing garbage.
 - **`deriveKey`:** PBKDF2-HMAC-SHA256 with **210,000 iterations**, producing a 256-bit key. The high iteration count makes guessing passphrases slow. The temporary key bytes and the copy of the passphrase in `PBEKeySpec` are wiped afterwards.
 - All the security comes from the passphrase. The salt and IV are stored in plain form next to the ciphertext.
 
 ### [CredentialStore](CredentialStore.java): the encrypted file
 
-- **[load(passphrase)](CredentialStore.java#L72):** returns empty if the file doesn't exist. Otherwise it reads the JSON envelope (and rejects one with missing fields), decrypts it, and reads `{emailAddress, appPassword}` with Jackson's **streaming** parser, copying the password characters directly into a `char[]`. The decrypted bytes are wiped in a `finally` block.
-- **[save(credentials, passphrase)](CredentialStore.java#L121):** writes the payload with Jackson's streaming generator (`writeString(char[], …)`), so the password never becomes a `String`. It then encrypts and writes the envelope with [AtomicFiles](../util/AtomicFiles.java), so a crash during the write leaves the old file intact. Saving again **overwrites** the file; this is how credentials are changed. There is no versioning, since the store only ever holds one record.
+- **[load(passphrase)](CredentialStore.java#L96):** returns empty if the file doesn't exist. Otherwise it reads the JSON envelope (and rejects one with missing fields), decrypts it, and reads `{emailAddress, appPassword}` with Jackson's **streaming** parser, copying the password characters directly into a `char[]`. The decrypted bytes are wiped in a `finally` block.
+- **[save(credentials, passphrase)](CredentialStore.java#L152):** writes the payload with Jackson's streaming generator (`writeString(char[], …)`), so the password never becomes a `String`. It then encrypts and writes the envelope with [AtomicFiles](../util/AtomicFiles.java), so a crash during the write leaves the old file intact. Saving again **overwrites** the file; this is how credentials are changed. There is no versioning, since the store only ever holds one record.
 - **`exists()` / `clear()`:** check for or delete the file.
 - **It never clears the passphrase it is given.** The passphrase is read once at startup and reused (e.g. a `save` after a `load`), so the code that read it is responsible for wiping it.
 - **Losing the passphrase means the file can't be decrypted.** The only fix is to run the setup again with a new App Password.
@@ -63,7 +63,22 @@ A Gmail address and an IMAP **App Password** (not the account's real login passw
 mvn -q compile exec:java -Dexec.mainClass=com.litroute.security.CredentialSetupCli
 ```
 
-This is the onboarding step until the M8 JavaFX UI exists. It prompts for the address, App Password and passphrase (twice), stops if the two passphrases differ, saves to the default location, and wipes every `char[]` in a `finally` block. It **refuses to run without a real terminal**: `System.console()` is null when input is piped or in some IDE consoles, and in that case the secrets would be echoed on screen.
+The terminal way to set up or rotate the credentials; the M8 UI's **Gmail** tab ([CredentialsPane](../ui/CredentialsPane.java) through [Session](../ui/Session.java)) does the same. It prompts for the address, App Password and passphrase (twice), stops if the two passphrases differ, saves to the default location, and wipes every `char[]` in a `finally` block. It **refuses to run without a real terminal**: `System.console()` is null when input is piped or in some IDE consoles, and in that case the secrets would be echoed on screen.
+
+## Interaction with M7 (the stores)
+
+The credential file is **not** one of the M7 stores and never touches them: it lives at `~/.litroute/credentials.enc`, outside `~/.litroute/data/`. It shares only the write mechanism, [AtomicFiles.writeAtomically](../util/AtomicFiles.java), so a crash during a save leaves the previous file intact, as with every M7 store.
+
+The credentials it yields unlock the two Gmail-facing steps that sit on either side of the stores:
+
+```
+credentials.enc ──load──▶ GmailCredentials ─┬─▶ M1 GmailEmailSource  ──RawEmail──▶ M2..M4 ──▶ M7c, then M7a
+                                            │       (fetch skips IDs in M7a; markRead/markUnread only for IDs in M7a)
+                                            └─▶ M10 GmailSmtpSender  ◀── approved papers from M7e; sent ones go to sent_papers.json
+```
+
+- M9 ([PipelineRunner](../pipeline/PipelineRunner.java)) loads them once per run, and clears them when the run ends.
+- No secret is ever written to an M7 store: M7a holds only Message-IDs, and the sent-papers record only the papers and times.
 
 ## How it's tested
 

@@ -55,12 +55,14 @@ For each signal, with values x₁ … x_S (the sem or lex values of the S studen
 
 ## 6. Score, assignment, recommendation
 
-- `score_s = relevance_s · share_s` ([line 361](RelevanceScorer.java#L361))
-- **Assigned student** = the one with the highest score ([line 364](RelevanceScorer.java#L364), [line 294](RelevanceScorer.java#L294))
-- **Recommended** if all of these hold:
-  - it is a research paper ([isResearch](RelevanceScorer.java#L327));
-  - `relevance ≥ 0.5` ([line 302](RelevanceScorer.java#L302));
-  - it is among the student's 3 highest-scoring papers in the batch ([lines 311–314](RelevanceScorer.java#L311)).
+- `score_s = relevance_s · share_s` ([line 337](RelevanceScorer.java#L337))
+- **Best student** = the one with the highest score ([line 339](RelevanceScorer.java#L339))
+- **Matched** to that student (queued, recommended) only if both hold, otherwise matched to no one ([line 293](RelevanceScorer.java#L293)):
+  - it is a research paper ([PaperCandidate.isResearch](../model/PaperCandidate.java); M2 already drops notes);
+  - `relevance ≥ 0.7`, i.e. `n ≥ 0.69`: its similarity is at least 69% of the way from a typical other student's paper to a typical own paper; from a title alone, `relevance ≥ 0.43`.
+- From a title alone, `n = 0.65 · n(sem) + 0.35 · n(lex)` instead of the plain average.
+- With an abstract or PDF, `relevance_title` is computed as for a title-only candidate, and if it is higher, `relevance += 0.6 · (relevance_title − relevance)`.
+- No quota: a student gets every paper that qualifies.
 
 With `SEMANTIC` or `LEXICAL` alone, steps 3 and 5 use just that one signal.
 
@@ -74,5 +76,4 @@ With `SEMANTIC` or `LEXICAL` alone, steps 3 and 5 use just that one signal.
 | [MIN_PAPERS](LexicalIndex.java#L27) / [MAX_PAPER_SHARE](LexicalIndex.java#L28) | 2 / 0.5 | TF-IDF term filter (section 2) |
 | [SHARE_SHARPNESS](RelevanceScorer.java#L88) | 2 | softmax (section 4) |
 | [LOG_9](RelevanceScorer.java#L120) | ln 9 | relevance curve (section 5) |
-| [RELEVANCE_FLOOR](RelevanceScorer.java#L97) | 0.5 | recommendation floor (section 6) |
-| [RECOMMENDED_PER_STUDENT](RelevanceScorer.java#L77) | 3 | recommendations per student (section 6) |
+| [RELEVANCE_FLOOR](RelevanceScorer.java#L98) | 0.7 | match floor (section 6) |

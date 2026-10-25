@@ -70,8 +70,10 @@ final class LinkUnwrapper {
      * Classifies an href from an alert email, peeling off up to {@code MAX_UNWRAP_DEPTH} (4) layers of redirect
      * wrappers first. Returns {@link Link#NONE} for null or non-http(s) hrefs, an OPAQUE link (with no URL) when
      * the innermost URL still looks like a click-tracker, and otherwise a READABLE link carrying that URL.
-     *
-     * <p>Example:
+     * Input: the raw href attribute value (null allowed).
+     * Output: the resolved link, never null.
+     * Used by: AlertHtmlParser (M2) for every link of a paper.
+     * Example:
      *
      * <pre>{@code
      * Input:  "https://scholar.google.com/scholar_url?url=https%3A%2F%2Fwww.nature.com%2Farticles%2Fs41586-024-0001&hl=en"
@@ -83,15 +85,13 @@ final class LinkUnwrapper {
      * Input:  "#top"
      * Output: Link[kind=NONE, url=Optional.empty]
      * }</pre>
-     *
-     * @param href the raw href attribute value; may be null
-     * @return the resolved link, never null
      */
     static Link resolve(String href) {
         if (href == null) {
             return Link.NONE;
         }
         String current = href.trim();
+        // Peel nested wrappers (a tracker wrapping a Scholar redirect wrapping the publisher URL).
         for (int depth = 0; depth < MAX_UNWRAP_DEPTH; depth++) {
             Optional<String> inner = embeddedTarget(current);
             if (inner.isEmpty()) {
@@ -111,8 +111,10 @@ final class LinkUnwrapper {
     /**
      * Finds one layer of embedded target inside a wrapper URL: the first query value that decodes to an http(s)
      * URL, or failing that the first path segment that does. The fragment ({@code #...}) is ignored.
-     *
-     * <p>Example:
+     * Input: an absolute URL, possibly a redirect wrapper.
+     * Output: the decoded inner URL, or empty if none is embedded.
+     * Used by: {@link #resolve}, once per layer.
+     * Example:
      *
      * <pre>{@code
      * Input:  "https://scholar.google.com/scholar_url?hl=en&url=https%3A%2F%2Fwww.nature.com%2Farticles%2Fx"
@@ -124,9 +126,6 @@ final class LinkUnwrapper {
      * Input:  "https://www.nature.com/articles/x"
      * Output: Optional.empty
      * }</pre>
-     *
-     * @param url an absolute URL, possibly a redirect wrapper
-     * @return the decoded inner URL, or empty if none is embedded
      */
     private static Optional<String> embeddedTarget(String url) {
         int schemeEnd = url.indexOf("://");
@@ -143,6 +142,7 @@ final class LinkUnwrapper {
         String path = questionMark < 0 ? pathAndQuery : pathAndQuery.substring(0, questionMark);
         String query = questionMark < 0 ? "" : pathAndQuery.substring(questionMark + 1);
 
+        // Query values first (?url=...), then path segments (/CL0/https:%2F%2F...).
         for (String pair : query.split("&")) {
             int equals = pair.indexOf('=');
             if (equals > 0 && isHttp(decode(pair.substring(equals + 1)))) {
@@ -161,17 +161,16 @@ final class LinkUnwrapper {
      * Tells whether a URL looks like an email click-tracker, either by its host (a tracking subdomain such as
      * {@code click.} or {@code links.}, or a known email-marketing provider) or by a tracking path such as
      * {@code /ls/click} or {@code /e/ctt}.
-     *
-     * <p>Example:
+     * Input: an absolute http(s) URL.
+     * Output: true if the host or path matches a known tracker pattern.
+     * Used by: {@link #resolve}, on the innermost URL.
+     * Example:
      *
      * <pre>{@code
      * Input:  "https://click.mailchimp.com/track?u=abc"            Output: true   (tracker host)
      * Input:  "https://news.example.org/ls/click?upn=aB3xQz9"       Output: true   (tracker path)
      * Input:  "https://www.nature.com/articles/s41586-024-0001"     Output: false
      * }</pre>
-     *
-     * @param url an absolute http(s) URL
-     * @return true if the host or path matches a known tracker pattern
      */
     private static boolean looksLikeTracker(String url) {
         int hostStart = url.indexOf("://") + 3;
@@ -185,18 +184,16 @@ final class LinkUnwrapper {
     }
 
     /**
-     * Tells whether a string is an absolute http or https URL, ignoring case.
-     *
-     * <p>Example:
+     * Input: any string.
+     * Output: true if it starts with {@code http://} or {@code https://}, ignoring case.
+     * Used by: {@link #resolve}, {@link #embeddedTarget}.
+     * Example:
      *
      * <pre>{@code
      * Input:  "HTTPS://www.nature.com/"   Output: true
      * Input:  "http://arxiv.org/abs/1"    Output: true
      * Input:  "mailto:a@b.org"            Output: false
      * }</pre>
-     *
-     * @param value the string to test
-     * @return true if it starts with {@code http://} or {@code https://}
      */
     private static boolean isHttp(String value) {
         String lower = value.toLowerCase(Locale.ROOT);
@@ -205,18 +202,17 @@ final class LinkUnwrapper {
 
     /**
      * Percent-decodes a URL component as UTF-8, keeping a literal {@code +} as {@code +} (rather than turning it
-     * into a space, as form decoding would). Returns the input unchanged if it contains a malformed escape.
-     *
-     * <p>Example:
+     * into a space, as form decoding would).
+     * Input: an encoded URL component.
+     * Output: the decoded string, or the input itself if it has a malformed escape.
+     * Used by: {@link #embeddedTarget}.
+     * Example:
      *
      * <pre>{@code
      * Input:  "https%3A%2F%2Fwww.nature.com%2Farticles%2Fx"   Output: "https://www.nature.com/articles/x"
      * Input:  "a+b%20c"                                        Output: "a+b c"
      * Input:  "100%zz"                                         Output: "100%zz"   (malformed, unchanged)
      * }</pre>
-     *
-     * @param value the encoded string
-     * @return the decoded string, or {@code value} itself if it can't be decoded
      */
     private static String decode(String value) {
         try {

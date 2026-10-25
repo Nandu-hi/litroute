@@ -21,15 +21,21 @@ import java.util.Map;
  * mvn -q compile exec:java -Dexec.mainClass=com.litroute.profile.ProfileBuilderCli [-Dexec.args=PROFILES_DIR]
  * </pre>
  *
- * PROFILES_DIR defaults to ~/.litroute/profiles. Besides what changed, it prints how similar each
- * profile's papers are to one another and how close each is to the profile as a whole (the mean of
- * its papers' vectors), so a paper that does not fit its student stands out.
+ * PROFILES_DIR defaults to ~/.litroute/profiles. Besides what changed, it prints each profile's keywords,
+ * how similar its papers are to one another, and how close each is to the profile as a whole (the mean
+ * of its papers' vectors), so a paper that does not fit its student stands out.
  */
 public final class ProfileBuilderCli {
 
     private ProfileBuilderCli() {
     }
 
+    /**
+     * Input: optional PROFILES_DIR (default ~/.litroute/profiles).
+     * Output: prints per profile what was embedded/reused/skipped, its keywords and how well each paper fits; M7d updated.
+     * Used by: the user, from the terminal ({@code exec:java -Dexec.mainClass=com.litroute.profile.ProfileBuilderCli}).
+     * Example: no args, alice/ with 3 PDFs -> "alice: 3 embedded, 0 unchanged ..." then keywords and similarities
+     */
     public static void main(String[] args) throws Exception {
         Path root = args.length > 0 ? Path.of(args[0]) : ProfileBuilder.defaultProfilesRoot();
         ProfileStore store = ProfileStore.atDefaultLocation();
@@ -46,14 +52,17 @@ public final class ProfileBuilderCli {
                     + "and optionally an " + ProfileBuilder.EMAIL_FILE + ".");
         }
         for (ProfileReport profileReport : report.profiles()) {
-            System.out.printf("%n%s: %d embedded, %d unchanged (%d given their text), %d skipped, emails %s%n",
+            System.out.printf("%n%s: %d embedded, %d unchanged (%d read again for text or keywords), %d skipped, emails %s%n",
                     profileReport.name(), profileReport.embedded(), profileReport.reused(), profileReport.textAdded(),
                     profileReport.skipped().size(), profileReport.emails());
             for (SkippedPdf skipped : profileReport.skipped()) {
                 System.out.printf("  skipped %s: %s%n", skipped.relativePath(), skipped.reason());
             }
             if (profileReport.stored()) {
-                printPapers(profiles.get(profileReport.name()));
+                Profile profile = profiles.get(profileReport.name());
+                System.out.println("  keywords: " + (profile.keywords().isEmpty() ? "(none of its papers lists any)"
+                        : String.join("; ", profile.keywords())));
+                printPapers(profile);
             } else {
                 System.out.println("  no readable PDF - profile not saved");
             }
@@ -63,6 +72,12 @@ public final class ProfileBuilderCli {
         }
     }
 
+    /**
+     * Input: a stored profile.
+     * Output: prints min/mean/max paper-to-paper cosine and each paper's cosine to the profile mean, best fit first.
+     * Used by: {@link #main}.
+     * Example: -> "paper-to-paper similarity: min 0.712, mean 0.801, max 0.903" ...
+     */
     private static void printPapers(Profile profile) {
         var papers = profile.papers();
         double min = 1;

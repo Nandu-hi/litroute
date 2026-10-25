@@ -14,14 +14,18 @@ import org.jsoup.Jsoup;
  * The six alert emails Prof. Prakash Badal forwarded as reference material, and the only email
  * input the tests use. Each one is a real message: a real publisher's alert, forwarded from
  * aprakashn@gmail.com to cs24b027@smail.iitm.ac.in on 4 September 2026, with the envelope headers
- * below taken from the Gmail print of that message and the body reproducing the forward exactly as
- * Gmail delivers one - the forwarder's note and signature, the "Forwarded message" header block,
- * then the publisher's own HTML.
+ * below taken from the Gmail print of that message. The bodies here are tidied copies: the forwarder's
+ * note and signature, the "Forwarded message" header block and the publisher's text are real, but
+ * section labels are headings, links are direct DOI links where the real ones are tracking links, and
+ * Gmail's own address links are gone. The HTML exactly as it reached the pipeline's inbox is in
+ * {@code samples/received/} (see {@code ReceivedAlertsTest}); the recorded HTTP traffic was captured
+ * against these tidied copies.
  *
  * Between them they cover every shape the pipeline has to handle: a readable DOI link
  * (SpringerOpen relevant), opaque tracking tokens only (SpringerOpen irrelevant), a redirect
  * wrapper carrying the real URL (Google Scholar), a mix of decodable and encrypted wrappers
- * (ScienceDirect), and a 22-paper table of contents (ASCE).
+ * (ScienceDirect), and a 22-entry table of contents (ASCE) whose 17 research papers are extracted; its
+ * discussion, closure, two book reviews and erratum are notes, which M2 drops.
  */
 public final class SampleMails {
 
@@ -73,7 +77,7 @@ public final class SampleMails {
 
     public static final Sample ASCE = new Sample("asce_natural_hazards_review.html",
             "Fwd: New articles have been published Natural Hazards Review, Volume 27, Issue 4",
-            "ascelibrary@asce.org", 22, SEP_4.plusSeconds(7 * 3600 + 14 * 60));
+            "ascelibrary@asce.org", 17, SEP_4.plusSeconds(7 * 3600 + 14 * 60));
 
     public static final List<Sample> ALL = List.of(SPRINGER_RELEVANT, SPRINGER_IRRELEVANT, TANDFONLINE,
             GOOGLE_SCHOLAR, SCIENCEDIRECT, ASCE);

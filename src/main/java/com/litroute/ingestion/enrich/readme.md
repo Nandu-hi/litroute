@@ -10,7 +10,7 @@ It plugs into M2 through the [PaperEnricher](../extract/PaperEnricher.java) inte
 |---|---|---|
 | **Input** | [PaperCandidate](../../model/PaperCandidate.java) + [LinkKind](../extract/LinkKind.java) | The candidate exactly as M2 parsed it from the email, and whether its link was `READABLE` (direct or decoded), `OPAQUE` (tracking token) or `NONE`. |
 | **Output** | `PaperCandidate` | The same paper with empty fields filled: `doi`, `authors` (only if the email had none), `venue`, `year`, `url`, `abstractSnippet`, `pdfPath`. `title`, `articleType` and `sourceMessageId` are never changed. |
-| **Side effects** | Files and a map | A PDF written to the PDF folder (default `~/.litroute/data/pdfs`, from [PdfDownloader.defaultDirectory()](PdfDownloader.java#L41)). With `CachingPaperEnricher`, entries added to the M7c lookup-cache map. |
+| **Side effects** | Files and a map | A PDF written to the PDF folder (default `~/.litroute/data/pdfs`, from [PdfDownloader.defaultDirectory()](PdfDownloader.java#L74)). With `CachingPaperEnricher`, entries added to the M7c lookup-cache map. |
 
 **The email always wins.** A lookup only fills fields the email left empty. When sources disagree, the order of precedence is: email → publisher page → Crossref → OpenAlex.
 
@@ -37,7 +37,7 @@ PaperCandidate (gaps filled, pdfPath set)
 
 ### [OnlinePaperEnricher](OnlinePaperEnricher.java): the orchestrator
 
-[enrich()](OnlinePaperEnricher.java#L49) runs these steps:
+[enrich()](OnlinePaperEnricher.java#L78) runs these steps:
 
 1. **Publisher page.** Read only when the link is `READABLE`. An `OPAQUE` link is useless, so that paper is identified by title through the APIs alone, and the email's tracking links are never followed.
 2. **Known DOI.** The email's DOI, otherwise the one on the publisher page.
@@ -46,11 +46,11 @@ PaperCandidate (gaps filled, pdfPath set)
 5. **PDF.** If the candidate has no PDF yet, the downloader tries the PDF URLs in order: the publisher page's own link first, then Crossref's, then OpenAlex's open-access copies.
 6. **Build the result.** Email fields are kept and empty ones are filled. `url` falls back to the landing page URL, then to `https://doi.org/<doi>`.
 
-[OnlinePaperEnricher.create(pdfDirectory)](OnlinePaperEnricher.java#L40) wires up the real network. It uses one `JdkHttpFetcher` shared by the page reader, Crossref, OpenAlex and the downloader.
+[OnlinePaperEnricher.create(pdfDirectory)](OnlinePaperEnricher.java#L63) wires up the real network. It uses one `JdkHttpFetcher` shared by the page reader, Crossref, OpenAlex and the downloader.
 
 ### [CachingPaperEnricher](CachingPaperEnricher.java): the M7c lookup cache in front
 
-This class wraps another enricher with M7c's live lookup-cache map, keyed by [Titles.compact(title)](../../util/Titles.java#L32) (lowercase letters and digits only):
+This class wraps another enricher with M7c's live lookup-cache map, keyed by [Titles.compact(title)](../../util/Titles.java#L42) (lowercase letters and digits only):
 
 - **Cache hit**, when the cached PDF (if any) is still on disk: the paper is answered with **no network access**. The new email still wins, and the cached data only fills its gaps.
 - **Stale entry**: if the cached PDF has been deleted, the paper is looked up again.
@@ -75,6 +75,9 @@ Every source follows the same contract:
 
 - A 404 or other 4xx means "no such record" (empty).
 - A 429 or 5xx throws.
+- **Preprints:** a journal article and its preprint (SSRN, Research Square) share a title, and Crossref may list the preprint first. Among title-search hits whose titles match, [CrossrefSource](CrossrefSource.java) prefers one in the journal the alert names, then any published version over a preprint (`type: posted-content`). So "Drought-flood coexistence…" gets its International Journal of Disaster Risk Reduction DOI, not `10.2139/ssrn.4681645`.
+- **Truncated abstracts:** some alerts cut the abstract off after a dozen words (Wiley's "Recommended articles": "…ground motion recordings are"). When a looked-up abstract begins with the alert's text and goes on, it replaces it ([OnlinePaperEnricher.completed](OnlinePaperEnricher.java)); otherwise the alert's abstract is kept.
+- **Rate limits:** the live fetcher is a [PacedFetcher](PacedFetcher.java). It starts Crossref requests at least 250 ms apart (Crossref's public pool allows 5 a second, one at a time) and OpenAlex requests 125 ms apart (10 a second). A 429 asking for a wait of up to 5 s (or stating none, taken as 1 s) is waited out and retried once. A longer wait, such as OpenAlex's spent daily budget (hours), is returned at once as an outage.
 - Bodies are capped at 4 MiB.
 - HTML in API text (`&amp;`, `<i>`, `<sub>`) is turned into plain text, and a leading "Abstract" heading is stripped.
 
@@ -83,7 +86,7 @@ Every source follows the same contract:
 | [CrossrefSource](CrossrefSource.java) | `/works/<doi>`. If Crossref doesn't know the DOI, it falls through to a title search. | `query.bibliographic=<title>&rows=5`. The best hit is accepted only if its title similarity is at least **0.88** ([ACCEPT_THRESHOLD](MetadataSource.java#L10)). | DOI, title, authors (given + family), journal, year, the deposited abstract, and PDF links whose content type says PDF. |
 | [OpenAlexSource](OpenAlexSource.java) | `/works/https://doi.org/<doi>`. The DOI comes back bare. | `search=<title>&per-page=5`, with the same 0.88 threshold. | Open-access PDF locations (`best_oa_location`, `primary_location`, `locations`), which Crossref usually lacks. The abstract is rebuilt from OpenAlex's inverted index. |
 
-Titles are compared with [Titles.similarity](../../util/Titles.java#L21): edit distance on the compacted titles. Publisher quirks like missing spaces, dash styles, quote styles and accents don't count against a match, but an unrelated paper scores low.
+Titles are compared with [Titles.similarity](../../util/Titles.java#L26): edit distance on the compacted titles. Publisher quirks like missing spaces, dash styles, quote styles and accents don't count against a match, but an unrelated paper scores low.
 
 ### [CompositeMetadataLookup](CompositeMetadataLookup.java): asking both APIs
 
@@ -111,7 +114,7 @@ If the URL itself serves a PDF, that URL is reported as the PDF location. A 403 
 - **Reuse first.** If `<stem>.pdf` already exists and really is a PDF, it is reused with no download, so re-runs don't fetch twice.
 - **Try URLs in order.** Only http(s) URLs are tried. A response is accepted only if it is a 2xx, wasn't truncated (cap is 80 MiB), and **contains `%PDF-` in its first 1 KiB**. A paywall or login page that answers 200 with HTML is rejected, and the next URL is tried.
 - **Atomic write.** The file is written atomically ([AtomicFiles](../../util/AtomicFiles.java)), so a failed download never leaves a partial or fake file behind.
-- **File name** ([fileStem](PdfDownloader.java#L72)): the DOI with every character outside `[A-Za-z0-9._-]` replaced by `_`, so a DOI from an email can't steer the write out of the folder. Without a DOI, the name is `title-<16 hex chars of SHA-256 of the compacted title>`.
+- **File name** ([fileStem](PdfDownloader.java#L143)): the DOI with every character outside `[A-Za-z0-9._-]` replaced by `_`, so a DOI from an email can't steer the write out of the folder. Without a DOI, the name is `title-<16 hex chars of SHA-256 of the compacted title>`.
 
 ### The HTTP layer
 
@@ -123,6 +126,22 @@ If the URL itself serves a PDF, that URL is reported as the PDF location. A 403 
   - 8 s connect timeout and 30 s request timeout;
   - body-size cap;
   - User-Agent `LitRoute/1.0 (personal research-paper alert reader)`.
+
+## Interaction with M7 (the stores)
+
+M3 writes no store file itself, but two of its outputs end up in M7:
+
+- **M7c lookup cache.** [CachingPaperEnricher](CachingPaperEnricher.java) is handed M7c's live `lookups` map (keyed by `Titles.compact(title)`). A hit is answered from it with no network access, unless its PDF has since been deleted; a miss goes to OnlinePaperEnricher, and the result is added to the map **only if it found a DOI**, so an API outage is never cached. [AlertBatchProcessor](../extract/AlertBatchProcessor.java) saves the map with the batch's papers.
+- **PDFs for M7c and M7e.** [PdfDownloader](PdfDownloader.java) saves into `~/.litroute/data/pdfs/` (next to the stores) and the candidate's `pdfPath` points there; M7c stores that path. When M6 matches the paper, M7e copies the file into `matched/<student>/`. A re-run reuses a PDF already in `pdfs/`, and Clear and re-run leaves that folder alone.
+
+```
+M7c lookups ──▶ CachingPaperEnricher ──hit──▶ cached candidate (email fields win)
+                     │ miss
+                     ▼
+               OnlinePaperEnricher ──▶ page / Crossref / OpenAlex ──▶ PdfDownloader ──▶ data/pdfs/<doi>.pdf
+                     │ DOI found?
+                     └──yes──▶ lookups.put(key, enriched)  ──(saved with the batch)──▶ M7c
+```
 
 ## How it's tested
 

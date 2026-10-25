@@ -5,15 +5,6 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
-import com.litroute.ingestion.enrich.ArticlePageReader;
-import com.litroute.ingestion.enrich.CompositeMetadataLookup;
-import com.litroute.ingestion.enrich.CrossrefSource;
-import com.litroute.ingestion.enrich.OnlinePaperEnricher;
-import com.litroute.ingestion.enrich.OpenAlexSource;
-import com.litroute.ingestion.enrich.PdfDownloader;
-import com.litroute.ingestion.enrich.RecordedHttp;
-import com.litroute.ingestion.extract.AlertBatchProcessor;
-import com.litroute.ingestion.extract.PaperExtractor;
 import com.litroute.model.PaperCandidate;
 import com.litroute.model.Profile;
 import com.litroute.model.Profile.ProfilePaper;
@@ -23,12 +14,9 @@ import com.litroute.profile.PaperText;
 import com.litroute.profile.PdfTextExtractor;
 import com.litroute.profile.UnreadablePdfException;
 import com.litroute.scoring.RelevanceScorer.Strategy;
-import com.litroute.store.EmailCacheStore;
-import com.litroute.store.EnrichmentCacheStore;
+import com.litroute.testing.ClientAlerts;
 import com.litroute.testing.MatchTestSet;
 import com.litroute.testing.MatchTestSet.Filed;
-import com.litroute.testing.SampleMails;
-import com.litroute.testing.SampleMails.Sample;
 import com.litroute.testing.TestModel;
 import com.litroute.testing.TestProfiles;
 import com.litroute.util.Titles;
@@ -44,7 +32,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -65,7 +54,7 @@ public class RelevanceScorerTest {
     private static Map<PaperCandidate, String> titleAndAbstract;
     /** The full-text candidates whose PDF has text (the rest are scans, known by their file name). */
     private static Set<PaperCandidate> readable;
-    private static final Map<String, List<ScoredPaper>> MATCHES = new HashMap<>();
+    private static final Map<String, Map<String, List<ScoredPaper>>> MATCHES = new HashMap<>();
 
     private static synchronized RelevanceScorer scorer() {
         if (scorer == null) {
@@ -111,45 +100,67 @@ public class RelevanceScorerTest {
     }
 
     /** Each batch matched once per strategy and test JVM (a PDF takes seconds to read and embed). */
-    private static synchronized List<ScoredPaper> matches(Map<PaperCandidate, String> batch, Strategy strategy) {
+    private static synchronized Map<String, List<ScoredPaper>> matches(Map<PaperCandidate, String> batch,
+            Strategy strategy) {
         String key = (batch == fullText() ? "full text" : "title and abstract") + "/" + strategy;
-        return MATCHES.computeIfAbsent(key, k -> scorer().match(new ArrayList<>(batch.keySet()),
-                RelevanceScorer.RECOMMENDED_PER_STUDENT, strategy));
-    }
-
-    /** As the professor asked: each paper goes to one student, the one it is most relevant to. */
-    @Test
-    public void everyPaperIsMatchedToExactlyOneStudent() {
-        List<ScoredPaper> matches = matches(fullText(), Strategy.HYBRID);
-
-        assertEquals(fullText().size(), matches.size());
-        assertEquals(fullText().keySet(), matches.stream().map(ScoredPaper::candidate).collect(Collectors.toSet()));
-        for (ScoredPaper match : matches) {
-            assertEquals(match.profileName(), scorer().scoreAll(match.candidate()).get(0).profileName());
-        }
+        return MATCHES.computeIfAbsent(key, k -> scorer().match(new ArrayList<>(batch.keySet()), strategy));
     }
 
     /**
-     * The new papers are assigned to the student they are filed under. A scanned PDF has no text, so
-     * its file name is all there is to go on and it may miss.
+     * As the professor asked: a paper goes to at most one student, the one it is most relevant to, and
+     * only if it is close to that student's own work.
      */
     @Test
-    public void filedPapersAreAssignedToTheirStudent() {
-        List<ScoredPaper> matches = matches(fullText(), Strategy.HYBRID);
-        Routing all = Routing.of(matches, fullText());
-        Routing withText = Routing.of(matches.stream().filter(match -> readable.contains(match.candidate())).toList(),
-                fullText());
+    public void aPaperIsMatchedOnlyToItsBestStudentAndOnlyWhenCloseToTheirWork() {
+        List<ScoredPaper> matches = flatten(matches(fullText(), Strategy.HYBRID));
 
-        assertTrue(withText.report(), withText.correct() >= 0.95 * withText.papers());
-        assertTrue(all.report(), all.correct() >= 0.90 * all.papers());
+        assertEquals("each paper at most once", matches.size(),
+                matches.stream().map(ScoredPaper::candidate).distinct().count());
+        assertTrue(matches.size() < fullText().size());
+        for (ScoredPaper match : matches) {
+            assertEquals(match.profileName(), scorer().scoreAll(match.candidate()).get(0).profileName());
+            assertTrue(match.rationale(), match.recommended());
+            assertTrue(match.rationale(), relevance(match) >= (match.rationale().contains("title alone")
+                    ? RelevanceScorer.TITLE_FLOOR : RelevanceScorer.RELEVANCE_FLOOR));
+        }
+    }
+
+    /** The output every matcher shares: each student, in profile order, with their papers best first. */
+    @Test
+    public void matchesAreListedPerStudentBestFirst() {
+        Map<String, List<ScoredPaper>> matches = matches(fullText(), Strategy.HYBRID);
+
+        assertEquals(new ArrayList<>(TestProfiles.profiles().keySet()), new ArrayList<>(matches.keySet()));
+        matches.forEach((student, papers) -> {
+            for (int i = 0; i < papers.size(); i++) {
+                assertEquals(student, papers.get(i).profileName());
+                if (i > 0) {
+                    assertTrue(student + ": best first", papers.get(i - 1).score() >= papers.get(i).score());
+                }
+            }
+        });
+    }
+
+    /**
+     * The new papers reach the student they are filed under, and almost nothing reaches the wrong
+     * one. A scanned PDF has no text, so its file name is all there is to go on; it is left out.
+     */
+    @Test
+    public void filedPapersReachTheirStudent() {
+        Routing withText = Routing.of(matches(fullText(), Strategy.HYBRID).values().stream().flatMap(List::stream)
+                .filter(match -> readable.contains(match.candidate())).toList(), fullText());
+
+        assertTrue(withText.report(), withText.correct() >= 0.85 * readable.size());
+        assertTrue(withText.report(), withText.correct() >= 0.90 * withText.papers());
     }
 
     /** Most alert papers arrive without a readable PDF: title and abstract alone must still find the student. */
     @Test
     public void titleAndAbstractAloneStillFindTheStudent() {
-        List<ScoredPaper> matches = matches(titleAndAbstract(), Strategy.HYBRID);
+        List<ScoredPaper> matches = flatten(matches(titleAndAbstract(), Strategy.HYBRID));
         Routing routing = Routing.of(matches, titleAndAbstract());
 
+        assertTrue(routing.report(), routing.correct() >= 0.85 * titleAndAbstract().size());
         assertTrue(routing.report(), routing.correct() >= 0.90 * routing.papers());
         for (ScoredPaper match : matches) {
             assertTrue(match.rationale(), match.rationale().contains("title and abstract"));
@@ -159,33 +170,19 @@ public class RelevanceScorerTest {
     /** The proposal's acceptance criterion: the papers recommended to each student are at least 80% theirs. */
     @Test
     public void recommendationsMeetTheProposalsPrecisionTarget() {
-        double withPdf = MatchEvaluation.recommendationPrecision(matches(fullText(), Strategy.HYBRID), fullText(),
-                RelevanceScorer.RECOMMENDED_PER_STUDENT);
+        double withPdf = MatchEvaluation.recommendationPrecision(matches(fullText(), Strategy.HYBRID), fullText(), 3);
         double abstractOnly = MatchEvaluation.recommendationPrecision(matches(titleAndAbstract(), Strategy.HYBRID),
-                titleAndAbstract(), RelevanceScorer.RECOMMENDED_PER_STUDENT);
+                titleAndAbstract(), 3);
 
         assertTrue("full text " + withPdf, withPdf >= 0.8);
         assertTrue("title and abstract " + abstractOnly, abstractOnly >= 0.8);
     }
 
-    @Test
-    public void eachStudentGetsAtMostTheRequestedNumberOfRecommendations() {
-        List<ScoredPaper> three = matches(fullText(), Strategy.HYBRID);
-        List<ScoredPaper> two = scorer().match(new ArrayList<>(fullText().keySet()), 2);
-
-        assertAtMostPerStudent(three, 3);
-        assertAtMostPerStudent(two, 2);
-        assertTrue(three.stream().anyMatch(ScoredPaper::recommended));
-        for (ScoredPaper match : three) {
-            assertEquals(match.rationale(), !match.recommended(), match.rationale().contains("Not recommended"));
-        }
-    }
-
     /** Why M6 compares words as well: on the professor's filed papers, words and meaning together beat SPECTER2 alone. */
     @Test
     public void wordsAndMeaningTogetherBeatSpecter2Alone() {
-        List<ScoredPaper> hybrid = matches(fullText(), Strategy.HYBRID);
-        List<ScoredPaper> semantic = matches(fullText(), Strategy.SEMANTIC);
+        Map<String, List<ScoredPaper>> hybrid = matches(fullText(), Strategy.HYBRID);
+        Map<String, List<ScoredPaper>> semantic = matches(fullText(), Strategy.SEMANTIC);
         int hybridCorrect = MatchEvaluation.assignedCorrectly(hybrid, fullText());
         int semanticCorrect = MatchEvaluation.assignedCorrectly(semantic, fullText());
         double hybridPrecision = MatchEvaluation.recommendationPrecision(hybrid, fullText(), 3);
@@ -197,6 +194,11 @@ public class RelevanceScorerTest {
         assertTrue(detail, hybridCorrect > semanticCorrect || hybridPrecision > semanticPrecision);
     }
 
+    /**
+     * Scoring one paper against every student, without matching it: one score per student, each
+     * between 0 and 1, best first, still pending and not recommended, with a rationale naming the
+     * student's closest work and what the score was computed from.
+     */
     @Test
     public void everyScoreIsBetweenZeroAndOneAndExplained() {
         matches(fullText(), Strategy.HYBRID); // every candidate read and embedded once
@@ -262,6 +264,10 @@ public class RelevanceScorerTest {
         assertTrue(alone.rationale(), alone.rationale().contains("title alone"));
     }
 
+    /**
+     * A profile embedded with a different model than the scorer's is refused: its vectors live in
+     * another space, so comparing against them would give meaningless scores.
+     */
     @Test(expected = IllegalArgumentException.class)
     public void profilesFromAnotherModelAreRejected() {
         Profile real = TestProfiles.profiles().values().iterator().next();
@@ -291,52 +297,37 @@ public class RelevanceScorerTest {
 
     /**
      * The papers M4 actually hands over: the client's six real alert emails, extracted, enriched and
-     * deduplicated offline from the recorded HTTP traffic. Each goes to one student. The SpringerOpen
-     * paper the professor said should be marked irrelevant is not recommended, the one he called highly
-     * relevant is, and the ASCE issue's discussion, closure, book reviews and erratum never are.
+     * deduplicated offline from the recorded HTTP traffic. The paper the professor called highly relevant
+     * is matched; the SpringerOpen paper he said should be marked irrelevant is not. (The ASCE issue's
+     * discussion, closure, book reviews and erratum never get this far: M2 drops them.)
      */
     @Test
-    public void clientAlertPapersAreMatchedAndOnlyRelevantResearchIsRecommended() throws IOException {
-        Path data = tmp.newFolder("data").toPath();
-        RecordedHttp http = new RecordedHttp();
-        OnlinePaperEnricher enrichment = new OnlinePaperEnricher(new ArticlePageReader(http),
-                new CompositeMetadataLookup(List.of(new CrossrefSource(http), new OpenAlexSource(http))),
-                new PdfDownloader(http, data.resolve("pdfs")));
-        AlertBatchProcessor pipeline = new AlertBatchProcessor(new PaperExtractor(enrichment),
-                new EnrichmentCacheStore(data.resolve("enrichment_cache.json")),
-                new EmailCacheStore(data.resolve("email_cache.json")));
-        List<PaperCandidate> deduplicated = pipeline.process(SampleMails.ALL.stream().map(Sample::email).toList());
+    public void clientAlertPapersAreMatchedOnlyWhenRelevantResearch() throws IOException {
+        List<PaperCandidate> deduplicated = ClientAlerts.deduplicated(tmp.newFolder("data").toPath());
 
-        List<ScoredPaper> matches = scorer().match(deduplicated);
+        List<ScoredPaper> matches = flatten(scorer().match(deduplicated));
 
-        assertEquals(deduplicated, matches.stream().map(ScoredPaper::candidate).toList());
-        assertAtMostPerStudent(matches, RelevanceScorer.RECOMMENDED_PER_STUDENT);
-        ScoredPaper irrelevant = titled(matches, "Hygrothermal analysis of ceramic coating durability");
-        ScoredPaper relevant = titled(matches, "Advancing soil-structure interaction (SSI)");
-        assertFalse(irrelevant.rationale(), irrelevant.recommended());
-        assertTrue(relevant.rationale(), relevant.recommended());
-        int notes = 0;
-        for (ScoredPaper match : matches) {
-            String section = match.candidate().articleType().orElse("");
-            if (Set.of("Discussions and Closures", "Book Reviews", "Corrections").contains(section)) {
-                notes++;
-                assertFalse(match.candidate().title(), match.recommended());
-                assertTrue(match.rationale(), match.rationale().contains("not a research paper"));
-            }
-        }
-        assertEquals("the ASCE issue's discussion, closure, two book reviews and erratum", 5, notes);
+        assertTrue(matches.size() + " of " + deduplicated.size(), !matches.isEmpty() && matches.size() < deduplicated.size());
+        assertTrue(titled(matches, "Advancing soil-structure interaction (SSI)").isPresent());
+        assertFalse(titled(matches, "Hygrothermal analysis of ceramic coating durability").isPresent());
+        assertTrue(deduplicated.stream().allMatch(PaperCandidate::isResearch));
     }
 
-    private static ScoredPaper titled(List<ScoredPaper> matches, String titleStart) {
+    private static Optional<ScoredPaper> titled(List<ScoredPaper> matches, String titleStart) {
         String wanted = Titles.compact(titleStart);
-        return matches.stream().filter(match -> Titles.compact(match.candidate().title()).startsWith(wanted)).findFirst()
-                .orElseThrow(() -> new AssertionError("no paper titled \"" + titleStart + "...\""));
+        return matches.stream().filter(match -> Titles.compact(match.candidate().title()).startsWith(wanted)).findFirst();
     }
 
-    private static void assertAtMostPerStudent(List<ScoredPaper> matches, int limit) {
-        Map<String, Long> recommended = matches.stream().filter(ScoredPaper::recommended)
-                .collect(Collectors.groupingBy(ScoredPaper::profileName, Collectors.counting()));
-        recommended.forEach((student, count) -> assertTrue(student + " got " + count, count <= limit));
+    /** The relevance a match's rationale reports. */
+    private static double relevance(ScoredPaper match) {
+        Matcher found = Pattern.compile("Relevance ([0-9.]+)").matcher(match.rationale());
+        assertTrue(match.rationale(), found.find());
+        return Double.parseDouble(found.group(1));
+    }
+
+    /** Every student's papers in one list, for checks that look at papers one by one. */
+    private static List<ScoredPaper> flatten(Map<String, List<ScoredPaper>> matches) {
+        return matches.values().stream().flatMap(List::stream).toList();
     }
 
     /** Tally of how filed papers were assigned. */

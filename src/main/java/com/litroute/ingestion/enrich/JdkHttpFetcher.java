@@ -25,10 +25,22 @@ public final class JdkHttpFetcher implements HttpFetcher {
             .build();
     private final String userAgent;
 
+    /**
+     * Input: the User-Agent to send (APIs ask for a contact address in it).
+     * Output: a fetcher with 8 s connect and 30 s request timeouts.
+     * Used by: OnlinePaperEnricher.create (M3), wrapped in a PacedFetcher.
+     * Example: {@code new JdkHttpFetcher("LitRoute/1.0 (mailto:x@y.org)")}
+     */
     public JdkHttpFetcher(String userAgent) {
         this.userAgent = userAgent;
     }
 
+    /**
+     * Input: an http(s) URI and the most body bytes to read.
+     * Output: the reply, body cut at maxBytes (truncated = true); IOException on non-http(s), network failure or interrupt.
+     * Used by: PacedFetcher, and through it every M3 lookup and download.
+     * Example: {@code get(pdfUrl, 100)} for a 5 MB PDF -> reply with 100 bytes, truncated = true
+     */
     @Override
     public HttpReply get(URI uri, long maxBytes) throws IOException {
         String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
@@ -49,6 +61,7 @@ public final class JdkHttpFetcher implements HttpFetcher {
                 long total = 0;
                 boolean truncated = false;
                 int read;
+                // Stop reading at the cap rather than downloading a huge body.
                 while ((read = in.read(buffer)) != -1) {
                     if (total + read > maxBytes) {
                         out.write(buffer, 0, (int) (maxBytes - total));
@@ -60,7 +73,7 @@ public final class JdkHttpFetcher implements HttpFetcher {
                 }
                 return new HttpReply(response.statusCode(),
                         response.headers().firstValue("content-type").orElse(""),
-                        out.toByteArray(), response.uri(), truncated);
+                        out.toByteArray(), response.uri(), truncated, response.headers().firstValue("retry-after"));
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();

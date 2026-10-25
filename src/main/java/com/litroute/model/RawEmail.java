@@ -19,6 +19,12 @@ public record RawEmail(
         Optional<String> htmlBody,
         Optional<String> plainTextBody) {
 
+    /**
+     * Input: the message's headers and bodies; messageId non-blank, at least one body present.
+     * Output: the email; throws if messageId is blank or both bodies are empty.
+     * Used by: GmailEmailSource (M1) for each fetched alert; read by AlertBatchProcessor (M2) and M7a.
+     * Example: {@code new RawEmail("<a@b>", "New articles", "alerts@x.org", now, Optional.of("<html>"), Optional.empty())} -> ok
+     */
     public RawEmail {
         if (messageId == null || messageId.isBlank() || messageId.isEmpty() ) {
             throw new IllegalArgumentException("messageId must not be blank");

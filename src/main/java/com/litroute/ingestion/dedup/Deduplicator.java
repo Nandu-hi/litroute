@@ -31,8 +31,10 @@ public final class Deduplicator {
     static final double SAME_TITLE_THRESHOLD = 0.92;
 
     /**
-     * @param candidates in priority order: earlier entries win conflicting fields
-     * @return one entry per distinct paper, in first-seen order
+     * Input: candidates in priority order (earlier entries win conflicting fields).
+     * Output: one entry per distinct paper, in first-seen order, duplicates merged in.
+     * Used by: AlertBatchProcessor.process (M4), on M7c's papers plus the new batch, before saving M7c.
+     * Example: [A(doi 10.1/X, no abstract), B(doi 10.1/x, abstract "..")] -> [A with abstract ".."]
      */
     public List<PaperCandidate> deduplicate(List<PaperCandidate> candidates) {
         List<PaperCandidate> merged = new ArrayList<>();
@@ -47,6 +49,12 @@ public final class Deduplicator {
         return List.copyOf(merged);
     }
 
+    /**
+     * Input: the papers merged so far and one more candidate.
+     * Output: the index of the merged paper it duplicates, or -1.
+     * Used by: {@link #deduplicate}.
+     * Example: merged [A, B], candidate same DOI as B -> 1
+     */
     private static int indexOfSamePaper(List<PaperCandidate> merged, PaperCandidate candidate) {
         for (int i = 0; i < merged.size(); i++) {
             if (samePaper(merged.get(i), candidate)) {
@@ -56,6 +64,12 @@ public final class Deduplicator {
         return -1;
     }
 
+    /**
+     * Input: two candidates.
+     * Output: true if both DOIs match (ignoring case), or, with at most one DOI, titles are &gt;= 0.92 similar and authors agree.
+     * Used by: {@link #indexOfSamePaper}; DeduplicatorTest.
+     * Example: ("Wave loads: a review", no DOI) vs ("Wave Loads - A Review", doi 10.1/x) -> true; DOIs 10.1/a vs 10.1/b -> false
+     */
     static boolean samePaper(PaperCandidate a, PaperCandidate b) {
         Optional<String> doiA = a.doi().map(doi -> doi.toLowerCase(Locale.ROOT));
         Optional<String> doiB = b.doi().map(doi -> doi.toLowerCase(Locale.ROOT));
@@ -67,9 +81,11 @@ public final class Deduplicator {
     }
 
     /**
-     * Empty author lists agree with anything - most alerts list no authors at all, and demanding a
-     * match there would stop the fuzzy path from ever merging. Two non-empty lists must share at least
-     * one surname.
+     * Empty author lists agree with anything (most alerts list none); two non-empty lists must share a surname.
+     * Input: two candidates.
+     * Output: whether their author lists agree.
+     * Used by: {@link #samePaper}.
+     * Example: [A. Rao, B. Li] vs [Bo Li] -> true; [A. Rao] vs [C. Wu] -> false; [] vs [C. Wu] -> true
      */
     private static boolean authorsAgree(PaperCandidate a, PaperCandidate b) {
         if (a.authors().isEmpty() || b.authors().isEmpty()) {
@@ -79,12 +95,24 @@ public final class Deduplicator {
                 .anyMatch(surname -> b.authors().stream().map(Deduplicator::surname).anyMatch(surname::equals));
     }
 
+    /**
+     * Input: an author name.
+     * Output: its last word, compacted.
+     * Used by: {@link #authorsAgree}.
+     * Example: "Maria de la Cruz" -> "cruz"
+     */
     private static String surname(String author) {
         String[] parts = author.trim().split("\\s+");
         return Titles.compact(parts[parts.length - 1]);
     }
 
-    /** The winner keeps everything it has; the duplicate only contributes what the winner is missing. */
+    /**
+     * The winner keeps everything it has; the duplicate only contributes what the winner is missing.
+     * Input: the first-seen paper and its duplicate.
+     * Output: the union, winner's fields first.
+     * Used by: {@link #deduplicate}.
+     * Example: winner(venue empty, doi X) + dup(venue "Ocean Eng.", doi Y) -> venue "Ocean Eng.", doi X
+     */
     private static PaperCandidate merge(PaperCandidate winner, PaperCandidate duplicate) {
         return new PaperCandidate(
                 winner.sourceMessageId(),

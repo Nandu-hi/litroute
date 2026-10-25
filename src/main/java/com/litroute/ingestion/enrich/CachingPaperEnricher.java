@@ -24,11 +24,23 @@ public final class CachingPaperEnricher implements PaperEnricher {
     private final PaperEnricher delegate;
     private final Map<String, PaperCandidate> cache;
 
+    /**
+     * Input: the enricher to call on a cache miss, and M7c's live lookups map (written to in place).
+     * Output: a caching enricher.
+     * Used by: PipelineRunner.atDefaultLocations (M9), via AlertBatchProcessor's ExtractorFactory.
+     * Example: {@code new CachingPaperEnricher(new OnlinePaperEnricher(..), contents.lookups())}
+     */
     public CachingPaperEnricher(PaperEnricher delegate, Map<String, PaperCandidate> cache) {
         this.delegate = delegate;
         this.cache = cache;
     }
 
+    /**
+     * Input: a paper as parsed from an email, and its link kind.
+     * Output: the paper filled from the cache (by compacted title) if present and its PDF still exists, else from the delegate.
+     * Used by: PaperExtractor.extract (M2).
+     * Example: "Wave Loads: A Review" cached with DOI -> answered offline; a miss with a DOI found -> cached for next time
+     */
     @Override
     public PaperCandidate enrich(PaperCandidate paper, LinkKind linkKind) {
         // A title with no Latin letters or digits normalizes to "" and would collide with every other one.
@@ -43,17 +55,30 @@ public final class CachingPaperEnricher implements PaperEnricher {
         }
 
         PaperCandidate enriched = delegate.enrich(paper, linkKind);
+        // Only cache real hits: a miss is often an API outage and must be retried next run.
         if (enriched.doi().isPresent()) {
             cache.put(key, enriched);
         }
         return enriched;
     }
 
-    /** A cached PDF that has since been deleted makes the entry stale, so the paper is looked up again. */
+    /**
+     * A cached PDF that has since been deleted makes the entry stale, so the paper is looked up again.
+     * Input: a cached candidate.
+     * Output: false only if it names a PDF that is no longer on disk.
+     * Used by: {@link #enrich}.
+     * Example: pdfPath pdfs/x.pdf deleted -> false; no pdfPath -> true
+     */
     private static boolean pdfStillOnDisk(PaperCandidate cached) {
         return cached.pdfPath().map(Files::isRegularFile).orElse(true);
     }
 
+    /**
+     * Input: the paper from the new email and the cached enriched copy.
+     * Output: the new paper, with empty fields filled from the cache (articleType always from the new email).
+     * Used by: {@link #enrich} on a cache hit.
+     * Example: new(venue empty, msg id M2) + cached(venue "Ocean Eng.", msg id M1) -> venue "Ocean Eng.", msg id M2
+     */
     private static PaperCandidate reuse(PaperCandidate paper, PaperCandidate cached) {
         return new PaperCandidate(
                 paper.sourceMessageId(),

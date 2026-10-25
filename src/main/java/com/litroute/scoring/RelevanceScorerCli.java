@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
-import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -23,33 +22,30 @@ import java.util.stream.Stream;
  * Runs M6 until M9 does, in one of two ways:
  *
  * <pre>
- * mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli [-Dexec.args=--top=2]
- * mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli -Dexec.args="PDF_OR_FOLDER [--top=2]"
+ * mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli
+ * mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli -Dexec.args=PDF_OR_FOLDER
  * </pre>
  *
  * Without a path it matches the deduplicated papers held in M7c against the profiles in M7d, adds
- * the matches to the review queue (M7e) and lists each student's recommended papers ({@code --top},
- * default {@value RelevanceScorer#RECOMMENDED_PER_STUDENT}, per student). With a PDF, or a folder of
+ * the matches to the review queue (M7e) and lists each student's papers. With a PDF, or a folder of
  * them, it reports each paper's score for every profile instead and changes nothing; when the
  * folder's subfolders are named after profiles (FOLDER/RP3-mf-sim/x.pdf), each PDF is expected to
  * reach the profile it sits under, and the run compares the strategies on how many did and on the
- * precision of each student's recommendations.
+ * precision of each student's best three.
  */
 public final class RelevanceScorerCli {
 
     private RelevanceScorerCli() {
     }
 
+    /**
+     * Input: optional PDF or folder of PDFs; none to match M7c's papers.
+     * Output: with a path: each PDF's score per student (and, for a folder filed by student, accuracy per strategy); without: M7c matched and added to M7e.
+     * Used by: the user, from the terminal ({@code exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli}).
+     * Example: ~/.litroute/match-test -> "alice/rao.pdf  ok ..." then "HYBRID 46 of 48 matched ..."
+     */
     public static void main(String[] args) throws Exception {
-        Path pdfOrFolder = null;
-        int top = RelevanceScorer.RECOMMENDED_PER_STUDENT;
-        for (String arg : args) {
-            if (arg.startsWith("--top=")) {
-                top = Integer.parseInt(arg.substring("--top=".length()));
-            } else {
-                pdfOrFolder = Path.of(arg);
-            }
-        }
+        Path pdfOrFolder = args.length > 0 ? Path.of(args[0]) : null;
         Map<String, Profile> profiles = ProfileStore.atDefaultLocation().loadAll();
         if (profiles.isEmpty()) {
             System.out.println("No profiles yet: build them first with ProfileBuilderCli.");
@@ -58,48 +54,50 @@ public final class RelevanceScorerCli {
         try (Specter2EmbeddingProvider provider = Specter2EmbeddingProvider.atDefaultLocation()) {
             RelevanceScorer scorer = new RelevanceScorer(provider, profiles.values());
             if (pdfOrFolder != null) {
-                scorePdfs(scorer, pdfOrFolder, profiles, top);
+                scorePdfs(scorer, pdfOrFolder, profiles);
             } else {
-                matchDeduplicatedPapers(scorer, profiles, top);
+                matchDeduplicatedPapers(scorer, profiles);
             }
         }
     }
 
-    private static void matchDeduplicatedPapers(RelevanceScorer scorer, Map<String, Profile> profiles, int top)
+    /**
+     * Input: the scorer and the profiles.
+     * Output: none; M7c's papers matched, added to the M7e queue, and a per-student summary printed.
+     * Used by: {@link #main} without arguments.
+     * Example: -> "alice: 2 matched ... 5 of 31 papers matched a student; the review queue now holds 9."
+     */
+    private static void matchDeduplicatedPapers(RelevanceScorer scorer, Map<String, Profile> profiles)
             throws IOException {
         List<PaperCandidate> deduplicated = EnrichmentCacheStore.atDefaultLocation().load().enriched();
         if (deduplicated.isEmpty()) {
             System.out.println("No deduplicated papers in M7c yet: run the alert pipeline first.");
             return;
         }
-        List<ScoredPaper> matches = scorer.match(deduplicated, top);
-        List<ScoredPaper> queue = ScoredQueueStore.atDefaultLocation().addAll(matches);
-        int recommended = 0;
-        for (String student : profiles.keySet()) {
-            List<ScoredPaper> own = matches.stream().filter(match -> match.profileName().equals(student))
-                    .sorted(Comparator.comparing(ScoredPaper::recommended).thenComparing(ScoredPaper::score).reversed())
-                    .toList();
-            long picked = own.stream().filter(ScoredPaper::recommended).count();
-            recommended += (int) picked;
-            System.out.printf("%n%s: %d recommended of %d matched%n", student, picked, own.size());
-            for (ScoredPaper match : own) {
-                if (match.recommended()) {
-                    System.out.printf(Locale.ROOT, "  * %.2f  %s%n", match.score(), match.candidate().title());
-                }
+        Map<String, List<ScoredPaper>> matches = scorer.match(deduplicated);
+        ScoredQueueStore store = ScoredQueueStore.atDefaultLocation();
+        List<ScoredPaper> queue = store.addAll(matches);
+        int matched = 0;
+        for (Map.Entry<String, List<ScoredPaper>> entry : matches.entrySet()) {
+            System.out.printf("%n%s: %d matched%n", entry.getKey(), entry.getValue().size());
+            for (ScoredPaper match : entry.getValue()) {
+                System.out.printf(Locale.ROOT, "  * %.2f  %s%n", match.score(), match.candidate().title());
             }
-            if (own.size() > picked) {
-                System.out.printf("    (%d more queued, not recommended)%n", own.size() - picked);
-            }
+            matched += entry.getValue().size();
         }
-        System.out.printf("%n%d papers matched, each to one student; %d recommended; the review queue now holds %d.%n",
-                deduplicated.size(), recommended, queue.size());
+        System.out.printf("%n%d of %d papers matched a student; the review queue now holds %d.%n"
+                + "Matched PDFs are in %s%n", matched, deduplicated.size(), queue.size(), store.pdfRoot());
     }
 
     /**
      * Prints each PDF's score for every profile, best first, marking the one it is filed under; then,
      * for labelled folders, how each strategy matched the whole folder as one batch.
+     * Input: the scorer, a PDF or folder, and the profiles.
+     * Output: none; prints every PDF's scores and rationale, then each strategy's accuracy on the filed ones.
+     * Used by: {@link #main} with a path.
+     * Example: folder alice/x.pdf -> "alice/x.pdf  ok", "0.62 alice filed here", ...
      */
-    private static void scorePdfs(RelevanceScorer scorer, Path pdfOrFolder, Map<String, Profile> profiles, int top)
+    private static void scorePdfs(RelevanceScorer scorer, Path pdfOrFolder, Map<String, Profile> profiles)
             throws IOException {
         Path root = pdfOrFolder.toAbsolutePath();
         Path folder = Files.isDirectory(root) ? root : root.getParent();
@@ -133,14 +131,13 @@ public final class RelevanceScorerCli {
         if (filedUnder.isEmpty()) {
             return;
         }
-        System.out.printf("%nAll %d filed PDFs matched as one batch, %d recommendations per student:%n", filedUnder.size(),
-                top);
+        System.out.printf("%nAll %d filed PDFs matched as one batch:%n", filedUnder.size());
         List<PaperCandidate> filed = new ArrayList<>(filedUnder.keySet());
         for (Strategy strategy : Strategy.values()) {
-            List<ScoredPaper> matches = scorer.match(filed, top, strategy);
-            System.out.printf(Locale.ROOT, "  %-8s %d of %d assigned to the student they are filed under; precision of "
-                    + "the students' recommendations %.2f%n", strategy, MatchEvaluation.assignedCorrectly(matches, filedUnder),
-                    filed.size(), MatchEvaluation.recommendationPrecision(matches, filedUnder, top));
+            Map<String, List<ScoredPaper>> matches = scorer.match(filed, strategy);
+            System.out.printf(Locale.ROOT, "  %-8s %d of %d matched to the student they are filed under; precision of "
+                    + "the students' best three %.2f%n", strategy, MatchEvaluation.assignedCorrectly(matches, filedUnder),
+                    filed.size(), MatchEvaluation.recommendationPrecision(matches, filedUnder, 3));
         }
     }
 }

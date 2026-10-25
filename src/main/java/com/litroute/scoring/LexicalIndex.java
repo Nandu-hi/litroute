@@ -48,7 +48,12 @@ final class LexicalIndex {
     /** Per student, the sum of its papers' vectors: what the student's papers say, term by term. */
     private final Map<String, Map<String, Double>> profileTerms = new HashMap<>();
 
-    /** @param papersByProfile each student's reference papers, in a stable order; papers without text count as empty */
+    /**
+     * Input: each student's reference papers, in a stable order (papers without text count as empty).
+     * Output: a TF-IDF index over terms in 2+ papers and at most half of them, with paper-to-paper similarities precomputed.
+     * Used by: RelevanceScorer constructor (M6), over all students' papers.
+     * Example: {alice=[a1, a2], bob=[b1]} -> index of 3 documents
+     */
     LexicalIndex(Map<String, List<ProfilePaper>> papersByProfile) {
         List<Map<String, Integer>> counts = new ArrayList<>();
         List<String> owners = new ArrayList<>();
@@ -93,16 +98,34 @@ final class LexicalIndex {
         });
     }
 
-    /** The words a lexical comparison reads for a paper: its title, abstract and body, as one text. */
+    /**
+     * The words a lexical comparison reads for a paper: its title, abstract and body, as one text.
+     * Input: a paper's title, abstract and body.
+     * Output: them joined as one text: "title. abstract. body".
+     * Used by: {@link #documentText}; RelevanceScorer for candidate texts.
+     * Example: ("Wave loads", "We study", "") -> "Wave loads. We study. "
+     */
     static String text(String title, String abstractText, String bodyText) {
         return title + ". " + abstractText + ". " + bodyText;
     }
 
+    /**
+     * Input: a reference paper.
+     * Output: its title, kept abstract and kept body as one text.
+     * Used by: the constructor.
+     * Example: paper without kept text -> "title. . "
+     */
     static String documentText(ProfilePaper paper) {
         return text(paper.title(), paper.abstractText().orElse(""), paper.bodyText().orElse(""));
     }
 
-    /** The text as a unit-length vector over this index's terms; empty if it shares none of them. */
+    /**
+     * The text as a unit-length vector over this index's terms; empty if it shares none of them.
+     * Input: any text.
+     * Output: its unit-length TF-IDF vector over this index's terms; empty if it shares none.
+     * Used by: RelevanceScorer (M6), for each candidate and in calibration.
+     * Example: "wave loads on piles" -> {wave=0.5, load=0.4, pile=0.6, wave_load=0.48}
+     */
     Map<String, Double> vector(String text) {
         return weigh(Terms.counts(text));
     }
@@ -111,6 +134,10 @@ final class LexicalIndex {
      * The text's closeness to every student, leaving out the papers {@code heldOut} accepts (a paper
      * being checked against the others, and any copy of it). A student none of whose papers remain is
      * left out of the result.
+     * Input: a text's vector and which papers to leave out.
+     * Output: per student with papers left: 0.5 x similarity to all their papers + 0.5 x mean of the closest 3, plus those 3.
+     * Used by: RelevanceScorer.assess (scoring) and calibrate (held-out papers).
+     * Example: {alice: Closeness(0.31, [a2 0.4, a1 0.2]), bob: Closeness(0.05, [b1 0.05])}
      */
     Map<String, Closeness> closeness(Map<String, Double> vector, Predicate<ProfilePaper> heldOut) {
         double[] row = row(vector);
@@ -147,7 +174,13 @@ final class LexicalIndex {
         return result;
     }
 
-    /** The terms that contribute most to the text's similarity with the student's papers, most first. */
+    /**
+     * The terms that contribute most to the text's similarity with the student's papers, most first.
+     * Input: a text's vector, a student and how many terms.
+     * Output: the terms contributing most to the text's similarity with that student's papers, most first.
+     * Used by: RelevanceScorer, for the rationale's "shares the words ...".
+     * Example: -> ["wave_load", "pile", "scour"]
+     */
     List<String> sharedTerms(Map<String, Double> vector, String profileName, int limit) {
         Map<String, Double> student = profileTerms.getOrDefault(profileName, Map.of());
         return vector.entrySet().stream()
@@ -159,6 +192,12 @@ final class LexicalIndex {
                 .toList();
     }
 
+    /**
+     * Input: term counts.
+     * Output: the unit-length (1 + log tf) x idf vector, over indexed terms only.
+     * Used by: the constructor, {@link #vector}.
+     * Example: {wave=3, the=9 (not indexed)} -> {wave=1.0}
+     */
     private Map<String, Double> weigh(Map<String, Integer> counts) {
         Map<String, Double> vector = new HashMap<>();
         double sumOfSquares = 0;
@@ -177,7 +216,13 @@ final class LexicalIndex {
         return vector;
     }
 
-    /** Cosine similarity of the vector with every paper of the index. */
+    /**
+     * Cosine similarity of the vector with every paper of the index.
+     * Input: a unit vector.
+     * Output: its cosine with every indexed paper (via postings).
+     * Used by: the constructor (gram matrix), {@link #closeness}.
+     * Example: -> [0.4, 0.2, 0.05] for papers a1, a2, b1
+     */
     private double[] row(Map<String, Double> vector) {
         double[] row = new double[docs.size()];
         for (Map.Entry<String, Double> term : vector.entrySet()) {

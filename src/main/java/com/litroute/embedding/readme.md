@@ -6,7 +6,7 @@
 
 | | Type | What it holds |
 |---|---|---|
-| **Input** | Model files in `~/.litroute/models` (from [defaultModelDirectory()](Specter2EmbeddingProvider.java#L46)) | `specter2.onnx` (+ `specter2.onnx.data`) and `tokenizer.json`. These are produced once per machine by `scripts/model-export/setup_model.sh`. |
+| **Input** | Model files in `~/.litroute/models` (from [defaultModelDirectory()](Specter2EmbeddingProvider.java#L58)) | `specter2.onnx` (+ `specter2.onnx.data`) and `tokenizer.json`. These are produced once per machine by `scripts/model-export/setup_model.sh`. |
 | **Input** | `embed(title, text)` | A paper's title plus one piece of text describing it: its abstract, its section headings, or a passage of its body. The text may be empty. |
 | **Output** | `float[]` | A unit-length vector (768 dimensions for SPECTER2). |
 | **Output** | `modelId()` | A string that identifies the model and how its input is shaped (`specter2-proximity-onnx/cls/512`). It is saved with every vector so vectors from different models are never mixed. |
@@ -42,9 +42,23 @@ This is the **Strategy** seam from the design doc. The rest of the code depends 
 
 This runs **SPECTER2** (`allenai/specter2_base` with the *proximity* adapter, the mode meant for paper-to-paper similarity) locally.
 
-- **[open(modelDirectory)](Specter2EmbeddingProvider.java#L55)** checks that both model files exist and throws an `IOException` naming the setup script if they don't. It then loads the tokenizer with truncation at 512 tokens (the tokenizer config declares no usable maximum, so the limit is set here) and opens an ONNX Runtime session. The session is loaded by **file path**, not by bytes, so ONNX Runtime can find the separate weights file `specter2.onnx.data`. [atDefaultLocation()](Specter2EmbeddingProvider.java#L50) opens `~/.litroute/models`.
-- **[embed(title, text)](Specter2EmbeddingProvider.java#L84)** tokenizes `title + "[SEP]" + text`, builds two `1 × n` tensors (`input_ids`, `attention_mask`), runs the model, takes the returned [CLS] vector and normalizes it with [Vectors.normalize](../util/Vectors.java#L45). Inference errors become an `IllegalStateException`.
+- **[open(modelDirectory)](Specter2EmbeddingProvider.java#L78)** checks that both model files exist and throws an `IOException` naming the setup script if they don't. It then loads the tokenizer with truncation at 512 tokens (the tokenizer config declares no usable maximum, so the limit is set here) and opens an ONNX Runtime session. The session is loaded by **file path**, not by bytes, so ONNX Runtime can find the separate weights file `specter2.onnx.data`. [atDefaultLocation()](Specter2EmbeddingProvider.java#L68) opens `~/.litroute/models`.
+- **[embed(title, text)](Specter2EmbeddingProvider.java#L119)** tokenizes `title + "[SEP]" + text`, builds two `1 × n` tensors (`input_ids`, `attention_mask`), runs the model, takes the returned [CLS] vector and normalizes it with [Vectors.normalize](../util/Vectors.java#L62). Inference errors become an `IllegalStateException`.
 - **Thread-safe:** ONNX Runtime sessions and DJL tokenizers can be shared between threads, which is why M6 can embed candidates in parallel.
+
+## Interaction with M7 (the stores)
+
+This module reads and writes no store itself; its output is what M7d is made of, and its `modelId()` keeps that store consistent.
+
+```
+student PDFs ──▶ M5 PaperEmbedder ──embed()──▶ vectors ──▶ M7d profiles.json  (each Profile stamped with modelId())
+                                                               │
+M7c candidate ──▶ M6 RelevanceScorer ──embed()──▶ vector ──────┴──▶ cosine ──▶ ScoredPaper ──▶ M7e scored_queue.json
+```
+
+- **M7d (ProfileStore):** every vector saved there came from `embed()`, and the profile records `modelId()`. [ProfileBuilder](../profile/ProfileBuilder.java) reuses a stored paper's vectors only if the profile's model id matches the current provider's, so a model change re-embeds every PDF instead of mixing vector spaces.
+- **M6 reading M7d:** [RelevanceScorer](../scoring/RelevanceScorer.java) refuses profiles whose `modelId` differs from its provider's.
+- **M7c / M7e:** candidate vectors are never stored. M6 embeds them when it scores, and only the resulting score, rationale and relevance reach M7e.
 
 ## How it's tested
 

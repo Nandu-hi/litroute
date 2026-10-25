@@ -28,15 +28,23 @@ final class CredentialCipher {
 
     private final SecureRandom secureRandom = new SecureRandom();
 
+    /** What encrypt produces and decrypt consumes: salt and IV (public) plus the GCM ciphertext+tag. */
     record EncryptedBlob(byte[] salt, byte[] iv, byte[] ciphertext) {
     }
 
+    /**
+     * Input: plaintext bytes and the master passphrase (not cleared here).
+     * Output: a blob with a fresh random salt, a fresh random IV and the AES-256-GCM ciphertext.
+     * Used by: CredentialStore.save.
+     * Example: {@code encrypt("{...}".getBytes(), "pass".toCharArray())} -> {@code EncryptedBlob(salt[16], iv[12], ciphertext[n+16])}
+     */
     EncryptedBlob encrypt(byte[] plaintext, char[] passphrase) throws GeneralSecurityException {
         byte[] salt = new byte[SALT_LENGTH_BYTES];
         secureRandom.nextBytes(salt);
         byte[] iv = new byte[GCM_IV_LENGTH_BYTES];
         secureRandom.nextBytes(iv);
 
+        // A new salt and IV every save: the same passphrase never reuses a key/IV pair.
         SecretKey key = deriveKey(passphrase, salt);
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
         cipher.init(Cipher.ENCRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_LENGTH_BITS, iv));
@@ -45,6 +53,12 @@ final class CredentialCipher {
         return new EncryptedBlob(salt, iv, ciphertext);
     }
 
+    /**
+     * Input: a blob from {@link #encrypt} and the passphrase.
+     * Output: the original plaintext; throws AEADBadTagException on a wrong passphrase or tampered file.
+     * Used by: CredentialStore.load.
+     * Example: {@code decrypt(encrypt(b, p), p)} -> {@code b}; with another passphrase -> throws
+     */
     byte[] decrypt(EncryptedBlob blob, char[] passphrase) throws GeneralSecurityException {
         SecretKey key = deriveKey(passphrase, blob.salt());
         Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
@@ -52,6 +66,12 @@ final class CredentialCipher {
         return cipher.doFinal(blob.ciphertext());
     }
 
+    /**
+     * Input: the passphrase and a salt.
+     * Output: a 256-bit AES key from PBKDF2-HMAC-SHA256 (210,000 iterations); temporary key bytes are wiped.
+     * Used by: {@link #encrypt} and {@link #decrypt}.
+     * Example: {@code deriveKey("pass", salt)} -> the same key every time for the same salt
+     */
     private SecretKey deriveKey(char[] passphrase, byte[] salt) throws GeneralSecurityException {
         PBEKeySpec spec = new PBEKeySpec(passphrase, salt, PBKDF2_ITERATIONS, KEY_LENGTH_BITS);
         try {

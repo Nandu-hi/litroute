@@ -7,5 +7,7 @@ public enum ReviewStatus {
     /** To be sent to the student (M10). */
     APPROVED,
     /** Not to be sent. */
-    DROPPED
+    DROPPED,
+    /** Approved and emailed to the student (M10): held in {@code SentPaperStore}, no longer in the queue. */
+    SENT
 }

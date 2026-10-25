@@ -83,13 +83,40 @@ public class AlertClassifierTest {
         }
     }
 
-    /** Each publisher's own sending domain is recognized on its own, for alerts that arrive directly. */
+    /**
+     * Each publisher's own sender is recognized on its own, for alerts that arrive directly: by its
+     * domain, or for Google Scholar by its alert address.
+     */
     @Test
-    public void everySamplesPublisherIsRecognizedByItsSendingDomain() {
+    public void everySamplesPublisherIsRecognizedByItsSendingDomainOrAddress() {
         for (Sample sample : SampleMails.ALL) {
             assertTrue(sample.quotedFrom(),
                     classifier.isPublicationAlert(sample.quotedFrom(), "a subject matching no keyword"));
         }
+    }
+
+    /**
+     * google.com also sends sign-in and security alerts, Workspace and Cloud notices and product
+     * news. A live run took eight of those for paper alerts, and M2 queued their "Go to your Google
+     * Account", "Try demo apps" and "Visit the Help Center" links as papers. Only Scholar's alert
+     * address is trusted, directly or quoted in a forward.
+     */
+    @Test
+    public void googleMailOtherThanScholarAlertsIsRejected() {
+        assertFalse(classifier.isPublicationAlert("no-reply@accounts.google.com", "Security alert"));
+        assertFalse(classifier.isPublicationAlert("no-reply@google.com", "Go to your Google Account"));
+        assertFalse(classifier.isPublicationAlert("googlecloud@google.com", "Try demo apps"));
+        assertFalse(classifier.isPublicationAlert("workspace-noreply@google.com", "Visit the Help Center"));
+        String forwardedSignInAlert = "---------- Forwarded message ---------\n"
+                + "From: Google <no-reply@accounts.google.com>\n"
+                + "Date: Mon, Oct 19, 2026 at 9:00 PM\n"
+                + "Subject: Security alert\n"
+                + "To: <student@example.edu>\n\n"
+                + "A new sign-in on Linux";
+        assertFalse(classifier.isPublicationAlert("advisor@gmail.com", "Fwd: Security alert",
+                Optional.of(forwardedSignInAlert)));
+
+        assertTrue(classifier.isPublicationAlert("ScholarAlerts-NoReply@google.com", "a subject matching no keyword"));
     }
 
     @Test

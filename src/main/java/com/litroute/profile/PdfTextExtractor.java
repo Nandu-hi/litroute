@@ -10,6 +10,7 @@ import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
@@ -17,6 +18,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.logging.Level;
 import java.util.logging.Logger;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
@@ -44,6 +46,8 @@ import org.apache.pdfbox.text.TextPosition;
  *   <li>abstract: the text after an "Abstract" (or a report's "Executive Summary") heading, up to
  *       keywords or the next heading; if there is none, the opening text stands in for it;
  *   <li>headings: short lines set in bold, or larger than the body text;
+ *   <li>keywords: the list after a "Keywords" (or "Index Terms") label on the first two pages, split at
+ *       its separators (";", ",", "·") or, when it has none, one keyword per line;
  *   <li>body: everything after the abstract up to the references or other end matter, cut into
  *       passages and sampled evenly so long papers are represented beyond their introduction.
  * </ul>
@@ -95,6 +99,11 @@ public final class PdfTextExtractor {
     private static final float TITLE_MIN_SIZE_GAIN = 1.5f;
     private static final float BOLD_TITLE_MIN_SIZE_GAIN = 0.5f;
     private static final int MAX_HEADING_WORDS = 12;
+    /** Author keywords kept per paper; journals ask for three to ten. */
+    static final int MAX_KEYWORDS = 12;
+    static final int MAX_KEYWORD_WORDS = 6;
+    private static final int MAX_KEYWORD_CHARS = 80;
+    private static final int MAX_KEYWORD_LINES = 12;
     /** Font sizes within this many points count as the same text style (sizes jitter within a paragraph). */
     private static final float SIZE_TOLERANCE = 1.1f;
 
@@ -106,6 +115,23 @@ public final class PdfTextExtractor {
             + "|bibliography|literature cited|works cited|reference list|acknowledge?ments?|declarations?|funding"
             + "|author(?:s'|s)? contributions?|competing interests?|conflicts? of interests?"
             + "|data availability(?: statement)?|availability of data and materials?)\\s*:?$");
+    private static final Pattern KEYWORDS_START = Pattern.compile(
+            "(?i)^(?:additional\\s+)?(?:author\\s+)?(?:k\\s?e\\s?y\\s?[-\\s]?w\\s?o\\s?r\\s?d\\s?s?(?:\\s+and\\s+phrases)?"
+            + "|index\\s+terms)(?![a-z])[\\s.:\\-–—]*");
+    /** What authors separate keywords with: "a; b", "a, b", Springer's "a · b", "a • b", "a | b". */
+    private static final Pattern KEYWORD_SEPARATOR = Pattern.compile("\\s*[;,·•|]\\s*");
+    /**
+     * What a keyword list can run into on the same line: classification codes, a footnote ("riskAuthor for
+     * correspondence"), or the first section ("change1. Introduction").
+     */
+    private static final Pattern KEYWORDS_END = Pattern.compile("(?i)\\*?\\s*(?:\\b(?:ams|mathematics|jel)\\s+"
+            + "(?:subject\\s+)?classifications?|corresponding\\s+author|author\\s+for\\s+correspondence"
+            + "|\\d*\\.?\\s*\\bintroduction\\b)");
+    /** A footnote or section number run into the last word: "RC frames1". */
+    private static final Pattern GLUED_NUMBER = Pattern.compile("(?<=\\p{Ll})\\d$");
+    /** Words that make a line a sentence, which a keyword list never is. */
+    private static final Pattern SENTENCE_WORD = Pattern.compile(
+            "(?i)\\b(?:the|we|our|this|these|is|are|was|were|has|have|which|that)\\b");
     private static final Pattern CAPTION = Pattern.compile("(?i)^(?:fig\\.?|figure|table|algorithm|eq\\.)\\s*[\\dIVX]");
     private static final Pattern BRANDING = Pattern.compile(
             "(?i)journal|open access|research article|original (?:article|paper)|review article|https?:|www\\.|doi"
@@ -137,14 +163,22 @@ public final class PdfTextExtractor {
     /** One line of text as laid out on the page. */
     record Line(int page, String text, float size, boolean bold) {
 
+        /**
+         * Input: none.
+         * Output: the number of space-separated words on the line.
+         * Used by: endMatterStart, isHeadingAt, looksLikeHeading.
+         * Example: Line "3.1 Wave model" -> 3
+         */
         int words() {
             return text.split(" ").length;
         }
     }
 
     /**
-     * @throws UnreadablePdfException if the file is not a readable PDF, is password-protected, or has
-     *                                no extractable text
+     * Input: a PDF file (first {@value #MAX_PAGES} pages read).
+     * Output: its title, abstract, headings, sampled body passages and author keywords; UnreadablePdfException if unreadable, encrypted or textless.
+     * Used by: ProfileBuilder (M5) for reference PDFs; RelevanceScorer and LocalPdfCandidates (M6) for candidate PDFs.
+     * Example: rao2024.pdf -> PaperText("Wave loads on piles", "We study...", [1 Introduction, ...], [6 chunks], [piles, waves])
      */
     public PaperText extract(Path pdf) throws UnreadablePdfException {
         String metadataTitle;
@@ -160,6 +194,7 @@ public final class PdfTextExtractor {
         } catch (IOException | RuntimeException e) {
             throw new UnreadablePdfException("not a readable PDF: " + e.getMessage(), e);
         }
+        // Reject scans and undecodable fonts before trying to find any structure.
         if (letterCount(lines) < MIN_DOCUMENT_LETTERS) {
             throw new UnreadablePdfException("no extractable text (a scan without OCR?)");
         }
@@ -180,6 +215,12 @@ public final class PdfTextExtractor {
         private int abstractEnd = -1;
         private String abstractText;
 
+        /**
+         * Input: the document's lines (furniture removed), its metadata title and its file name stem.
+         * Output: the structure, with body size, title and abstract already found.
+         * Used by: {@link #extract}.
+         * Example: {@code new Structure(lines, "Wave loads on piles", "rao2024")}
+         */
         Structure(List<Line> lines, String metadataTitle, String fileStem) {
             this.lines = lines;
             this.bodySize = bodyFontSize(lines);
@@ -187,14 +228,164 @@ public final class PdfTextExtractor {
             findAbstract();
         }
 
+        /**
+         * Input: none.
+         * Output: the PaperText: title, abstract (or opening text), unique headings, sampled body chunks and keywords.
+         * Used by: {@link #extract}.
+         * Example: -> PaperText(title, abstract, headings before References, chunks, keywords)
+         */
         PaperText toPaperText() {
             int end = endMatterStart();
             List<String> headings = new ArrayList<>(new LinkedHashSet<>(headings(end)));
             String body = joinLines(bodyLines(end));
             String summary = abstractText != null ? abstractText : openingText();
-            return new PaperText(title, summary, headings, sampleChunks(body));
+            return new PaperText(title, summary, headings, sampleChunks(body), keywords());
         }
 
+        /**
+         * The author keywords: the list after the first "Keywords" label on pages 1-2 that is followed by
+         * one. The list runs on over the following lines of the same page and type size while they read
+         * like a list - no sentence words, no piece longer than {@value #MAX_KEYWORD_WORDS} words - and
+         * ends at a line ending in a full stop, the abstract, or the introduction. A list with separators
+         * may wrap mid-keyword, so a further line belongs to it only if it continues the list: it has a
+         * separator, starts in lower case, or the line before ended in a separator or a hyphen.
+         * Input: none (this document's lines).
+         * Output: the author keywords after the first "Keywords" label on pages 1-2, at most {@value #MAX_KEYWORDS}; [] if none.
+         * Used by: {@link #toPaperText}.
+         * Example: "Keywords: Wave loads; Piles; CFD" -> [Wave loads, Piles, CFD]
+         */
+        private List<String> keywords() {
+            for (int i = 0; i < lines.size() && lines.get(i).page() <= 2; i++) {
+                Line label = lines.get(i);
+                Matcher start = KEYWORDS_START.matcher(label.text());
+                if (!start.lookingAt()) {
+                    continue;
+                }
+                List<Line> taken = new ArrayList<>();
+                String rest = label.text().substring(start.end());
+                Line first = !rest.isBlank() ? new Line(label.page(), rest, label.size(), label.bold())
+                        : i + 1 < lines.size() ? lines.get(i + 1) : null;
+                if (first == null || first.page() != label.page()) {
+                    continue;
+                }
+                boolean separated = KEYWORD_SEPARATOR.matcher(first.text()).find();
+                if (!rest.isBlank()) {
+                    taken.add(first);
+                }
+                // Take following lines while they continue the list.
+                for (int j = i + 1; j < lines.size() && taken.size() < MAX_KEYWORD_LINES; j++) {
+                    if (!taken.isEmpty() && taken.get(taken.size() - 1).text().endsWith(".")) {
+                        break;
+                    }
+                    if (!continuesKeywords(j, label.page(), taken, separated)) {
+                        break;
+                    }
+                    taken.add(lines.get(j));
+                }
+                if (taken.isEmpty() || !readsAsList(taken.get(0).text(), separated)) {
+                    continue;
+                }
+                // One keyword per line, unless a later line shows the list was separated after all.
+                boolean split = separated || taken.stream().anyMatch(line -> KEYWORD_SEPARATOR.matcher(line.text()).find());
+                List<String> written = split
+                        ? Arrays.asList(KEYWORD_SEPARATOR.split(joinLines(taken)))
+                        : taken.stream().map(Line::text).toList();
+                Map<String, String> keywords = new LinkedHashMap<>();
+                for (String keyword : written) {
+                    Matcher end = KEYWORDS_END.matcher(keyword);
+                    boolean last = end.find();
+                    String cleaned = last ? keyword.substring(0, end.start()) : keyword;
+                    cleaned = GLUED_NUMBER.matcher(cleaned.replaceAll("^[\\s\\-–—.:]+|[\\s.;,:]+$", "")).replaceAll("");
+                    if (isKeyword(cleaned)) {
+                        keywords.putIfAbsent(Titles.compact(cleaned), cleaned);
+                    }
+                    if (last) {
+                        break;
+                    }
+                }
+                if (!keywords.isEmpty()) {
+                    return keywords.values().stream().limit(MAX_KEYWORDS).toList();
+                }
+            }
+            return List.of();
+        }
+
+        /**
+         * Whether line {@code j} goes on with the keyword list {@code taken}.
+         * Input: the next line's index, the label's page, the lines taken so far, and whether the list has separators.
+         * Output: whether that line goes on with the keyword list.
+         * Used by: {@link #keywords}.
+         * Example: taken ["Machine"] then "learning; CFD" -> true; then "1. Introduction" -> false
+         */
+        private boolean continuesKeywords(int j, int page, List<Line> taken, boolean separated) {
+            Line line = lines.get(j);
+            String text = line.text();
+            if (line.page() != page || titleLines.contains(j) || ABSTRACT_START.matcher(text).lookingAt()
+                    || ABSTRACT_END.matcher(text).find() || KEYWORDS_START.matcher(text).lookingAt()
+                    || BRANDING.matcher(text).find() || !readsAsList(text, separated)) {
+                return false;
+            }
+            if (taken.isEmpty()) {
+                return true;
+            }
+            Line previous = taken.get(taken.size() - 1);
+            if (taken.size() > 1 || previous != lines.get(j - 1)) {
+                // the label's own line may be set larger or bolder than the keywords after it
+                if (Math.abs(line.size() - previous.size()) > SIZE_TOLERANCE || line.bold() != previous.bold()) {
+                    return false;
+                }
+            }
+            if (!separated) {
+                return true;
+            }
+            String before = previous.text().strip();
+            return KEYWORD_SEPARATOR.matcher(text).find() || before.endsWith("-")
+                    || KEYWORD_SEPARATOR.matcher(before.substring(before.length() - 1)).matches()
+                    || Character.isLowerCase(text.charAt(0)); // "Machine" + "learning": a keyword wrapped
+        }
+
+        /**
+         * No sentence words, and every piece between separators (or the line, if none) keyword-sized.
+         * Input: a line and whether the list uses separators.
+         * Output: true if it has no sentence words and every piece is at most {@value #MAX_KEYWORD_WORDS} words.
+         * Used by: {@link #keywords}, {@link #continuesKeywords}.
+         * Example: "piles; scour; CFD" -> true; "We study the piles" -> false
+         */
+        private static boolean readsAsList(String text, boolean separated) {
+            if (SENTENCE_WORD.matcher(text).find()) {
+                return false;
+            }
+            String[] pieces = separated ? KEYWORD_SEPARATOR.split(text) : new String[] {text};
+            return Arrays.stream(pieces).allMatch(piece -> piece.isBlank() || words(piece) <= MAX_KEYWORD_WORDS);
+        }
+
+        /**
+         * Input: one cleaned piece of a keyword list.
+         * Output: true if it has 2+ letters, at most 6 words and 80 chars, no colon and no branding.
+         * Used by: {@link #keywords}.
+         * Example: "Wave loads" -> true; "doi: 10.1/x" -> false
+         */
+        private static boolean isKeyword(String text) {
+            return text.chars().filter(Character::isLetter).count() >= 2 && words(text) <= MAX_KEYWORD_WORDS
+                    && text.length() <= MAX_KEYWORD_CHARS && text.indexOf(':') < 0 && !BRANDING.matcher(text).find();
+        }
+
+        /**
+         * Input: any text.
+         * Output: its number of whitespace-separated words.
+         * Used by: readsAsList, isKeyword.
+         * Example: " a b  c " -> 3
+         */
+        private static int words(String text) {
+            return text.strip().split("\\s+").length;
+        }
+
+        /**
+         * Input: the metadata title and the file stem.
+         * Output: the metadata title if usable and on pages 1-2, else the largest title-sized run on page 1, else metadata or file stem; marks the title's lines.
+         * Used by: the Structure constructor.
+         * Example: metadata "Microsoft Word - draft.docx", big text "Wave loads on piles" -> "Wave loads on piles"
+         */
         private String findTitle(String metadataTitle, String fileStem) {
             String metadata = usableMetadataTitle(metadataTitle, fileStem);
             if (metadata != null) {
@@ -217,6 +408,10 @@ public final class PdfTextExtractor {
          * Runs of consecutive same-style lines on page 1; the largest that reads like a title. A title
          * is set clearly larger than the body text (or larger and bold), which keeps author lists and
          * affiliations out.
+         * Input: none.
+         * Output: the largest-font run of same-style page-1 lines that reads like a title and is not a journal masthead; [] if none.
+         * Used by: {@link #findTitle}.
+         * Example: page 1: 18pt "Wave loads on piles", 24pt "Ocean Engineering" (masthead) -> the 18pt run
          */
         private List<Line> largestTitleRun() {
             List<Line> best = List.of();
@@ -239,13 +434,25 @@ public final class PdfTextExtractor {
             return best;
         }
 
-        /** The journal name in an Elsevier-style masthead, set between these two banner lines. */
+        /**
+         * The journal name in an Elsevier-style masthead, set between these two banner lines.
+         * Input: the start and end index of a run of lines.
+         * Output: true if it sits right after "Contents lists available" or before "journal homepage".
+         * Used by: {@link #largestTitleRun}.
+         * Example: run "Ocean Engineering" between those two banner lines -> true
+         */
         private boolean isJournalMasthead(int start, int end) {
             boolean afterContentsLine = start > 0 && CONTENTS_LINE.matcher(lines.get(start - 1).text()).find();
             boolean beforeHomepageLine = end < lines.size() && HOMEPAGE_LINE.matcher(lines.get(end).text()).find();
             return afterContentsLine || beforeHomepageLine;
         }
 
+        /**
+         * Input: the compacted title.
+         * Output: none; every page 1-2 line contained in the title is marked as a title line.
+         * Used by: {@link #findTitle}.
+         * Example: title "waveloadsonpiles", lines "Wave loads", "on piles" -> both marked
+         */
         private void markTitleLines(String compactTitle) {
             for (int i = 0; i < lines.size() && lines.get(i).page() <= 2; i++) {
                 String compactLine = Titles.compact(lines.get(i).text());
@@ -255,6 +462,12 @@ public final class PdfTextExtractor {
             }
         }
 
+        /**
+         * Input: none.
+         * Output: none; sets abstractStart/End and abstractText from the first "Abstract"/"Summary" heading with at least 100 chars after it.
+         * Used by: the Structure constructor.
+         * Example: "Abstract", "We study wave loads ... (400 chars)", "1 Introduction" -> abstractText = "We study wave loads ..."
+         */
         private void findAbstract() {
             for (int i = 0; i < lines.size() && lines.get(i).page() <= ABSTRACT_SEARCH_PAGES; i++) {
                 Line heading = lines.get(i);
@@ -274,6 +487,7 @@ public final class PdfTextExtractor {
                 } else if (i + 1 < lines.size()) {
                     abstractSize = lines.get(i + 1).size();
                 }
+                // Take lines until a heading, a size change, the keywords/introduction, or the next page.
                 int j = i + 1;
                 int length = first.length();
                 for (; j < lines.size() && length < MAX_ABSTRACT_CHARS; j++) {
@@ -298,7 +512,13 @@ public final class PdfTextExtractor {
             }
         }
 
-        /** The document's opening body text, when it has no abstract: page 1 on, past a report's cover. */
+        /**
+         * The document's opening body text, when it has no abstract: page 1 on, past a report's cover.
+         * Input: none.
+         * Output: the first {@value #FALLBACK_ABSTRACT_CHARS} chars of body-size, non-branding text; the title if there is none.
+         * Used by: {@link #toPaperText}, when no abstract was found.
+         * Example: a report with no Abstract heading -> its first paragraphs
+         */
         private String openingText() {
             List<Line> opening = new ArrayList<>();
             int length = 0;
@@ -313,7 +533,13 @@ public final class PdfTextExtractor {
             return text.isBlank() ? title : truncate(text, FALLBACK_ABSTRACT_CHARS);
         }
 
-        /** Index of the first end-matter heading (references, acknowledgements, ...), or lines.size(). */
+        /**
+         * Index of the first end-matter heading (references, acknowledgements, ...), or lines.size().
+         * Input: none.
+         * Output: the index of the first References/Acknowledgements-style heading after 25% of the document, else lines.size().
+         * Used by: {@link #toPaperText}.
+         * Example: 100 lines, "References" at 80 -> 80
+         */
         private int endMatterStart() {
             int earliest = Math.max(abstractEnd, (int) (lines.size() * END_MATTER_EARLIEST));
             for (int i = earliest; i < lines.size(); i++) {
@@ -325,6 +551,12 @@ public final class PdfTextExtractor {
             return lines.size();
         }
 
+        /**
+         * Input: the end of the body.
+         * Output: the heading lines before it, outside title, abstract and front matter.
+         * Used by: {@link #toPaperText}.
+         * Example: -> ["1 Introduction", "2 Method", "3 Results"]
+         */
         private List<String> headings(int end) {
             return IntStream.range(0, end)
                     .filter(i -> isBodyLine(i) && !isFrontMatter(i) && isHeadingAt(i))
@@ -332,7 +564,13 @@ public final class PdfTextExtractor {
                     .toList();
         }
 
-        /** Body-size text and headings; drops footnotes, captions, tables and figure labels. */
+        /**
+         * Body-size text and headings; drops footnotes, captions, tables and figure labels.
+         * Input: the end of the body.
+         * Output: body-size lines and headings before it, without title, abstract, front matter or branding.
+         * Used by: {@link #toPaperText}.
+         * Example: drops a 7pt footnote and a "Fig. 2" caption, keeps 10pt paragraphs
+         */
         private List<Line> bodyLines(int end) {
             return IntStream.range(0, end)
                     .filter(i -> isBodyLine(i) && !isFrontMatter(i) && (isBodySize(lines.get(i)) || isHeadingAt(i))
@@ -341,6 +579,12 @@ public final class PdfTextExtractor {
                     .toList();
         }
 
+        /**
+         * Input: a line index.
+         * Output: false for title lines, abstract lines and a page 1-2 "Key..." line.
+         * Used by: headings, bodyLines.
+         * Example: the "Keywords: ..." line -> false
+         */
         private boolean isBodyLine(int i) {
             Line line = lines.get(i);
             boolean inAbstract = abstractStart >= 0 && i >= abstractStart && i < abstractEnd;
@@ -348,11 +592,23 @@ public final class PdfTextExtractor {
             return !titleLines.contains(i) && !inAbstract && !keywordsLine;
         }
 
-        /** Page 1 before the abstract: authors, affiliations, journal banners. */
+        /**
+         * Page 1 before the abstract: authors, affiliations, journal banners.
+         * Input: a line index.
+         * Output: true if it is on the abstract's page and before it (authors, affiliations, banners).
+         * Used by: headings, bodyLines.
+         * Example: "Dept. of Civil Eng., ..." above the abstract -> true
+         */
         private boolean isFrontMatter(int i) {
             return abstractStart >= 0 && i < abstractStart && lines.get(i).page() == lines.get(abstractStart).page();
         }
 
+        /**
+         * Input: a line.
+         * Output: true if its size is within 1.1 pt of the body font size.
+         * Used by: openingText, bodyLines, isHeadingAt.
+         * Example: body 10pt, line 10.5pt -> true; 8pt footnote -> false
+         */
         private boolean isBodySize(Line line) {
             return Math.abs(line.size() - bodySize) <= SIZE_TOLERANCE;
         }
@@ -361,6 +617,10 @@ public final class PdfTextExtractor {
          * Styled like a heading and either numbered ("3.1 Encoder") or leading - directly or through at
          * most two further headings - into a paragraph. Bold labels inside figures and tables lead
          * into other labels or a caption instead.
+         * Input: a line index.
+         * Output: true if it looks like a heading and is numbered or leads (within 2 more headings) into a paragraph.
+         * Used by: findAbstract, headings, bodyLines.
+         * Example: bold "Results" followed by a 10pt paragraph -> true; bold "Load (kN)" followed by a caption -> false
          */
         private boolean isHeadingAt(int i) {
             Line line = lines.get(i);
@@ -381,6 +641,12 @@ public final class PdfTextExtractor {
             return isBodySize(paragraph) && paragraph.words() >= 6 && !CAPTION.matcher(paragraph.text()).find();
         }
 
+        /**
+         * Input: a line.
+         * Output: true if it is short, heading-shaped text and bold at body size or 1.5 pt larger.
+         * Used by: {@link #isHeadingAt}.
+         * Example: bold 10pt "2 Method" -> true; "Figure 3 Mesh" -> false
+         */
         private boolean looksLikeHeading(Line line) {
             String text = line.text();
             if (line.words() > MAX_HEADING_WORDS || !HEADING_TEXT.matcher(text).matches()
@@ -391,12 +657,24 @@ public final class PdfTextExtractor {
             return (line.bold() && line.size() >= bodySize - 0.5f) || line.size() >= bodySize + 1.5f;
         }
 
+        /**
+         * Input: two lines.
+         * Output: true if their sizes differ by less than 0.6 pt and both are bold or both are not.
+         * Used by: {@link #largestTitleRun}.
+         * Example: 18pt bold vs 18.2pt bold -> true
+         */
         private boolean sameStyle(Line a, Line b) {
             return Math.abs(a.size() - b.size()) < 0.6f && a.bold() == b.bold();
         }
     }
 
-    /** The metadata title, cleaned, if it is a real title rather than a file name or tool leftover. */
+    /**
+     * The metadata title, cleaned, if it is a real title rather than a file name or tool leftover.
+     * Input: the PDF's metadata title (may be null) and the file stem.
+     * Output: the cleaned metadata title, or null if missing, implausible, tool junk or just the file name.
+     * Used by: Structure.findTitle.
+     * Example: "Microsoft Word - draft" -> null; "Wave loads on piles \thanks" -> "Wave loads on piles"
+     */
     private static String usableMetadataTitle(String metadataTitle, String fileStem) {
         if (metadataTitle == null) {
             return null;
@@ -413,6 +691,10 @@ public final class PdfTextExtractor {
      * Whether the (compacted) title occurs in the (compacted) text, allowing a few letters to differ -
      * a ligature the text lost, a hyphenation, a "Measurement" that the page spells "Measurements".
      * Approximate substring search: edit distance with the match free to start and end anywhere.
+     * Input: a compacted title and compacted text.
+     * Output: true if the title occurs in the text with at most 15% of its letters different.
+     * Used by: Structure.findTitle; PdfTextExtractorTest.
+     * Example: ("measurementofwaveloads", "...measurementsofwaveloads...") -> true
      */
     static boolean appearsIn(String title, String text) {
         if (title.length() < 10) {
@@ -433,6 +715,12 @@ public final class PdfTextExtractor {
         return Arrays.stream(previous).min().getAsInt() <= title.length() * METADATA_TITLE_TOLERANCE;
     }
 
+    /**
+     * Input: any text.
+     * Output: true if it has 3-40 words, at most 300 chars, no branding, no letter spacing and no file extension.
+     * Used by: usableMetadataTitle, Structure.largestTitleRun.
+     * Example: "Wave loads on piles" -> true; "Ocean Engineering 311 (2024)" -> false
+     */
     private static boolean plausibleTitle(String text) {
         String cleaned = clean(text);
         int words = cleaned.split(" ").length;
@@ -440,7 +728,13 @@ public final class PdfTextExtractor {
                 && !isLetterSpaced(cleaned) && !cleaned.toLowerCase(Locale.ROOT).matches(".*\\.(?:docx?|pdf|tex)$");
     }
 
-    /** "R E S E A R C H" - decorative spacing, not words. */
+    /**
+     * "R E S E A R C H" - decorative spacing, not words.
+     * Input: a line.
+     * Output: true if 4+ tokens and over half are single letters.
+     * Used by: plausibleTitle, Structure.looksLikeHeading.
+     * Example: "R E S E A R C H" -> true
+     */
     private static boolean isLetterSpaced(String text) {
         String[] tokens = text.split(" ");
         long single = Arrays.stream(tokens).filter(t -> t.length() == 1).count();
@@ -450,6 +744,10 @@ public final class PdfTextExtractor {
     /**
      * Drops running headers/footers and page numbers: lines that recur, ignoring digits, on several
      * pages, and lines that are only a number.
+     * Input: every line of the document.
+     * Output: the lines without running headers/footers (same text, digits ignored, on max(3, pages/3) pages) and bare page numbers.
+     * Used by: {@link #extract}.
+     * Example: "Ocean Eng. 311 (2024) 7" on every page and "Page 3 of 9" -> both dropped
      */
     private static List<Line> withoutPageFurniture(List<Line> lines) {
         Map<String, Set<Integer>> pagesByKey = lines.stream().collect(
@@ -461,18 +759,36 @@ public final class PdfTextExtractor {
                 .toList();
     }
 
+    /**
+     * Input: a line.
+     * Output: its lowercased text with digit runs replaced by #.
+     * Used by: {@link #withoutPageFurniture}.
+     * Example: "Page 12" -> "page #"
+     */
     private static String furnitureKey(Line line) {
         return line.text().toLowerCase(Locale.ROOT).replaceAll("\\d+", "#");
     }
 
-    /** The font size most of the text is set in. */
+    /**
+     * The font size most of the text is set in.
+     * Input: every line.
+     * Output: the size most characters are set in (10 if none).
+     * Used by: the Structure constructor.
+     * Example: 90% of text at 10pt -> 10.0
+     */
     private static float bodyFontSize(List<Line> lines) {
         Map<Float, Integer> charsBySize = lines.stream()
                 .collect(Collectors.groupingBy(Line::size, Collectors.summingInt(line -> line.text().length())));
         return charsBySize.entrySet().stream().max(Map.Entry.comparingByValue()).map(Map.Entry::getKey).orElse(10f);
     }
 
-    /** Joins lines into running text, undoing end-of-line hyphenation ("improv-" + "ing"). */
+    /**
+     * Joins lines into running text, undoing end-of-line hyphenation ("improv-" + "ing").
+     * Input: lines.
+     * Output: their text joined by spaces, end-of-line hyphenation undone.
+     * Used by: Structure, PdfTextExtractorTest.
+     * Example: ["improv-", "ing waves"] -> "improving waves"
+     */
     static String joinLines(List<Line> lines) {
         StringBuilder text = new StringBuilder();
         for (Line line : lines) {
@@ -489,7 +805,13 @@ public final class PdfTextExtractor {
         return text.toString();
     }
 
-    /** Cuts the body into passages at word boundaries and keeps up to MAX_BODY_CHUNKS spread evenly. */
+    /**
+     * Cuts the body into passages at word boundaries and keeps up to MAX_BODY_CHUNKS spread evenly.
+     * Input: the body text.
+     * Output: ~{@value #CHUNK_CHARS}-char passages cut at spaces, &gt;= 200 chars, at most {@value #MAX_BODY_CHUNKS} spread evenly.
+     * Used by: Structure.toPaperText; PdfTextExtractorTest.
+     * Example: a 30,000-char body (20 passages) -> passages 0, 4, 8, 11, 15, 19
+     */
     static List<String> sampleChunks(String body) {
         List<String> chunks = new ArrayList<>();
         int start = 0;
@@ -507,6 +829,7 @@ public final class PdfTextExtractor {
             }
             start = end;
         }
+        // Too many: keep evenly spaced ones, always the first and the last.
         if (chunks.size() <= MAX_BODY_CHUNKS) {
             return chunks;
         }
@@ -515,6 +838,12 @@ public final class PdfTextExtractor {
                 .toList();
     }
 
+    /**
+     * Input: text and a limit.
+     * Output: the text cut at the last space before the limit (or at the limit).
+     * Used by: findAbstract, openingText.
+     * Example: ("one two three", 9) -> "one two"
+     */
     private static String truncate(String text, int maxChars) {
         if (text.length() <= maxChars) {
             return text;
@@ -523,21 +852,45 @@ public final class PdfTextExtractor {
         return text.substring(0, space > maxChars / 2 ? space : maxChars);
     }
 
+    /**
+     * Input: lines.
+     * Output: how many letters they contain.
+     * Used by: extract, letterShare.
+     * Example: ["ab 12"] -> 2
+     */
     private static int letterCount(List<Line> lines) {
         return (int) lines.stream().flatMapToInt(line -> line.text().chars()).filter(Character::isLetter).count();
     }
 
+    /**
+     * Input: lines.
+     * Output: letters / non-space characters (0 if none).
+     * Used by: {@link #extract}, to reject undecodable fonts.
+     * Example: ["*+,-.+/-0"] -> 0.0; ["Wave loads"] -> 1.0
+     */
     private static double letterShare(List<Line> lines) {
         long nonSpace = lines.stream().flatMapToInt(line -> line.text().chars()).filter(c -> !Character.isWhitespace(c)).count();
         return nonSpace == 0 ? 0 : letterCount(lines) / (double) nonSpace;
     }
 
-    /** Ligatures and compatibility forms ("ﬁ", full-width letters) become plain text; spacing is collapsed. */
+    /**
+     * Ligatures and compatibility forms ("ﬁ", full-width letters) become plain text; spacing is collapsed.
+     * Input: raw extracted text.
+     * Output: NFKC-normalized (ligatures to letters), invisible characters removed, whitespace collapsed.
+     * Used by: LineCollector.endPage, usableMetadataTitle, plausibleTitle, fileStem.
+     * Example: "ﬁnite  element" -> "finite element"
+     */
     private static String clean(String text) {
         String normalized = Normalizer.normalize(INVISIBLE.matcher(text).replaceAll(""), Normalizer.Form.NFKC);
         return WHITESPACE.matcher(normalized).replaceAll(" ").trim();
     }
 
+    /**
+     * Input: a PDF path.
+     * Output: the file name without extension, underscores as spaces.
+     * Used by: {@link #extract}, as the last-resort title.
+     * Example: wave_loads_2024.pdf -> "wave loads 2024"
+     */
     private static String fileStem(Path pdf) {
         String name = pdf.getFileName().toString();
         int dot = name.lastIndexOf('.');
@@ -552,6 +905,12 @@ public final class PdfTextExtractor {
         private StringBuilder text = new StringBuilder();
         private List<TextPosition> glyphs = new ArrayList<>();
 
+        /**
+         * Input: a string PDFBox extracted and its glyphs.
+         * Output: none; appended to the current line unless every glyph is rotated.
+         * Used by: PDFBox, while reading the document.
+         * Example: arXiv's sideways margin stamp -> skipped
+         */
         @Override
         protected void writeString(String string, List<TextPosition> textPositions) {
             if (textPositions.stream().noneMatch(glyph -> glyph.getDir() == 0)) {
@@ -561,16 +920,34 @@ public final class PdfTextExtractor {
             glyphs.addAll(textPositions);
         }
 
+        /**
+         * Input: none.
+         * Output: none; a space is appended.
+         * Used by: PDFBox.
+         * Example: "Wave" + sep + "loads" -> "Wave loads"
+         */
         @Override
         protected void writeWordSeparator() {
             text.append(' ');
         }
 
+        /**
+         * Input: none.
+         * Output: none; the current line is ended.
+         * Used by: PDFBox.
+         * Example: -> the line is queued for this page
+         */
         @Override
         protected void writeLineSeparator() {
             endLine();
         }
 
+        /**
+         * Input: the finished page.
+         * Output: none; the page's lines (stray glyphs re-attached, cleaned) are added with their dominant size and boldness.
+         * Used by: PDFBox, after each page.
+         * Example: page 1 -> Line(1, "Wave loads on piles", 18.0, true), ...
+         */
         @Override
         protected void endPage(PDPage page) throws IOException {
             endLine();
@@ -584,6 +961,12 @@ public final class PdfTextExtractor {
             super.endPage(page);
         }
 
+        /**
+         * Input: none.
+         * Output: none; the text so far becomes a pending line if it has glyphs and is not blank.
+         * Used by: writeLineSeparator, endPage.
+         * Example: text "Wave loads" -> pageLines += PendingLine("Wave loads", glyphs)
+         */
         private void endLine() {
             if (!glyphs.isEmpty() && !text.toString().isBlank()) {
                 pageLines.add(new PendingLine(text, glyphs));
@@ -597,6 +980,10 @@ public final class PdfTextExtractor {
          * page, so it arrives as a one-letter line and the real line lacks it ("ybrid" for "Hybrid").
          * Each such stray glyph is put back in front of the line that continues it on the same
          * baseline; strays nothing continues stay as they are.
+         * Input: one page's pending lines.
+         * Output: the lines with each stray 1-2 glyph line put back in front of the line on its baseline.
+         * Used by: {@link #endPage}; PdfTextExtractorTest.
+         * Example: ["H", "ybrid model"] on one baseline -> ["Hybrid model"]
          */
         static List<PendingLine> attachStrayGlyphs(List<PendingLine> lines) {
             List<PendingLine> strays = lines.stream().filter(PendingLine::isStray)
@@ -626,19 +1013,37 @@ public final class PdfTextExtractor {
             return lines.stream().filter(line -> !attached.contains(line)).toList();
         }
 
-        /** Most common glyph size, to the nearest half point - an average is skewed by sub/superscripts. */
+        /**
+         * Most common glyph size, to the nearest half point - an average is skewed by sub/superscripts.
+         * Input: a line's glyphs.
+         * Output: the most common glyph size, to the nearest half point.
+         * Used by: {@link #endPage}.
+         * Example: sizes [10, 10, 10, 7 (superscript)] -> 10.0
+         */
         private static float dominantSize(List<TextPosition> glyphs) {
             Map<Float, Long> counts = glyphs.stream()
                     .collect(Collectors.groupingBy(glyph -> Math.round(glyph.getFontSizeInPt() * 2) / 2f, Collectors.counting()));
             return counts.entrySet().stream().max(Map.Entry.comparingByValue()).get().getKey();
         }
 
+        /**
+         * Input: a line's glyphs.
+         * Output: true if at least 60% of the visible glyphs are in a bold font.
+         * Used by: {@link #endPage}.
+         * Example: 7 of 10 glyphs bold -> true
+         */
         private static boolean mostlyBold(List<TextPosition> glyphs) {
             List<TextPosition> visible = glyphs.stream().filter(glyph -> !glyph.getUnicode().isBlank()).toList();
             long bold = visible.stream().filter(glyph -> isBold(glyph.getFont())).count();
             return !visible.isEmpty() && bold * 10 >= visible.size() * 6L;
         }
 
+        /**
+         * Input: a font (may be null).
+         * Output: true if forced bold, weight &gt;= 600, or its name says bold/black/heavy/semibold.
+         * Used by: {@link #mostlyBold}.
+         * Example: "Times-Bold" -> true; "CMR10" -> false
+         */
         private static boolean isBold(PDFont font) {
             if (font == null) {
                 return false;
@@ -655,16 +1060,34 @@ public final class PdfTextExtractor {
     /** A line still being assembled, with the glyphs it was drawn from. */
     private record PendingLine(StringBuilder text, List<TextPosition> glyphs) {
 
-        /** One or two glyphs drawn apart from any word: a candidate for the line it belongs to. */
+        /**
+         * One or two glyphs drawn apart from any word: a candidate for the line it belongs to.
+         * Input: none.
+         * Output: true if the line is 1-2 non-space characters.
+         * Used by: LineCollector.attachStrayGlyphs.
+         * Example: "H" -> true; "Hy brid" -> false
+         */
         boolean isStray() {
             String content = text.toString().strip();
             return !content.isEmpty() && content.length() <= 2 && content.indexOf(' ') < 0;
         }
 
+        /**
+         * Input: none.
+         * Output: the x position of its first glyph.
+         * Used by: LineCollector.attachStrayGlyphs (strays sorted right to left).
+         * Example: line starting at x=72 -> 72.0
+         */
         double startX() {
             return glyphs.get(0).getXDirAdj();
         }
 
+        /**
+         * Input: a stray line and "" or " ".
+         * Output: none; the stray's text and glyphs are put in front of this line.
+         * Used by: LineCollector.attachStrayGlyphs.
+         * Example: "ybrid".prepend("H", "") -> "Hybrid"
+         */
         void prepend(PendingLine stray, String separator) {
             text.insert(0, stray.text.toString().strip() + separator);
             glyphs.addAll(0, stray.glyphs);

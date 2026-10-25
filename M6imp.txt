@@ -1,0 +1,9 @@
+I want to extend the Scoring module.
+Scoring using AI APIs. 
+While building the profile. I also want to store the keywords of the module.
+While scoring the papers I want to send all the proflies and the new papers as a prompt to the AI.
+AI then gives me matched papers for all the profiles along with the recommendation score for the paper 
+and also tells me which paper to focus on the most for each profile with a one line text why?
+
+First I want to implement the interface of the API
+I want to use google AI Studio API.

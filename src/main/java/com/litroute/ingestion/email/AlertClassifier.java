@@ -10,13 +10,14 @@ import java.util.regex.Pattern;
 
 /**
  * Decides whether an inbox message looks like a publication/citation alert worth
- * handing to M2. M1 scans the whole INBOX with no label or filter, so this is the
- * only gate between every email the user has received and the pipeline.
+ * handing to M2. M1 scans the INBOX's unread mail with no label or filter, so this is
+ * the only gate between every email the user has received and the pipeline.
  *
  * Acceptance is uniform and not limited to known publishers: KNOWN_ALERT_SENDER_DOMAINS
- * is a low-false-positive fast path (from six real client alerts: SpringerOpen,
- * Taylor &amp; Francis, Google Scholar, ScienceDirect/Elsevier, ASCE), while the broad
- * SUBJECT_KEYWORDS catch alerts from any other publication by subject wording.
+ * and KNOWN_ALERT_SENDER_ADDRESSES are a low-false-positive fast path (from six real
+ * client alerts: SpringerOpen, Taylor &amp; Francis, Google Scholar, ScienceDirect/Elsevier,
+ * ASCE), while the broad SUBJECT_KEYWORDS catch alerts from any other publication by
+ * subject wording.
  *
  * A forwarded alert has the forwarder as its IMAP sender, so when the direct
  * sender/subject don't match, the same check runs on <em>every</em> quoted
@@ -57,9 +58,13 @@ public final class AlertClassifier {
      */
     private static final int SUBJECT_LOOKAHEAD_LINES = 4;
 
+    /**
+     * Domains that send nothing but alerts, or whose alerts are worth the occasional newsletter. A
+     * domain that also sends account, security or product mail (google.com: sign-in alerts, Workspace
+     * and Cloud notices) must not be here; trust its alert address in KNOWN_ALERT_SENDER_ADDRESSES.
+     */
     private static final Set<String> KNOWN_ALERT_SENDER_DOMAINS = Set.of(
             "scholar.google.com",
-            "google.com",
             "arxiv.org",
             "ieee.org",
             "sciencedirect.com",
@@ -77,6 +82,13 @@ public final class AlertClassifier {
             "researchgate.net",
             "wiley.com",
             "nature.com");
+
+    /**
+     * Single alert addresses on domains that send other mail too. Google Scholar alerts come from
+     * scholaralerts-noreply@google.com, the only google.com address trusted as an alert sender.
+     */
+    private static final Set<String> KNOWN_ALERT_SENDER_ADDRESSES = Set.of(
+            "scholaralerts-noreply@google.com");
 
     private static final Set<String> SUBJECT_KEYWORDS = Set.of(
             "new citations",
@@ -113,19 +125,36 @@ public final class AlertClassifier {
 
     private final Set<String> extraAllowedSenderDomains;
 
+    /**
+     * Input: none.
+     * Output: a classifier trusting only the built-in sender lists and subject keywords.
+     * Used by: GmailEmailSource (M1) constructors.
+     * Example: {@code new AlertClassifier().isPublicationAlert("x@springer.com", "Hi")} -> true
+     */
     public AlertClassifier() {
         this(Set.of());
     }
 
     /**
-     * @param extraAllowedSenderDomains additional publisher domains to trust, beyond
-     *         KNOWN_ALERT_SENDER_DOMAINS.
+     * Input: additional publisher domains to trust, beyond KNOWN_ALERT_SENDER_DOMAINS.
+     * Output: a classifier that also accepts any sender on those domains.
+     * Used by: {@link #AlertClassifier()}; AlertClassifierTest.
+     * Example: {@code new AlertClassifier(Set.of("mdpi.com")).isPublicationAlert("news@mdpi.com", "Hi")} -> true
      */
     public AlertClassifier(Set<String> extraAllowedSenderDomains) {
         this.extraAllowedSenderDomains = extraAllowedSenderDomains;
     }
 
+    /**
+     * Input: the sender address and subject (either may be null).
+     * Output: true if the address, its domain, or a subject keyword marks an alert.
+     * Used by: the three-argument overload, for the direct and each quoted header block.
+     * Example: ("bob@gmail.com", "New citations to my articles") -> true; ("security@google.com", "Sign-in alert") -> false
+     */
     public boolean isPublicationAlert(String fromAddress, String subject) {
+        if (fromAddress != null && KNOWN_ALERT_SENDER_ADDRESSES.contains(fromAddress.toLowerCase(Locale.ROOT))) {
+            return true;
+        }
         String domain = domainOf(fromAddress);
         if (domain != null
                 && ((KNOWN_ALERT_SENDER_DOMAINS.contains(domain) || extraAllowedSenderDomains.contains(domain)))) {
@@ -140,10 +169,12 @@ public final class AlertClassifier {
     }
 
     /**
-     * Same as {@link #isPublicationAlert(String, String)}, but additionally recovers the quoted
-     * sender/subject of every message the body quotes (see class javadoc) and re-checks each of
-     * them - so a paper alert forwarded by anyone, any number of times, is still recognized
-     * without needing a forwarder-specific mechanism.
+     * As {@link #isPublicationAlert(String, String)}, then re-checks every quoted From/Subject block in the body,
+     * so an alert forwarded by anyone, any number of times, is still recognized.
+     * Input: sender, subject and the plain-text body (if any).
+     * Output: true if the message or any message it quotes is an alert.
+     * Used by: GmailEmailSource.toRawEmailIfNewAlert (M1).
+     * Example: from me@uni.edu, "Fwd: FYI", body quotes "From: alerts@asce.org" -> true
      */
     public boolean isPublicationAlert(String fromAddress, String subject, Optional<String> plainTextBody) {
         if (isPublicationAlert(fromAddress, subject)) {
@@ -161,9 +192,11 @@ public final class AlertClassifier {
     }
 
     /**
-     * Every quoted From/Subject pair in the body, outermost first. A message forwarded n times
-     * quotes n blocks; the publisher's own is the innermost, so all of them are returned rather
-     * than only the first.
+     * Every quoted From/Subject pair, outermost first; the publisher's own is the innermost, so all are returned.
+     * Input: a plain-text body.
+     * Output: the quoted header pairs found, after stripping "&gt;" quote markers.
+     * Used by: {@link #isPublicationAlert(String, String, Optional)}.
+     * Example: "From: A &lt;a@x.com&gt;\nDate: ..\nSubject: Hi" -> {@code [QuotedHeaders("a@x.com", "Hi")]}
      */
     private static List<QuotedHeaders> extractQuotedHeaders(String body) {
         String[] lines = body.split("\\R", -1);
@@ -176,6 +209,7 @@ public final class AlertClassifier {
             if (!from.find()) {
                 continue;
             }
+            // Look a few lines down for this block's Subject, stopping at the blank line ending the headers.
             int lastLine = Math.min(lines.length - 1, i + SUBJECT_LOOKAHEAD_LINES);
             for (int j = i + 1; j <= lastLine && !lines[j].isBlank(); j++) {
                 Matcher subject = QUOTED_SUBJECT_LINE.matcher(lines[j]);
@@ -188,6 +222,12 @@ public final class AlertClassifier {
         return quoted;
     }
 
+    /**
+     * Input: an email address (null allowed).
+     * Output: its lowercased domain, or null if there is none.
+     * Used by: {@link #isPublicationAlert(String, String)}.
+     * Example: {@code domainOf("Alerts@SpringerOpen.com")} -> {@code "springeropen.com"}
+     */
     private static String domainOf(String emailAddress) {
         if (emailAddress == null) {
             return null;

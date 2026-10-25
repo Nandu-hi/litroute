@@ -70,7 +70,13 @@ final class Terms {
     private record Word(String stem, String surface) {
     }
 
-    /** How often each term occurs: every kept word's stem and every pair of adjacent kept words. */
+    /**
+     * How often each term occurs: every kept word's stem and every pair of adjacent kept words.
+     * Input: any text.
+     * Output: how often each kept word stem and each adjacent pair ("stem_stem") occurs.
+     * Used by: LexicalIndex (M6) for documents and candidates; TermsTest.
+     * Example: "Wave loads on wave piles" -> {wave=2, load=1, pile=1, wave_load=1, wave_pile=1}
+     */
     static Map<String, Integer> counts(String text) {
         Map<String, Integer> counts = new HashMap<>();
         List<Word> words = words(text);
@@ -88,7 +94,13 @@ final class Terms {
         return counts;
     }
 
-    /** For each term in the text, the way it is most often written there ("rank aggregation"), for display. */
+    /**
+     * For each term in the text, the way it is most often written there ("rank aggregation"), for display.
+     * Input: any text.
+     * Output: each term mapped to how it is most often written there.
+     * Used by: RelevanceScorer (M6), to show shared words in the rationale.
+     * Example: "Ranking aggregations" -> {rank=ranking, aggregation=aggregations, rank_aggregation="ranking aggregations"}
+     */
     static Map<String, String> surfaceForms(String text) {
         Map<String, Map<String, Integer>> written = new HashMap<>();
         List<Word> words = words(text);
@@ -110,7 +122,13 @@ final class Terms {
         return surfaces;
     }
 
-    /** The text's words in order, with null where a dropped word separates its neighbours. */
+    /**
+     * The text's words in order, with null where a dropped word separates its neighbours.
+     * Input: any text.
+     * Output: its words in order (folded, hyphens unified), with null for a dropped short word or stopword.
+     * Used by: {@link #counts}, {@link #surfaceForms}.
+     * Example: "The wave-loads" -> [null, Word(wave-load, wave-loads)]
+     */
     private static List<Word> words(String text) {
         String folded = Normalizer.normalize(INVISIBLE.matcher(text).replaceAll(""), Normalizer.Form.NFKD);
         folded = HYPHENS.matcher(MARKS.matcher(folded).replaceAll("")).replaceAll("-").toLowerCase(Locale.ROOT);
@@ -127,6 +145,12 @@ final class Terms {
         return words;
     }
 
+    /**
+     * Input: a lowercase word.
+     * Output: its stem: -ies to -y, -sses to -ss, plural s dropped, then -ingly/-edly/-ing/-ed where 4+ letters remain.
+     * Used by: {@link #words}; TermsTest.
+     * Example: "hazards" -> "hazard"; "studies" -> "study"; "modelling" -> "modell"; "analysis" -> "analysis"
+     */
     static String stem(String word) {
         if (word.length() > 4 && word.endsWith("ies")) {
             return word.substring(0, word.length() - 3) + "y";
@@ -147,6 +171,12 @@ final class Terms {
         return stem;
     }
 
+    /**
+     * Input: a word.
+     * Output: it without trailing hyphens.
+     * Used by: {@link #words}.
+     * Example: "multi-" -> "multi"
+     */
     private static String trimHyphens(String word) {
         int end = word.length();
         while (end > 0 && word.charAt(end - 1) == '-') {
