@@ -18,11 +18,11 @@ This root package holds one file, [App.java](App.java): the "Hello World!" place
 | Module | Package | Readme | Role |
 |---|---|---|---|
 | M1 | [ingestion/email](ingestion/email/) | [readme](ingestion/email/readme.md) | Fetch unread publication alerts from Gmail over IMAP. |
-| M2 | [ingestion/extract](ingestion/extract/) | [readme](ingestion/extract/readme.md) | Read the papers out of each alert's HTML; run a batch through M2–M4 and save it. |
+| M2 | [ingestion/extract](ingestion/extract/) | [readme](ingestion/extract/readme.md) | Read the papers out of each alert, by pattern matching or a local language model (chosen per run); run a batch through M2–M4 and save it. |
 | M3 | [ingestion/enrich](ingestion/enrich/) | [readme](ingestion/enrich/readme.md) | Fill in DOI, venue, year, abstract from the publisher's page, Crossref and OpenAlex; download the PDF. |
 | M4 | [ingestion/dedup](ingestion/dedup/) | [readme](ingestion/dedup/readme.md) | Merge copies of the same paper. |
 | M5 | [profile](profile/) | [readme](profile/readme.md) | Turn each student's folder of PDFs into a profile of SPECTER2 vectors and text. |
-| M6 | [scoring](scoring/), [scoring/ai](scoring/ai/) | [readme](scoring/readme.md), [ai readme](scoring/ai/readme.md) | Match each paper to the student it suits: words + SPECTER2, or a language model on Groq. |
+| M6 | [scoring](scoring/) | [readme](scoring/readme.md) | Match each paper to the student it suits: words + SPECTER2. |
 | M7 | [store](store/) | [readme](store/readme.md) | The JSON stores that hold the pipeline's progress between runs (M7a, c, d, e, plus the scored-paper log and the sent papers). |
 | M8 | [ui](ui/) | [readme](ui/readme.md) | The JavaFX window: review, run, profiles, credentials. |
 | M9 | [pipeline](pipeline/) | [readme](pipeline/readme.md) | One run of the whole pipeline, and Clear and re-run. |
@@ -44,7 +44,7 @@ Gmail ──M1──▶ RawEmail ──M2──▶ PaperCandidate ──M3──
   ▲               │                                                       │
   │               └──── Message-IDs ──▶ M7a email_cache.json (saved last) │
   │ mark read                                                             ▼
-  │                                                       M6 RelevanceScorer / AiPaperMatcher
+  │                                                       M6 RelevanceScorer
   │                                                                       │ ScoredPaper
   │                                                                       ▼
   │                         scored_papers.json ◀── M9 ──▶ M7e scored_queue.json + matched/<student>/

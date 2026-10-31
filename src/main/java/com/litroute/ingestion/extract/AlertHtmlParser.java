@@ -55,6 +55,7 @@ final class AlertHtmlParser {
 
     private static final int MAX_BLOCK_LINES = 12;
     private static final int MIN_TITLE_WORDS = 3;
+    private static final int MAX_TITLE_WORDS = 40;
 
     private static final Pattern TITLE_TAG =
             Pattern.compile("(?i)^\\[(?:PDF|HTML|BOOK|B|CITATION|C|DOC)\\]\\s*");
@@ -99,11 +100,38 @@ final class AlertHtmlParser {
      * Input: one alert email (only its HTML body is read).
      * Output: its research papers in email order, one per title line with an author or venue line under it; repeats
      * and notes ({@link PaperCandidate#isResearch}) skipped; [] if there is no HTML body.
-     * Used by: PaperExtractor.extract (M2), before enrichment.
+     * Used by: tests of the parser alone; see {@link #research} for the same on {@link #blocks}.
      * Example: the email in the class example -> one ParsedPaper ("Wave loads on floating offshore wind
      * turbines", READABLE); an email with only a plain-text body -> [].
      */
     List<ParsedPaper> parse(RawEmail email) {
+        return research(blocks(email));
+    }
+
+    /**
+     * Input: papers from {@link #blocks}.
+     * Output: the research papers among them, repeats skipped, in the same order.
+     * Used by: {@link #parse}; PaperExtractor.extract (M2), before enrichment.
+     * Example: [paper A, "Discussion of A", paper A again] -> [paper A]
+     */
+    static List<ParsedPaper> research(List<ParsedPaper> blocks) {
+        List<ParsedPaper> papers = new ArrayList<>();
+        Set<String> seenTitles = new HashSet<>();
+        for (ParsedPaper paper : blocks) {
+            if (paper.candidate().isResearch() && seenTitles.add(compact(paper.candidate().title()))) {
+                papers.add(paper);
+            }
+        }
+        return papers;
+    }
+
+    /**
+     * Input: one alert email (only its HTML body is read).
+     * Output: every paper block in email order, repeats and notes included; [] if there is no HTML body.
+     * Used by: {@link #parse}; PaperExtractor.extract (M2), since the local model must not bring back a note this drops.
+     * Example: ASCE's table of contents -> 22 blocks, of which 17 are research papers
+     */
+    List<ParsedPaper> blocks(RawEmail email) {
         if (email.htmlBody().isEmpty()) {
             return List.of();
         }
@@ -122,18 +150,48 @@ final class AlertHtmlParser {
 
         // Pass 2: build a paper from each title and the block under it.
         List<ParsedPaper> papers = new ArrayList<>();
-        Set<String> seenTitles = new HashSet<>();
         for (int i = 0; i < lines.size(); i++) {
-            if (titles[i] == null) {
-                continue;
-            }
-            Optional<ParsedPaper> paper = paperAt(email, lines, titles, issue, i);
-            if (paper.isPresent() && paper.get().candidate().isResearch()
-                    && seenTitles.add(compact(paper.get().candidate().title()))) {
-                papers.add(paper.get());
+            if (titles[i] != null) {
+                paperAt(email, lines, titles, issue, i).ifPresent(papers::add);
             }
         }
         return papers;
+    }
+
+    /**
+     * Whether a text from the email can be a paper's title at all, whatever the local model says of it.
+     * Input: normalized text, without a "[PDF]" tag.
+     * Output: false for too few or too many words, footer text, a list of names, a section label, a copyright line or an issue header.
+     * Used by: AiTitleExtractor, on the email's lines.
+     * Example: "Wave loads on floating turbines" -> true; "Unsubscribe from these alerts", "A. Smith, B. Jones",
+     * "Technical Papers", "VOLUME: 27 | NUMBER: 4" -> false
+     */
+    static boolean readsAsTitle(String text) {
+        int words = wordCount(text);
+        return words >= MIN_TITLE_WORDS && words <= MAX_TITLE_WORDS && !FURNITURE.matcher(text).matches()
+                && !TYPE_LINE.matcher(text).matches() && !COPYRIGHT.matcher(text).find()
+                && !VOLUME_HEADER.matcher(text).find() && AuthorNames.parse(text).isEmpty();
+    }
+
+    /**
+     * Input: a link's href.
+     * Output: true if it is an http(s) link other than the ones Gmail adds to a forward.
+     * Used by: {@link #titleOf}; AiTitleExtractor, on the email's links.
+     * Example: https://doi.org/10.1/x -> true; mailto:a@b.org -> false; https://www.google.com/maps/search/... -> false
+     */
+    static boolean isWebLink(String href) {
+        String link = href.trim().toLowerCase(Locale.ROOT);
+        return (link.startsWith("http://") || link.startsWith("https://")) && !GMAIL_ADDED_LINK.matcher(link).find();
+    }
+
+    /**
+     * Input: a title.
+     * Output: it without a "[PDF]"-style tag at the start.
+     * Used by: {@link #titleOf}; AiTitleExtractor.
+     * Example: "[PDF] Wave loads on piles" -> "Wave loads on piles"
+     */
+    static String withoutTag(String title) {
+        return TITLE_TAG.matcher(title.strip()).replaceFirst("");
     }
 
     /**
@@ -172,7 +230,9 @@ final class AlertHtmlParser {
         List<String> hrefs = new ArrayList<>();
         hrefs.add(lines.get(titleIndex).soleAnchor().orElseThrow().href());
         for (Line line : lines.subList(titleIndex + 1, end)) {
-            line.anchors().forEach(anchor -> hrefs.add(anchor.href()));
+            line.anchors().stream()
+                    .filter(anchor -> !GMAIL_ADDED_LINK.matcher(anchor.href().trim()).find())
+                    .forEach(anchor -> hrefs.add(anchor.href()));
         }
         List<Link> links = new ArrayList<>();
         hrefs.forEach(href -> links.add(LinkUnwrapper.resolve(href)));
@@ -370,11 +430,10 @@ final class AlertHtmlParser {
         if (anchor.isEmpty()) {
             return Optional.empty();
         }
-        String href = anchor.get().href().trim().toLowerCase(Locale.ROOT);
-        if (!href.startsWith("http://") && !href.startsWith("https://") || GMAIL_ADDED_LINK.matcher(href).find()) {
+        if (!isWebLink(anchor.get().href())) {
             return Optional.empty();
         }
-        String title = TITLE_TAG.matcher(AlertLines.normalize(anchor.get().text())).replaceFirst("");
+        String title = withoutTag(AlertLines.normalize(anchor.get().text()));
         if (wordCount(title) < MIN_TITLE_WORDS || FURNITURE.matcher(title).matches()) {
             return Optional.empty();
         }

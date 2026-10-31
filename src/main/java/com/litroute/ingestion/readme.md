@@ -7,7 +7,7 @@ This folder holds no classes of its own; each stage is a subpackage with its own
 | Subpackage | Stage | Readme | Main classes |
 |---|---|---|---|
 | [email](email/) | **M1** fetch | [email/readme.md](email/readme.md) | [EmailSource](email/EmailSource.java), [GmailEmailSource](email/GmailEmailSource.java), [AlertClassifier](email/AlertClassifier.java) |
-| [extract](extract/) | **M2** parse (+ the batch wrapper) | [extract/readme.md](extract/readme.md) | [PaperExtractor](extract/PaperExtractor.java), [AlertHtmlParser](extract/AlertHtmlParser.java), [AlertBatchProcessor](extract/AlertBatchProcessor.java) |
+| [extract](extract/) | **M2** find the papers, by pattern matching or the local model (+ the batch wrapper) | [extract/readme.md](extract/readme.md) | [PaperExtractor](extract/PaperExtractor.java), [AlertHtmlParser](extract/AlertHtmlParser.java), [AiTitleExtractor](extract/AiTitleExtractor.java), [AlertBatchProcessor](extract/AlertBatchProcessor.java) |
 | [enrich](enrich/) | **M3** enrich | [enrich/readme.md](enrich/readme.md) | [OnlinePaperEnricher](enrich/OnlinePaperEnricher.java), [CachingPaperEnricher](enrich/CachingPaperEnricher.java), [CrossrefSource](enrich/CrossrefSource.java), [OpenAlexSource](enrich/OpenAlexSource.java), [PdfDownloader](enrich/PdfDownloader.java) |
 | [dedup](dedup/) | **M4** deduplicate | [dedup/readme.md](dedup/readme.md) | [Deduplicator](dedup/Deduplicator.java) |
 
@@ -24,6 +24,7 @@ List<RawEmail>
    │        M2 PaperExtractor.extract
    │             AlertLines ─▶ AlertHtmlParser (+ AuthorNames, LinkUnwrapper) ─▶ ParsedPaper(candidate, LinkKind)
    │             notes (book reviews, errata, ...) dropped
+   │             in Local AI mode, AiTitleExtractor ─▶ prompts.txt + email ─▶ Ollama: the model picks which papers
    │        M3 CachingPaperEnricher (M7c lookups) ─▶ OnlinePaperEnricher
    │             ArticlePageReader (READABLE links only) + CompositeMetadataLookup(Crossref, OpenAlex)
    │             PdfDownloader ─▶ ~/.litroute/data/pdfs/<doi>.pdf

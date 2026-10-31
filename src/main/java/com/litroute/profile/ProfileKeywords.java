@@ -13,7 +13,7 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * What a student works on, in a few words, for M6's language model: the author keywords of the student's
+ * What a student works on, in a few words, for the Profiles tab and the CLI report: the author keywords of the student's
  * reference papers, those that run through the student's work first.
  *
  * A keyword ranks by how many of the student's papers list it, then by how many are about it - mention it
@@ -67,7 +67,7 @@ public final class ProfileKeywords {
     /**
      * Input: a profile's papers (duplicate titles counted once).
      * Output: at most {@value #MAX_KEYWORDS} keywords, most listed first, then most mentioned; [] if no paper lists any.
-     * Used by: ProfileBuilder.sync (M5), stored on the Profile for M6's AI prompt.
+     * Used by: ProfileBuilder.sync (M5), stored on the Profile for the Profiles tab and ProfileBuilderCli.
      * Example: see the class example: 4 multi-hazard papers -> [Multi-hazard, wind load, Fragility, ...]
      */
     public static List<String> of(List<ProfilePaper> allPapers) {

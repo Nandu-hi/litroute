@@ -16,6 +16,7 @@ esac
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LITROUTE_HOME="$HOME/.litroute"
 MODEL_DIR="${SPECTER2_OUT_DIR:-$LITROUTE_HOME/models}"
+OLLAMA_MODEL="llama3.2:3b"
 MIN_JAVA=17
 
 ASSUME_YES=0
@@ -178,7 +179,25 @@ if [ "$SKIP_MODEL" -eq 0 ]; then
     fi
 fi
 
-# --- 4. data folders -------------------------------------------------------
+# --- 4. local language model -----------------------------------------------
+
+step "Checking the optional local language model ($OLLAMA_MODEL)"
+if ! have ollama; then
+    warn "Ollama not found. It is only needed for the Local AI model option; pattern matching works without it."
+    warn "To add that option, install Ollama from https://ollama.com, then run: ollama pull $OLLAMA_MODEL"
+elif ollama list 2>/dev/null | awk '{print $1}' | grep -qx "$OLLAMA_MODEL"; then
+    ok "Already downloaded"
+elif confirm "Download $OLLAMA_MODEL (about 2 GB)?"; then
+    if ollama pull "$OLLAMA_MODEL"; then
+        ok "Model downloaded"
+    else
+        warn "The download failed. Is Ollama running? Start it with 'ollama serve', then run: ollama pull $OLLAMA_MODEL"
+    fi
+else
+    warn "Not downloaded. The Local AI model option needs it: ollama pull $OLLAMA_MODEL"
+fi
+
+# --- 5. data folders -------------------------------------------------------
 
 step "Creating the LitRoute folders in $LITROUTE_HOME"
 mkdir -p "$LITROUTE_HOME/profiles" "$LITROUTE_HOME/data"
@@ -190,7 +209,7 @@ if [ -z "$(find "$LITROUTE_HOME/profiles" -mindepth 1 -maxdepth 1 -type d -not -
     warn "and an email.txt holding their address (see README.md, 'Student profiles')."
 fi
 
-# --- 5. Gmail credentials --------------------------------------------------
+# --- 6. Gmail credentials --------------------------------------------------
 
 if [ "$SETUP_CREDENTIALS" -eq 1 ]; then
     step "Setting up the Gmail App Password"

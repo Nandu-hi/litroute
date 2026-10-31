@@ -30,7 +30,7 @@ Gmail ──▶ M1 GmailEmailSource ──RawEmail──▶ M2/M3 PaperExtractor
                                                                           │ enriched
 student PDFs ──▶ M5 ProfileBuilder ──▶ M7d profiles.json ──┐              │
                                                            ▼              ▼
-                                         M6 PaperMatcher.match(...)  (RelevanceScorer or AiPaperMatcher)
+                                         M6 PaperMatcher.match(...)  (RelevanceScorer)
                                                            │ addAll(Map<student, List<ScoredPaper>>)
                                                            ▼
                                             M7e scored_queue.json ◀── setStatus ── M8 GUI (professor)
@@ -86,7 +86,7 @@ All profiles in one JSON object keyed by profile name, kept in the order they we
 The review queue: a JSON list of scored (paper, student) pairs in the order they were first queued, plus a folder of matched PDFs per student.
 - **[addAll(matches)](ScoredQueueStore.java#L167):** takes a matcher's output, `Map<student, List<ScoredPaper>>`, as it is; [addAll(scored)](ScoredQueueStore.java#L180) takes the papers in one list. A paper already queued for the same student (same [queueKey()](../model/ScoredPaper.java#L100)) takes the new score, rationale and recommendation but **keeps its place and its review status**, so re-scoring never undoes the professor's decision.
 - **Matched PDFs per student:** a queued paper's PDF is copied into [pdfFolder(student)](ScoredQueueStore.java#L140) (`~/.litroute/data/matched/<student>/` by default; next to the queue file when it is constructed with only a file), keeping its file name, and the queue entry's `pdfPath` points to the copy, so M10 can attach it.
-  - A paper matched to two students (the AI matcher allows it) is copied into both folders.
+  - A paper queued for two students is copied into both folders.
   - Queuing a paper again finds its copy (same bytes) instead of copying it twice; another paper's PDF with the same file name is saved as `name-2.pdf`.
   - A paper without a PDF (paywalled), or whose download has since gone, is still queued, with no file; a gone PDF is logged.
   - A profile name that would lead outside the folder (`../x`) is refused.
@@ -94,7 +94,7 @@ The review queue: a JSON list of scored (paper, student) pairs in the order they
 - **[clear()](ScoredQueueStore.java):** empties the queue, decisions included, and deletes the PDF copies its entries point to in the students' folders (and any folder left empty). A file outside `matched/` is never touched. Used by M9's **Clear and re-run**.
 - **Concurrency:** the GUI (M8) changes statuses while the pipeline (M9) adds papers. Every change is a read-modify-write inside `synchronized` on **one lock per file path**, shared by all store objects for that file, so neither side can lose the other's update.
 - Queues saved before recommendations existed load with `recommended = false`.
-- Each entry stores its `relevance` (null when the matcher didn't measure it). Entries queued before relevance was stored take it from their rationale, which states it ("Relevance 0.82 (…").
+- Each entry stores its `relevance` (null if none was recorded). Entries queued before relevance was stored take it from their rationale, which states it ("Relevance 0.82 (…").
 
 ### [SentPaperStore](SentPaperStore.java)
 

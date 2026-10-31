@@ -228,7 +228,7 @@ public class ScoredQueueStoreTest {
         assertTrue("the download is left where M2 saved it", Files.exists(pdf));
     }
 
-    /** A paper an AI matcher gives to two students is in both students' folders. */
+    /** A paper queued for two students is in both students' folders. */
     @Test
     public void aPaperMatchedToTwoStudentsIsInBothFolders() throws IOException {
         Path file = newFile();

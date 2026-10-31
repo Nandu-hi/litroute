@@ -95,6 +95,9 @@ final class AlertLines {
     private static final Pattern FORMAT_TAGS =
             Pattern.compile("(?i)(?:\\[(?:PDF|HTML|BOOK|B|CITATION|C|DOC)\\]\\s*)*");
 
+    /** Longer than any title: a line past this is prose, and only its start is worth a small model's reading. */
+    private static final int MAX_XML_LINE_CHARS = 600;
+
     private AlertLines() {
     }
 
@@ -115,6 +118,38 @@ final class AlertLines {
         builder.walk(doc.body());
         builder.flush();
         return builder.lines;
+    }
+
+    /**
+     * The lines as the simplified XML the local model reads: no hrefs, images or styling, which on a real alert
+     * takes 174 KB of HTML down to 6 KB. Angle brackets in the email's text are escaped, so its text can't end
+     * the {@code <email>} element the prompt puts around it.
+     * Input: the email's lines.
+     * Output: one XML line per line: {@code <hr/>} for a rule, else {@code <h>} or {@code <p>} with links as {@code <a>}.
+     * Used by: AiTitleExtractor, which fills prompts.txt's {body} with them.
+     * Example: heading link "Wave loads" -> "<h><a>Wave loads</a></h>"; "Nature, 2026" -> "<p>Nature, 2026</p>"
+     */
+    static List<String> toXml(List<Line> lines) {
+        List<String> xml = new ArrayList<>();
+        for (Line line : lines) {
+            if (line.rule()) {
+                xml.add("<hr/>");
+                continue;
+            }
+            StringBuilder content = new StringBuilder();
+            for (Seg seg : line.segs()) {
+                String text = normalize(seg.text());
+                if (text.length() > MAX_XML_LINE_CHARS) {
+                    text = text.substring(0, MAX_XML_LINE_CHARS) + "…";
+                }
+                text = text.replace("<", "&lt;").replace(">", "&gt;");
+                if (!text.isEmpty()) {
+                    content.append(content.isEmpty() ? "" : " ").append(seg.href() != null ? "<a>" + text + "</a>" : text);
+                }
+            }
+            xml.add(line.heading() ? "<h>" + content + "</h>" : "<p>" + content + "</p>");
+        }
+        return xml;
     }
 
     /**

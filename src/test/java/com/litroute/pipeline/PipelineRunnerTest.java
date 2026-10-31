@@ -18,9 +18,9 @@ import com.litroute.model.RawEmail;
 import com.litroute.model.ReviewStatus;
 import com.litroute.model.ScoredPaper;
 import com.litroute.pipeline.PipelineRunner.MatcherFactory;
-import com.litroute.pipeline.PipelineRunner.MatcherKind;
 import com.litroute.pipeline.PipelineRunner.Report;
 import com.litroute.pipeline.PipelineRunner.ResetReport;
+import com.litroute.scoring.RelevanceScorer;
 import com.litroute.security.GmailCredentials;
 import com.litroute.store.EmailCacheStore;
 import com.litroute.store.EnrichmentCacheStore;
@@ -128,8 +128,12 @@ public class PipelineRunnerTest {
                 new SentPaperStore(data.resolve("sent_papers.json")), markRead);
     }
 
+    private static MatcherFactory hybrid() {
+        return students -> new RelevanceScorer(TestModel.provider(), students);
+    }
+
     private PipelineRunner runner() {
-        return runner(TestProfiles.freshWorkspace(), PipelineRunner.matcher(MatcherKind.HYBRID, TestModel.provider()));
+        return runner(TestProfiles.freshWorkspace(), hybrid());
     }
 
     private Set<String> heldPaperKeys() throws IOException {
@@ -176,7 +180,7 @@ public class PipelineRunnerTest {
 
     @Test
     public void aRunToldToKeepMailUnreadMarksNothingButStillSkipsProcessedAlerts() throws IOException {
-        MatcherFactory hybrid = PipelineRunner.matcher(MatcherKind.HYBRID, TestModel.provider());
+        MatcherFactory hybrid = hybrid();
         Report first = runner(TestProfiles.freshWorkspace(), hybrid, false).run(CREDENTIALS, progress::add);
 
         assertEquals(SampleMails.ALL.size(), first.newAlerts());
@@ -274,8 +278,7 @@ public class PipelineRunnerTest {
 
     @Test
     public void papersFetchedBeforeAnyProfileExistsAreScoredOnceThereIsOne() throws IOException {
-        Report withoutProfiles = runner(TestProfiles.emptyWorkspace(),
-                PipelineRunner.matcher(MatcherKind.HYBRID, TestModel.provider())).run(CREDENTIALS, progress::add);
+        Report withoutProfiles = runner(TestProfiles.emptyWorkspace(), hybrid()).run(CREDENTIALS, progress::add);
 
         assertEquals(SampleMails.ALL.size(), withoutProfiles.newAlerts());
         assertEquals(0, withoutProfiles.papersScored());
@@ -293,13 +296,13 @@ public class PipelineRunnerTest {
     @Test
     public void papersAreScoredAgainWhenTheMatcherFailedAfterTheirEmailsWereProcessed() throws IOException {
         MatcherFactory unavailable = students -> {
-            throw new IOException("Groq answered 503");
+            throw new IOException("the matcher failed");
         };
         try {
             runner(TestProfiles.freshWorkspace(), unavailable).run(CREDENTIALS, progress::add);
             fail("the matcher's failure should reach the caller");
         } catch (IOException expected) {
-            assertEquals("Groq answered 503", expected.getMessage());
+            assertEquals("the matcher failed", expected.getMessage());
         }
         assertTrue(queue.load().isEmpty());
         assertEquals("the alerts were processed before the matcher failed, so they are read",

@@ -6,7 +6,7 @@
 
 | | What | Notes |
 |---|---|---|
-| **Input** | Gmail credentials, the profile folders (`~/.litroute/profiles/<student>/`), the stores in `~/.litroute/data/` | The matcher is chosen per run: words + SPECTER2 (offline, the default) or the Groq language model. |
+| **Input** | Gmail credentials, the profile folders (`~/.litroute/profiles/<student>/`), the stores in `~/.litroute/data/` | How M2 reads the emails is chosen per run ([ExtractionMode](../ingestion/extract/ExtractionMode.java)): pattern matching (the default) or the local language model on Ollama. |
 | **Output** | New entries in the review queue (M7e), and a [Report](PipelineRunner.java) of what the run did | Progress lines go to the caller as they happen (the UI's log, or standard output). |
 
 ## How a run works
@@ -24,7 +24,7 @@ PipelineRunner.run(credentials, progress)
 ```
 
 - **Crash safety.** Each step's stores are written in the order that makes a crash repeat work rather than skip it. Alerts are marked read only after M7a holds them, since M1 looks at unread mail only. A batch is recorded as scored only after its matches are queued.
-- **What M6 sees.** Every deduplicated paper not yet scored, not just this run's. So papers left unscored by a run that failed after saving M7c (no profiles yet, or the AI service down) are scored by the next one.
+- **What M6 sees.** Every deduplicated paper not yet scored, not just this run's. So papers left unscored by a run that failed after saving M7c (no profiles yet, or the matcher failed) are scored by the next one. A run in Local AI mode whose model can't be reached fails before anything is saved for its emails, so the next run reads them.
 - **Keep emails unread** (for testing; [PipelineRunner](PipelineRunner.java)'s `markRead` flag, `--keep-unread` on the command line) skips step 4. M7a still keeps the alerts from being processed twice.
 
 ## Clear and re-run
@@ -55,13 +55,13 @@ The classes:
 
 | Class | Role |
 |---|---|
-| [PipelineRunner](PipelineRunner.java) | One run (`run`) and **Clear and re-run** (`reset`) over injected stages and stores; `atDefaultLocations` wires the real ones under `~/.litroute`, `matcher` builds the chosen M6 matcher. Also the `Report`, `ResetReport`, `MatcherKind` and `MatcherFactory` types. |
+| [PipelineRunner](PipelineRunner.java) | One run (`run`) and **Clear and re-run** (`reset`) over injected stages and stores; `atDefaultLocations` wires the real ones under `~/.litroute`. Also the `Report`, `ResetReport` and `MatcherFactory` types. |
 | [PipelineRunnerCli](PipelineRunnerCli.java) | The terminal / cron entry point: parses the flags, unlocks the credentials (terminal or `LITROUTE_PASSPHRASE`), runs once, optionally sends the approved papers (M10). |
 
 ## Running it without the UI
 
 ```
-mvn -q compile exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCli [-Dexec.args="--matcher=ai --max-unread=100 --keep-unread --send-approved"]
+mvn -q compile exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCli [-Dexec.args="--extraction=llm --max-unread=100 --keep-unread --send-approved"]
 ```
 
 [PipelineRunnerCli](PipelineRunnerCli.java) reads the master passphrase from the terminal, or from `LITROUTE_PASSPHRASE` where there is none (cron). `--send-approved` then emails the approved papers to their students (M10). Clear and re-run is not available here.

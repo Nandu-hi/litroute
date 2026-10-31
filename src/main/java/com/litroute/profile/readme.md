@@ -126,7 +126,7 @@ The second half lets a candidate that matches only part of a student's work stil
 
 ### [ProfileKeywords](ProfileKeywords.java): the student's keywords
 
-What the student works on in a few words, for M6's language model ([AiPaperMatcher](../scoring/ai/AiPaperMatcher.java)): up to **10** of the author keywords of the student's papers.
+What the student works on in a few words, shown in the Profiles tab and by [ProfileBuilderCli](ProfileBuilderCli.java): up to **10** of the author keywords of the student's papers.
 
 1. **One keyword however it is spelled.** Keywords are compared by their word stems run together (case, accents, hyphens and spaces folded; a plural "s", then "-ing"/"-ed" dropped), so "Multi-hazards" and "multihazard" are one keyword, as are "reduced-order models" and "Reduced order modeling". It is written as the first paper to list it wrote it. Two PDFs with the same title count as one paper.
 2. **Rank by how many papers list it**, so the keywords running through the student's work come first ("multi-hazard", "fragility").
@@ -154,7 +154,7 @@ Opens SPECTER2 and the default store, runs `syncAll()`, and prints per profile: 
 | [PdfTextExtractor](PdfTextExtractor.java) | Reads one PDF into a PaperText (title, abstract, headings, sampled body, author keywords) from typography and wording. Also used by M6 for candidate PDFs. |
 | [PaperText](PaperText.java) | The text read from one PDF. |
 | [PaperEmbedder](PaperEmbedder.java) | Embeds a PaperText as three views and blends them 0.6 / 0.2 / 0.2. Also used by M6. |
-| [ProfileKeywords](ProfileKeywords.java) | Ranks a student's author keywords for the AI matcher's prompt. |
+| [ProfileKeywords](ProfileKeywords.java) | Ranks a student's author keywords for the Profiles tab and the CLI report. |
 | [UnreadablePdfException](UnreadablePdfException.java) | A PDF that can't contribute; becomes a SkippedPdf reason. |
 | [ProfileBuilderCli](ProfileBuilderCli.java) | Terminal entry point: sync and print how well each paper fits its profile. |
 
@@ -172,7 +172,7 @@ profiles/<student>/*.pdf + email.txt
    (4) store.remove(name)    ── folder gone, or no readable PDF left
         │
         ▼
-M7d profiles.json ──▶ M6 RelevanceScorer / AiPaperMatcher (via M9)
+M7d profiles.json ──▶ M6 RelevanceScorer (via M9)
                   ──▶ M10 ApprovedPaperSender (each student's emails)
                   ──▶ M8 Profiles tab (the table)
 ```

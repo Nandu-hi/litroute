@@ -2,10 +2,16 @@ package com.litroute.ingestion.enrich;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import com.litroute.ingestion.extract.AiTitleExtractor;
+import com.litroute.ingestion.extract.AlertBatchProcessor;
 import com.litroute.ingestion.extract.PaperExtractor;
+import com.litroute.ingestion.extract.RecordedOllama;
 import com.litroute.model.PaperCandidate;
+import com.litroute.store.EmailCacheStore;
+import com.litroute.store.EnrichmentCacheStore;
 import com.litroute.testing.SampleMails;
 import com.litroute.testing.SampleMails.Sample;
 import java.io.IOException;
@@ -15,6 +21,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.junit.Rule;
 import org.junit.Test;
@@ -44,6 +51,65 @@ public class PaperExtractorPipelineTest {
 
     private List<PaperCandidate> run(Sample sample) {
         return extractor().extract(sample.email());
+    }
+
+    private PaperExtractor extractorWith(AiTitleExtractor titles) {
+        return new PaperExtractor(new OnlinePaperEnricher(
+                new ArticlePageReader(http),
+                new CompositeMetadataLookup(List.of(new CrossrefSource(http), new OpenAlexSource(http))),
+                new PdfDownloader(http, tmp.getRoot().toPath().resolve("pdfs"))), titles);
+    }
+
+    /** The model decides which papers, and each one it picks comes out just as pattern matching and the lookups give it. */
+    @Test
+    public void theLocalModelGivesTheSamePapersAsPatternMatching() {
+        PaperExtractor withModel = extractorWith(RecordedOllama.titleExtractor());
+        for (Sample sample : SampleMails.ALL) {
+            assertEquals(sample.file(), Set.copyOf(run(sample)), Set.copyOf(withModel.extract(sample.email())));
+        }
+    }
+
+    /** The model names the title, and the paper's real link gives enrichment what it needs for the rest. */
+    @Test
+    public void aPaperOnlyTheLocalModelFoundIsCompletedByEnrichment() {
+        assertEquals(List.of(), extractor().extract(RecordedOllama.unparseable(SampleMails.SPRINGER_RELEVANT)));
+
+        List<PaperCandidate> papers = extractorWith(RecordedOllama.titleExtractor())
+                .extract(RecordedOllama.unparseable(SampleMails.SPRINGER_RELEVANT));
+
+        assertEquals(1, papers.size());
+        PaperCandidate expected = run(SampleMails.SPRINGER_RELEVANT).get(0);
+        assertEquals(expected.title(), papers.get(0).title());
+        assertEquals(expected.doi(), papers.get(0).doi());
+        assertFalse("authors come from the lookups", papers.get(0).authors().isEmpty());
+    }
+
+    /** With every lookup offline nothing vouches for the model's title, and its link is an opaque tracker. */
+    @Test
+    public void aTitleOnlyTheLocalModelNamedIsLeftOutIfNoLookupFindsItsDoi() {
+        http.offlineFor("");
+
+        assertEquals(List.of(), extractorWith(RecordedOllama.titleExtractor())
+                .extract(RecordedOllama.unparseable(SampleMails.SPRINGER_IRRELEVANT)));
+    }
+
+    /** The run was asked to use a model that isn't running: it says so, and the alerts stay unprocessed for the next run. */
+    @Test
+    public void withoutTheLocalModelTheBatchFailsAndItsEmailsStayUnprocessed() throws IOException {
+        AtomicInteger attempts = new AtomicInteger();
+        Path data = tmp.newFolder("data").toPath();
+        EmailCacheStore processed = new EmailCacheStore(data.resolve("email_cache.json"));
+        EnrichmentCacheStore enrichment = new EnrichmentCacheStore(data.resolve("enrichment_cache.json"));
+        AlertBatchProcessor batches = new AlertBatchProcessor(extractorWith(RecordedOllama.unreachable(attempts)),
+                enrichment, processed);
+
+        IOException failure = assertThrows(IOException.class,
+                () -> batches.process(List.of(SampleMails.SPRINGER_RELEVANT.email(), SampleMails.ASCE.email())));
+
+        assertTrue(failure.getMessage(), failure.getMessage().contains("ollama serve"));
+        assertEquals(1, attempts.get());
+        assertTrue(processed.load().isEmpty());
+        assertTrue(enrichment.load().enriched().isEmpty());
     }
 
     /** Each mail yields exactly the papers it lists - no paper dropped, none invented from a stray link. */

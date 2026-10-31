@@ -13,9 +13,9 @@ import java.util.Set;
 
 /**
  * Which deduplicated papers M6 has already matched, by {@link ScoredPaper#paperKey}, so M9 offers each
- * paper to the matcher once. The review queue (M7e) cannot tell this alone: the AI matcher may give a
- * paper to no student, and such a paper is never queued, yet it was scored and must not be sent to the
- * model again on every run.
+ * paper to the matcher once. The review queue (M7e) cannot tell this alone: the matcher may give a
+ * paper to no student, and such a paper is never queued, yet it was scored and must not be scored
+ * again on every run.
  *
  * M9 adds a batch here only after its matches are in the review queue, so a crash in between scores the
  * batch again on the next run rather than losing it; the queue keeps the professor's decisions when a

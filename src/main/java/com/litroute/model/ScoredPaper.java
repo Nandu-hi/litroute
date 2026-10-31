@@ -22,7 +22,7 @@ import java.util.Optional;
  * @param recommended whether M6 recommends the paper to the professor; the professor still decides
  * @param relevance   0.0-1.0, how close the paper is to the student's own work whoever else it suits:
  *                    0.9 as close as the student's own papers typically are, 0.1 as close as another
- *                    student's; empty when the matcher does not measure it (the AI matcher)
+ *                    student's; empty when none was recorded (older queue entries)
  */
 public record ScoredPaper(PaperCandidate candidate, String profileName, double score, String rationale,
         ReviewStatus status, boolean recommended, Optional<Double> relevance) {
@@ -30,7 +30,7 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     /**
      * Input: every field; score in 0-1, profileName non-blank, relevance non-null.
      * Output: the scored paper; throws if any of those rules is broken.
-     * Used by: RelevanceScorer and AiPaperMatcher (M6), ScoredQueueStore/SentPaperStore (M7e) when loading.
+     * Used by: RelevanceScorer (M6), ScoredQueueStore/SentPaperStore (M7e) when loading.
      * Example: {@code new ScoredPaper(c, "alice", 0.82, "Relevance 0.82 ...", PENDING, true, Optional.of(0.82))} -> ok; score 1.2 -> throws
      */
     public ScoredPaper {
@@ -51,7 +51,7 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     /**
      * Input: every field except relevance.
      * Output: a scored paper with no relevance.
-     * Used by: AiPaperMatcher (M6), which does not measure relevance.
+     * Used by: the shorter constructor below.
      * Example: {@code new ScoredPaper(c, "alice", 0.7, "why", PENDING, true).relevance()} -> {@code Optional.empty()}
      */
     public ScoredPaper(PaperCandidate candidate, String profileName, double score, String rationale,

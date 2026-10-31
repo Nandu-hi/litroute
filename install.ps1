@@ -205,7 +205,27 @@ if (-not $SkipModel) {
     }
 }
 
-# --- 4. data folders -------------------------------------------------------
+# --- 4. local language model -----------------------------------------------
+
+$OllamaModel = 'llama3.2:3b'
+Step "Checking the optional local language model ($OllamaModel)"
+if (-not (Have 'ollama')) {
+    Warn 'Ollama not found. It is only needed for the Local AI model option; pattern matching works without it.'
+    Warn "To add that option, install Ollama from https://ollama.com, then run: ollama pull $OllamaModel"
+} elseif ((Invoke-Quiet 'ollama' @('list')).Output -match [regex]::Escape($OllamaModel)) {
+    Ok 'Already downloaded'
+} elseif (Confirm-Step "Download $OllamaModel (about 2 GB)?") {
+    & ollama pull $OllamaModel
+    if ($LASTEXITCODE -eq 0) {
+        Ok 'Model downloaded'
+    } else {
+        Warn "The download failed. Is Ollama running? Start it, then run: ollama pull $OllamaModel"
+    }
+} else {
+    Warn "Not downloaded. The Local AI model option needs it: ollama pull $OllamaModel"
+}
+
+# --- 5. data folders -------------------------------------------------------
 
 Step "Creating the LitRoute folders in $LitRouteHome"
 $profilesDir = Join-Path $LitRouteHome 'profiles'
@@ -219,7 +239,7 @@ if (-not $students) {
     Warn "and an email.txt holding their address (see README.md, 'Student profiles')."
 }
 
-# --- 5. Gmail credentials --------------------------------------------------
+# --- 6. Gmail credentials --------------------------------------------------
 
 $credentialFile = Join-Path $LitRouteHome 'credentials.enc'
 if ($Credentials) {

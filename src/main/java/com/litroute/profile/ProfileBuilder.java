@@ -43,8 +43,8 @@ import java.util.stream.Stream;
  * removes the profile at the next {@link #syncAll()}. PDFs are recognized by content hash, so a run
  * only reads and embeds files it has not seen before (with the same model); everything else is
  * reused from the store. Each paper's text and author keywords are stored with its vectors, for M6's
- * word matching, and the profile keeps the student's keywords ({@link ProfileKeywords}), for M6's
- * language model; a store saved before either was kept gets them added by reading the PDFs again,
+ * word matching, and the profile keeps the student's keywords ({@link ProfileKeywords}), for the Profiles
+ * tab and the CLI report; a store saved before either was kept gets them added by reading the PDFs again,
  * without re-embedding. A PDF
  * that cannot be read is logged, reported and skipped - it never stops the rest of the profile, or
  * other profiles, from being built.

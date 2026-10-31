@@ -268,14 +268,13 @@ final class ReviewPane extends BorderPane {
     private static final String SCORE_HELP = "Score = relevance × share. The table is sorted by it, best first.\n\n"
             + "Share: how much of the paper's fit belongs to this student rather than to the other students "
             + "(the shares of all students add up to 1). A paper that suits two students splits its share, so it "
-            + "can score low and still be a strong match - check its relevance.\n\n"
-            + "Papers matched by the AI matcher show its own 0-100 score, divided by 100.";
+            + "can score low and still be a strong match - check its relevance.";
     private static final String RELEVANCE_HELP = String.format(Locale.ROOT, "How close the paper is to this student's "
             + "own papers, whoever else it suits.\n\n0.9: as close as the student's own papers typically are to each "
             + "other.\n0.5: halfway - no closer to this student than to the others.\n0.1: as close as another "
             + "student's papers.\n\nA paper is matched only at %.2f or more, or %.2f when only its title is known (a "
             + "title alone seldom scores high). A paper's title can lift the relevance of its abstract when it looks "
-            + "closer still. \"–\" means the matcher did not measure it (the AI matcher).",
+            + "closer still. \"–\" means it was not recorded when the paper was queued.",
             RelevanceScorer.RELEVANCE_FLOOR, RelevanceScorer.TITLE_FLOOR);
 
     /**
@@ -326,13 +325,13 @@ final class ReviewPane extends BorderPane {
 
     /**
      * Input: a scored paper.
-     * Output: an explanation of its score: relevance × share, or the AI matcher's 0-100 score.
+     * Output: an explanation of its score: relevance × share, or just the score if no relevance was recorded.
      * Used by: explained, for Score cells.
      * Example: score 0.40, relevance 0.80 -> "0.40 = relevance 0.80 × share 0.50 ..."
      */
     private static String scoreHelp(ScoredPaper paper) {
         if (paper.relevance().isEmpty()) {
-            return String.format(Locale.ROOT, "%.2f: the AI matcher's score for %s (0-100, divided by 100).", paper.score(),
+            return String.format(Locale.ROOT, "%.2f for %s; no relevance was recorded when it was queued.", paper.score(),
                     paper.profileName());
         }
         double relevance = paper.relevance().get();
@@ -352,7 +351,7 @@ final class ReviewPane extends BorderPane {
      */
     private static String relevanceHelp(ScoredPaper paper) {
         if (paper.relevance().isEmpty()) {
-            return "Not measured: the AI matcher scores papers without comparing them with the students' papers.";
+            return "Not recorded when this paper was queued.";
         }
         double relevance = paper.relevance().get();
         double floor = paper.rationale().contains("title alone") ? RelevanceScorer.TITLE_FLOOR : RelevanceScorer.RELEVANCE_FLOOR;

@@ -7,6 +7,7 @@ import com.litroute.store.EmailCacheStore;
 import com.litroute.store.EnrichmentCacheStore;
 import com.litroute.store.EnrichmentCacheStore.Contents;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -83,7 +84,7 @@ public final class AlertBatchProcessor {
      * Extracts, enriches and deduplicates a batch, then saves M7c and only then M7a. Re-processing an email
      * replaces its earlier papers; an empty batch just re-deduplicates and re-saves what is held.
      * Input: this batch's alert emails (non-null, no null elements).
-     * Output: every paper now in M7c, enriched and deduplicated, first-seen order; IOException if a store fails (emails then stay unmarked).
+     * Output: every paper now in M7c, enriched and deduplicated, first-seen order; IOException if a store fails or the local model can't be reached (emails then stay unmarked).
      * Used by: PipelineRunner.run (M9), step 3.
      * Example: M7c holds [A]; batch of 1 email with papers [A', B] -> saves and returns [A (merged with A'), B]; email ID added to M7a
      */
@@ -95,9 +96,14 @@ public final class AlertBatchProcessor {
 
         List<PaperCandidate> extracted = new ArrayList<>();
         Set<String> batchIds = new HashSet<>();
-        for (RawEmail email : emails) {
-            extracted.addAll(extractor.extract(email));
-            batchIds.add(email.messageId());
+        try {
+            for (RawEmail email : emails) {
+                extracted.addAll(extractor.extract(email));
+                batchIds.add(email.messageId());
+            }
+        } catch (UncheckedIOException modelUnreachable) {
+            // Nothing is saved yet, so the whole batch is simply read again on the next run.
+            throw modelUnreachable.getCause();
         }
 
         // A batch being re-run after a crash re-extracts papers already stored under the same message

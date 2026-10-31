@@ -2,7 +2,7 @@
 
 LitRoute reads a professor's publication-alert emails (Google Scholar, publisher and journal alerts) and works out which student each new paper suits. The professor approves or drops each match, and LitRoute emails the approved papers, with their PDFs, to the students.
 
-It runs on the professor's own machine. Papers are matched with **SPECTER2**, a scientific-paper embedding model run locally through ONNX Runtime, combined with word overlap. An optional second matcher asks a language model on **Groq** instead. The Gmail App Password is stored encrypted under a master passphrase.
+It runs on the professor's own machine. Papers are read out of the emails by pattern matching or, if you choose, by a small local language model (**llama3.2:3b** on [Ollama](https://ollama.com)), and are matched with **SPECTER2**, a scientific-paper embedding model run locally through ONNX Runtime, combined with word overlap. No email text leaves the machine for either model. The Gmail App Password is stored encrypted under a master passphrase.
 
 ---
 
@@ -16,7 +16,7 @@ It runs on the professor's own machine. Papers are matched with **SPECTER2**, a 
 - [Configuration](#configuration)
   - [Gmail App Password](#1-gmail-app-password)
   - [Student profiles](#2-student-profiles)
-  - [AI matcher (optional)](#3-ai-matcher-optional)
+  - [Local language model](#3-local-language-model)
 - [Usage](#usage)
   - [Desktop app](#desktop-app)
   - [Command line](#command-line)
@@ -46,11 +46,11 @@ It runs on the professor's own machine. Papers are matched with **SPECTER2**, a 
 | Module | Package | What it does |
 |---|---|---|
 | M1 | `ingestion/email` | Fetches unread publication alerts from Gmail over IMAP. |
-| M2 | `ingestion/extract` | Reads the papers out of each alert's HTML. |
+| M2 | `ingestion/extract` | Reads the papers out of each alert, by pattern matching or a local language model: a toggle in the Pipeline tab. |
 | M3 | `ingestion/enrich` | Fills in DOI, venue, year and abstract from the publisher's page, Crossref and OpenAlex, and downloads the PDF. |
 | M4 | `ingestion/dedup` | Merges copies of the same paper. |
 | M5 | `profile` | Turns each student's folder of PDFs into a profile. |
-| M6 | `scoring`, `scoring/ai` | Matches each paper to at most one student, and only when it is close to that student's work (relevance ≥ 0.7). Alternatively, matches with a Groq language model. |
+| M6 | `scoring` | Matches each paper to at most one student, and only when it is close to that student's work (relevance ≥ 0.7). |
 | M7 | `store` | JSON stores that keep the pipeline's progress between runs. Every write is atomic, so a crash makes the next run repeat work instead of losing it. |
 | M8 | `ui` | JavaFX desktop app with Review, Pipeline, Profiles and Gmail tabs. |
 | M9 | `pipeline` | Runs the whole pipeline once, and provides **Clear and re-run**. |
@@ -68,13 +68,14 @@ Each package has its own `readme.md` with the details. [src/main/java/com/litrou
 | **Apache Maven** | 3.6 or newer | Building, dependencies, running |
 | **Python 3** with `venv` | 3.9 or newer | **Once only**, to export the SPECTER2 model to ONNX. It is not used at runtime. |
 | **Gmail account** | 2-Step Verification on | Reading alerts (IMAP) and sending papers (SMTP) with an App Password |
-| **Groq API key** | optional | Only for the AI matcher |
+| **[Ollama](https://ollama.com)** with `llama3.2:3b` | optional | Only for reading emails with the local AI model |
 
 Other requirements:
 
 - **OS:** Linux, macOS or Windows 10/11. Maven downloads JavaFX and ONNX Runtime for your platform automatically. On a minimal Linux install, JavaFX also needs GTK 3 (`libgtk-3-0` / `gtk3`).
-- **Disk:** about 3 GB for the one-time model export (PyTorch CPU + model weights) and about 500 MB for the installed model.
-- **Network:** for the install, Gmail, and paper lookups (Crossref, OpenAlex, publisher pages).
+- **Disk:** about 3 GB for the one-time model export (PyTorch CPU + model weights), about 500 MB for the installed model, and about 2 GB for `llama3.2:3b` if you use it.
+- **Memory:** about 3 GB free for `llama3.2:3b` while it reads emails. No GPU is needed; on a CPU a typical alert takes 10–20 seconds and a 20-paper table of contents about 2 minutes.
+- **Network:** for the install, Gmail, and paper lookups (Crossref, OpenAlex, publisher pages). The local model needs none once downloaded.
 
 ---
 
@@ -107,8 +108,9 @@ Both installers are safe to re-run. They skip every step that is already done. T
    - Windows: winget for Temurin JDK 21 and Python 3.12. Maven is downloaded into `%LOCALAPPDATA%\Programs` and added to your user `PATH`;
 2. compile the project, which downloads the Maven dependencies;
 3. export SPECTER2 to `~/.litroute/models`, skipping this step if the model is already there;
-4. create `~/.litroute/profiles` and `~/.litroute/data`;
-5. with `--credentials` / `-Credentials`, set up the Gmail App Password.
+4. if Ollama is installed, offer to download `llama3.2:3b`; if not, say where to get Ollama and carry on;
+5. create `~/.litroute/profiles` and `~/.litroute/data`;
+6. with `--credentials` / `-Credentials`, set up the Gmail App Password.
 
 | `install.sh` | `install.cmd` / `install.ps1` | Effect |
 |---|---|---|
@@ -176,7 +178,13 @@ specter2.onnx  specter2.onnx.data  tokenizer.json  tokenizer_config.json  vocab.
 
 You can delete the virtualenv afterwards. To use the model on another machine, copy `~/.litroute/models` there.
 
-**4. Create the data folders.**
+**4. Optional: install the local language model.** Install Ollama from https://ollama.com, then:
+
+```bash
+ollama pull llama3.2:3b
+```
+
+**5. Create the data folders.**
 
 ```bash
 mkdir -p ~/.litroute/profiles ~/.litroute/data
@@ -236,24 +244,35 @@ Profiles are synced at the start of every pipeline run, from **Profiles → Rebu
 mvn -q compile exec:java -Dexec.mainClass=com.litroute.profile.ProfileBuilderCli
 ```
 
-### 3. AI matcher (optional)
+### 3. Reading emails: pattern matching or local AI (optional)
 
-The default matcher (*words + SPECTER2*) works offline. To use the Groq language-model matcher instead, set these environment variables **before** starting LitRoute:
+The **Read emails with** toggle in the Pipeline tab (`--extraction=` on the command line) picks how M2 finds the papers in an alert. It is remembered between sessions.
 
-| Variable | Required | Default |
+| | **Pattern matching** (default) | **Local AI model** |
 |---|---|---|
-| `GROQ_API_KEY` | yes | — (get one at https://console.groq.com) |
-| `GROQ_MODEL` | no | `openai/gpt-oss-120b` |
-| `GROQ_TOKENS_PER_MINUTE` | no | the free-tier limit; raise it on a paid plan so larger batches go in one request |
+| How | Recognizes the layout of a paper's title, authors and venue | A language model on this machine names the titles; Crossref and OpenAlex then find their DOIs |
+| Needs | Nothing | Ollama running, with `llama3.2:3b` downloaded |
+| Speed per email | Instant | 10–20 seconds, about 2 minutes for a long table of contents |
+| Strength | Exact on the alert layouts it knows: 26 of 26 papers on the six real alerts | Isn't tied to a layout, so it can read a new publisher's alert |
+| Weakness | A new layout can defeat it | May miss a paper: 25 of 26 on those alerts as received |
+
+To use the local model:
 
 ```bash
-export GROQ_API_KEY=gsk_...              # bash / zsh
-set -x GROQ_API_KEY gsk_...              # fish
-$env:GROQ_API_KEY = "gsk_..."            # Windows PowerShell
-set GROQ_API_KEY=gsk_...                 # Windows Command Prompt
+ollama serve                # if it is not already running as a service
+ollama pull llama3.2:3b
 ```
 
-LitRoute never writes the key to disk. The AI matcher sends each student's keywords and paper titles, and the new papers' titles and abstracts, to Groq.
+If you run with **Local AI model** while Ollama is stopped, the run fails with a message saying so, and the alerts stay unprocessed until a run reads them. A title the model names must be in the email, and one that pattern matching doesn't recognize is kept only if a lookup finds its DOI, so a model's mistake doesn't reach the review queue.
+
+These optional environment variables must be set **before** starting LitRoute:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `LITROUTE_OLLAMA_MODEL` | `llama3.2:3b` | Another Ollama model. It should be small: it runs once or more per email. |
+| `LITROUTE_OLLAMA_URL` | `http://localhost:11434` | Where Ollama listens. It must be an address on this machine; LitRoute refuses any other, so emails stay local. |
+
+The model's instructions are in [src/main/resources/prompts.txt](src/main/resources/prompts.txt), with `{body}` where the email goes. Editing it takes effect at the next `mvn compile`; `{body}` must stay in it exactly once. The tests replay recorded answers to this exact prompt, so record them again afterwards ([how](src/main/java/com/litroute/ingestion/extract/readme.md#recording-the-test-answers)).
 
 ---
 
@@ -271,7 +290,7 @@ A typical session:
 
 1. **Gmail tab:** unlock the credentials with the master passphrase.
 2. **Profiles tab:** check that every student has a profile. **Rebuild profiles** after changing their folders. **Open profiles folder** opens `~/.litroute/profiles`.
-3. **Pipeline tab:** choose the matcher and how many unread emails to examine, then **Run pipeline**. A live log shows each step:
+3. **Pipeline tab:** choose how to read the emails (**Pattern matching** or **Local AI model**) and how many unread ones to examine, then **Run pipeline**. A live log shows each step:
    1. sync the profiles;
    2. fetch new alerts;
    3. extract, enrich and deduplicate the papers;
@@ -296,12 +315,12 @@ mvn -q compile exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCl
 
 # ...with options
 mvn -q compile exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCli \
-    -Dexec.args="--matcher=ai --max-unread=100 --keep-unread --send-approved"
+    -Dexec.args="--extraction=llm --max-unread=100 --keep-unread --send-approved"
 ```
 
 | `PipelineRunnerCli` option | Meaning |
 |---|---|
-| `--matcher=hybrid` \| `--matcher=ai` | Words + SPECTER2 (default) or the Groq model |
+| `--extraction=pattern` \| `--extraction=llm` | Read emails by pattern matching (default) or with the local AI model |
 | `--max-unread=N` | Examine at most N unread emails (default 50) |
 | `--keep-unread` | Leave the processed alerts unread in Gmail (for testing) |
 | `--send-approved` | After the run, email the papers already approved in the app |
@@ -370,14 +389,15 @@ litroute/
     ├── main/java/com/litroute/
     │   ├── ingestion/{email,extract,enrich,dedup}   M1–M4
     │   ├── profile/                                 M5
-    │   ├── scoring/, scoring/ai/                    M6
+    │   ├── scoring/                                 M6
     │   ├── store/                                   M7
     │   ├── ui/                                      M8
     │   ├── pipeline/                                M9
     │   ├── delivery/                                M10
     │   ├── embedding/  model/  security/  util/
     │   └── readme.md                                architecture overview
-    └── test/                                        JUnit 4 tests + recorded emails, HTTP and AI replies
+    ├── main/resources/prompts.txt                   the local model's prompt, with {body} for the email
+    └── test/                                        JUnit 4 tests + recorded emails, HTTP and Ollama replies
 ```
 
 ---
@@ -389,7 +409,7 @@ mvn test                       # the whole suite (several minutes)
 make RelevanceScorerTest       # one test class
 ```
 
-The tests use the alert emails stored in `src/test/resources` and recorded Crossref, OpenAlex, publisher and Groq replies, so they need no network. The profile and matching tests load the **real SPECTER2 model** and the profiles in `~/.litroute/profiles`, so install the model and add profiles first. The Gmail tests use an embedded GreenMail server.
+The tests use the alert emails stored in `src/test/resources` and recorded Crossref, OpenAlex, publisher and Ollama replies, so they need no network and no running model. The profile and matching tests load the **real SPECTER2 model** and the profiles in `~/.litroute/profiles`, so install the model and add profiles first. The Gmail tests use an embedded GreenMail server.
 
 ---
 
@@ -409,5 +429,6 @@ The tests use the alert emails stored in `src/test/resources` and recorded Cross
 | Wrong passphrase / can't decrypt | The passphrase can't be recovered. Set up the credentials again in the Gmail tab or with `CredentialSetupCli`. |
 | `CredentialSetupCli` refuses to run | It needs a real terminal (not piped input or an IDE console), so the password is never echoed. Use the app's Gmail tab instead. |
 | A run finds no alerts | Only **unread** inbox messages that look like publication or citation alerts are fetched, and processed ones are skipped. Use **Clear and re-run…** to process them again. |
-| AI matcher unavailable | Set `GROQ_API_KEY` in the environment you start LitRoute from. On the free tier, large batches are split and rate-limited, so runs are slower. |
+| `Ollama is not running` or `ollama pull` in a failed run | You chose **Local AI model**. Start Ollama (`ollama serve`) and download the model (`ollama pull llama3.2:3b`), then run again, or switch to **Pattern matching**. No alert is lost: they stay unprocessed until a run reads them. |
+| Extraction is slow with **Local AI model** | The model is reading on the CPU: expect 10–20 seconds per alert and about 2 minutes for a long table of contents. A variant with more threads can be chosen with `LITROUTE_OLLAMA_MODEL`. |
 | A student gets no emails | Check that their folder has an `email.txt` with a valid address, then rebuild the profiles. |

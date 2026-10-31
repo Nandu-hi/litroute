@@ -61,10 +61,12 @@ public class ReceivedAlertsTest {
     /** "London, N1 9XW," is a Google Maps link Gmail made of the footer address, over a "© 2025" line. */
     @Test
     public void gmailsAddressLinksAndCopyrightLinesAreNotPapers() throws IOException {
-        for (Sample sample : List.of(SampleMails.SPRINGER_RELEVANT, SampleMails.SPRINGER_IRRELEVANT, SampleMails.ASCE)) {
+        for (Sample sample : List.of(SampleMails.SPRINGER_RELEVANT, SampleMails.SPRINGER_IRRELEVANT, SampleMails.ASCE,
+                SampleMails.TANDFONLINE)) {
             for (PaperCandidate paper : received(sample)) {
                 assertTrue(paper.title(), paper.venue().map(venue -> !venue.startsWith("©")).orElse(true));
                 assertTrue(paper.title(), !paper.title().startsWith("London") && !paper.title().contains("Alexander Bell"));
+                assertTrue(paper.title(), !paper.url().orElse("").contains("google.com/maps"));
             }
         }
     }

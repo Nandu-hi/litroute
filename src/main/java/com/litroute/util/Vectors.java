@@ -19,7 +19,7 @@ public final class Vectors {
     /**
      * Input: two vectors of the same length.
      * Output: their cosine similarity, -1 to 1; 0 if either is all zeros.
-     * Used by: RelevanceScorer (M6) paper-vs-profile scores, ProfileBrief (M6 AI), ProfileBuilderCli.
+     * Used by: RelevanceScorer (M6) paper-vs-profile scores, ProfileBuilderCli.
      * Example: {@code cosine({1,0}, {1,1})} -> {@code 0.7071}
      */
     public static double cosine(float[] a, float[] b) {

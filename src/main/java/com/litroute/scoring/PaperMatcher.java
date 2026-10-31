@@ -7,9 +7,8 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * M6's output, whichever way the papers are matched: {@link RelevanceScorer} (SPECTER2 and the papers'
- * words, one student per paper) or {@code AiPaperMatcher} (a language model, which may give a paper to
- * several students). The review queue (M7e) stores the result as it is.
+ * M6's output: {@link RelevanceScorer} matches the papers by SPECTER2 and their words, one student per
+ * paper. The review queue (M7e) stores the result as it is.
  */
 public interface PaperMatcher {
 

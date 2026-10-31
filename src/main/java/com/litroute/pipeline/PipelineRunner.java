@@ -6,7 +6,9 @@ import com.litroute.ingestion.email.GmailEmailSource;
 import com.litroute.ingestion.enrich.CachingPaperEnricher;
 import com.litroute.ingestion.enrich.OnlinePaperEnricher;
 import com.litroute.ingestion.enrich.PdfDownloader;
+import com.litroute.ingestion.extract.AiTitleExtractor;
 import com.litroute.ingestion.extract.AlertBatchProcessor;
+import com.litroute.ingestion.extract.ExtractionMode;
 import com.litroute.ingestion.extract.PaperExtractor;
 import com.litroute.model.PaperCandidate;
 import com.litroute.model.Profile;
@@ -17,8 +19,6 @@ import com.litroute.profile.ProfileBuilder.BuildReport;
 import com.litroute.profile.ProfileBuilder.ProfileReport;
 import com.litroute.scoring.PaperMatcher;
 import com.litroute.scoring.RelevanceScorer;
-import com.litroute.scoring.ai.AiPaperMatcher;
-import com.litroute.scoring.ai.GroqClient;
 import com.litroute.security.GmailCredentials;
 import com.litroute.store.EmailCacheStore;
 import com.litroute.store.EnrichmentCacheStore;
@@ -51,42 +51,11 @@ import java.util.function.Consumer;
  * </ol>
  *
  * The batch M6 sees is every deduplicated paper not yet scored, not just this run's emails, so papers
- * left unscored by an earlier run that failed after saving M7c (no profiles yet, or the AI service down)
+ * left unscored by an earlier run that failed after saving M7c (no profiles yet, or the matcher failed)
  * are scored by the next one. A paper already in the review queue counts as scored. Each step's stores
  * are written in the order that makes a crash repeat work rather than skip it.
  */
 public final class PipelineRunner {
-
-    /** Which M6 matcher scores the papers. */
-    public enum MatcherKind {
-        /** {@link RelevanceScorer}: the papers' words and SPECTER2, offline, one student per paper. */
-        HYBRID("Words + SPECTER2 (offline)"),
-        /** {@link AiPaperMatcher} on Groq; needs {@value GroqClient#KEY_VARIABLE}. */
-        AI("Groq language model");
-
-        private final String label;
-
-        /**
-         * Input: the label shown in the UI.
-         * Output: the matcher kind.
-         * Used by: the enum constants.
-         * Example: HYBRID -> "Words + SPECTER2 (offline)"
-         */
-        MatcherKind(String label) {
-            this.label = label;
-        }
-
-        /**
-         * Input: none.
-         * Output: the UI label.
-         * Used by: PipelinePane's matcher choice box (M8).
-         * Example: AI.toString() -> "Groq language model"
-         */
-        @Override
-        public String toString() {
-            return label;
-        }
-    }
 
     /** Builds the M6 matcher for the profiles as they stand after this run's sync. */
     @FunctionalInterface
@@ -184,37 +153,30 @@ public final class PipelineRunner {
     /**
      * The real pipeline over the default locations under {@code ~/.litroute}: Gmail, the live enrichment
      * services, and the stores in {@code ~/.litroute/data}.
-     * Input: the SPECTER2 model (caller closes it), the matcher kind, the max unread messages per run, and whether to mark alerts read.
-     * Output: the real pipeline over Gmail, the live enrichment services and the stores in ~/.litroute/data.
+     * Input: the SPECTER2 model (caller closes it), how to find the papers in an email, the max unread messages per run, and whether to mark alerts read.
+     * Output: the real pipeline over Gmail, the chosen extraction, the live enrichment services and the stores in ~/.litroute/data.
      * Used by: PipelinePane (M8) Run / Clear and re-run, PipelineRunnerCli.
-     * Example: {@code atDefaultLocations(specter2, HYBRID, 50, true).run(creds, log::line)}
+     * Example: {@code atDefaultLocations(specter2, ExtractionMode.PATTERN, 50, true).run(creds, log::line)}
      */
-    public static PipelineRunner atDefaultLocations(EmbeddingProvider provider, MatcherKind kind, int maxUnread,
+    public static PipelineRunner atDefaultLocations(EmbeddingProvider provider, ExtractionMode mode, int maxUnread,
             boolean markRead) {
         ProfileStore profiles = ProfileStore.atDefaultLocation();
         EmailCacheStore processedEmails = EmailCacheStore.atDefaultLocation();
         OnlinePaperEnricher online = OnlinePaperEnricher.create(PdfDownloader.defaultDirectory());
-        AlertBatchProcessor batches = new AlertBatchProcessor(
-                lookups -> new PaperExtractor(new CachingPaperEnricher(online, lookups)),
+        AlertBatchProcessor.ExtractorFactory extractors = switch (mode) {
+            case PATTERN -> lookups -> new PaperExtractor(new CachingPaperEnricher(online, lookups));
+            case LLM -> {
+                AiTitleExtractor aiTitles = AiTitleExtractor.fromEnvironment();
+                yield lookups -> new PaperExtractor(new CachingPaperEnricher(online, lookups), aiTitles);
+            }
+        };
+        AlertBatchProcessor batches = new AlertBatchProcessor(extractors,
                 EnrichmentCacheStore.atDefaultLocation(), processedEmails);
         return new PipelineRunner(new ProfileBuilder(ProfileBuilder.defaultProfilesRoot(), profiles, provider),
-                profiles, new GmailEmailSource(maxUnread), processedEmails, batches, matcher(kind, provider),
+                profiles, new GmailEmailSource(maxUnread), processedEmails, batches,
+                students -> new RelevanceScorer(provider, students),
                 ScoredQueueStore.atDefaultLocation(), ScoredPaperLog.atDefaultLocation(),
                 SentPaperStore.atDefaultLocation(), markRead);
-    }
-
-    /**
-     * The factory for the chosen matcher; the AI one reads its key from the environment when used.
-     * Input: the matcher kind and the SPECTER2 model.
-     * Output: a factory building that M6 matcher (the AI one reads its key from the environment when built).
-     * Used by: {@link #atDefaultLocations}; PipelineRunnerTest.
-     * Example: matcher(AI, p).create(profiles) -> AiPaperMatcher on GroqClient.fromEnvironment()
-     */
-    public static MatcherFactory matcher(MatcherKind kind, EmbeddingProvider provider) {
-        return switch (kind) {
-            case HYBRID -> students -> new RelevanceScorer(provider, students);
-            case AI -> students -> AiPaperMatcher.of(GroqClient.fromEnvironment(), students);
-        };
     }
 
     /**
@@ -248,7 +210,7 @@ public final class PipelineRunner {
     /**
      * Runs the pipeline once.
      * Input: the Gmail account (not cleared) and a progress sink.
-     * Output: what the run did; M7d, M7a, M7c, M7e and the scored log updated; IOException if a store or the matcher's service failed.
+     * Output: what the run did; M7d, M7a, M7c, M7e and the scored log updated; IOException if a store, the local model or the matcher failed.
      * Used by: PipelinePane (M8) Run, PipelineRunnerCli.
      * Example: 6 new alerts, 31 papers, 8 profiles -> Report(newAlerts 6, papersHeld 31, papersScored 31, matches 11, ...)
      */

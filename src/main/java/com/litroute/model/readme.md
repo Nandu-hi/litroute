@@ -62,7 +62,7 @@ What one student works on, built from the PDFs in their profile folder. A profil
 | `name` | The folder's name. Must not be blank. |
 | `emails` | Addresses from the folder's `email.txt`, where M10 will send approved papers. |
 | `papers` | One [ProfilePaper](Profile.java#L80) per readable PDF. **Never empty.** |
-| `keywords` | Up to 10 of the author keywords of the student's papers, those running through the most of them first ([ProfileKeywords](../profile/ProfileKeywords.java)). M6's language model is told them. Empty if no paper lists keywords. |
+| `keywords` | Up to 10 of the author keywords of the student's papers, those running through the most of them first ([ProfileKeywords](../profile/ProfileKeywords.java)). Shown in the Profiles tab and the CLI report. Empty if no paper lists keywords. |
 | `modelId` | The embedding model that produced every vector. Vectors from different models can't be compared. |
 | `updatedAt` | When the profile last actually changed. |
 
@@ -79,8 +79,8 @@ How relevant one candidate is to one student, and why.
 | `score` | 0.0–1.0: *relevance* times *share*. The constructor rejects values outside this range. |
 | `rationale` | Readable evidence: the share, the relevance, shared words, the closest of the student's papers, and what the paper was scored from. |
 | `status` | The professor's decision so far ([ReviewStatus](ReviewStatus.java)). |
-| `recommended` | Whether M6 recommends it to the professor (★ in the review screen). The words-and-meaning matcher only returns papers it recommends; the AI matcher recommends one focus paper per student. The professor still decides. |
-| `relevance` | 0.0–1.0, optional: how close the paper is to the student's own work whoever else it suits (0.9 as close as their own papers, 0.1 as close as another student's). Empty when the matcher doesn't measure it (the AI matcher). |
+| `recommended` | Whether M6 recommends it to the professor (★ in the review screen). The matcher only returns papers it recommends. The professor still decides. |
+| `relevance` | 0.0–1.0, optional: how close the paper is to the student's own work whoever else it suits (0.9 as close as their own papers, 0.1 as close as another student's). Empty on older queue entries that did not record it. |
 
 - `withStatus(...)` and `withRecommended(...)` return changed copies; the record itself never changes.
 - **[queueKey()](ScoredPaper.java#L100)** identifies an entry in the review queue: the student plus the paper, identified by `doi:<lowercased DOI>` or, without a DOI, `title:<compacted title>` (the same way M4 identifies papers). M7e uses it to update a re-scored paper instead of adding it twice.

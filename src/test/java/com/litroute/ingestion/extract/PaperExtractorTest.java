@@ -326,6 +326,7 @@ public class PaperExtractorTest {
                 assertFalse(where, ALERT_FURNITURE_TEXT.contains(paper.title().toLowerCase()));
                 assertFalse(where, paper.url().orElse("").startsWith("mailto:"));
                 assertFalse(where, paper.url().orElse("").contains("sites.google.com"));
+                assertFalse(where, paper.url().orElse("").contains("google.com/maps"));
                 assertFalse(where, paper.url().orElse("").toLowerCase().contains("unsubscribe"));
                 for (String author : paper.authors()) {
                     assertFalse(where + " author=" + author, author.isBlank());

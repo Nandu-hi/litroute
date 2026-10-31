@@ -13,7 +13,7 @@ That command runs [LitRouteApp](LitRouteApp.java), the pom's `javafx-maven-plugi
 | Tab | Class | What it does |
 |---|---|---|
 | **Review** | [ReviewPane](ReviewPane.java) | The review queue (M7e). Students on the left with how many papers wait for each; their papers in the middle; the chosen paper's details and M6's rationale below. **Approve**, **Drop**, **Back to pending** (or A, D, P) record the decision for every selected paper. **Send approved** emails them to their students (M10), which moves them out of the queue. **Show: Sent** lists the sent papers with when they went, read only. |
-| **Pipeline** | [PipelinePane](PipelinePane.java) | Runs M9 with a live log: the matcher, how many unread emails a run examines, and **Keep emails unread** (for testing) are chosen here and remembered. **Clear and re-run…** undoes every run so far and runs again over the same emails ([pipeline readme](../pipeline/readme.md)). |
+| **Pipeline** | [PipelinePane](PipelinePane.java) | Runs M9 with a live log. **Read emails with** toggles between **Pattern matching** and **Local AI model** (M2); that, how many unread emails a run examines, and **Keep emails unread** (for testing) are chosen here and remembered. **Clear and re-run…** undoes every run so far and runs again over the same emails ([pipeline readme](../pipeline/readme.md)). |
 | **Profiles** | [ProfilesPane](ProfilesPane.java) | The stored profiles, **Rebuild profiles**, which syncs them with their folders (M5), and **Open profiles folder**. |
 | **Gmail** | [CredentialsPane](CredentialsPane.java) | Unlock the stored App Password with the master passphrase, or set it up. A tab rather than a dialog, because tiling window managers hide modal dialogs. |
 
@@ -23,8 +23,8 @@ That command runs [LitRouteApp](LitRouteApp.java), the pom's `javafx-maven-plugi
 
 - **Always best score first.** The columns don't re-sort, so a decision (approve, drop, back to pending) never reorders the list.
 - **Score** = relevance × share. Hovering the header explains it; hovering a cell shows that paper's breakdown, e.g. "0.29 = relevance 0.82 × share 0.36", and says when another student's work is close too.
-- **Relevance**: how close the paper is to the student's own work (0.9 as close as their own papers, 0.1 as close as another student's). Hovering explains the match floors (0.70, or 0.43 from a title alone), what this paper's value means, and whether it was measured from the full PDF, the title and abstract, or the title alone. "–" for the AI matcher, which doesn't measure it.
-- **★** marks a recommended paper. The words-and-meaning matcher queues only papers it recommends; the AI matcher recommends one focus paper per student. **Recommended only** hides the rest.
+- **Relevance**: how close the paper is to the student's own work (0.9 as close as their own papers, 0.1 as close as another student's). Hovering explains the match floors (0.70, or 0.43 from a title alone), what this paper's value means, and whether it was measured from the full PDF, the title and abstract, or the title alone. "–" if it was not recorded when the paper was queued.
+- **★** marks a recommended paper. The matcher queues only papers it recommends. **Recommended only** hides any others, such as entries from older queues.
 - After **Clear and re-run…**, the table empties as soon as the reset is done, and fills when the run finishes.
 
 ## How data flows through the UI
@@ -65,7 +65,7 @@ Every one of these reads and writes goes through the store classes in [store](..
 | [Launcher](Launcher.java) | Plain `main` that starts LitRouteApp from a classpath (IDE, `exec:java`). |
 | [Session](Session.java) | What lives as long as the window: the unlocked passphrase, the SPECTER2 model, the job and io threads, and the busy/unlocked properties the tabs bind to. |
 | [CredentialsPane](CredentialsPane.java) | The Gmail tab: unlock with the master passphrase, or set up / change the credentials. |
-| [PipelinePane](PipelinePane.java) | The Pipeline tab: matcher choice, max unread, keep unread, **Run pipeline**, **Clear and re-run…**, live log and summary. |
+| [PipelinePane](PipelinePane.java) | The Pipeline tab: how to read emails, max unread, keep unread, **Run pipeline**, **Clear and re-run…**, live log and summary. |
 | [ReviewPane](ReviewPane.java) | The Review tab over M7e: students, papers best first, details and rationale, decisions, **Send approved**. |
 | [ProfilesPane](ProfilesPane.java) | The Profiles tab over M7d: the profile table, **Rebuild profiles**, **Open profiles folder**. |
 | [LogPane](LogPane.java) | A timestamped log area that also shows `com.litroute` log records while a job runs. |

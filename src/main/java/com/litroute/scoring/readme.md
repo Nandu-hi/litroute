@@ -2,8 +2,6 @@
 
 Matches each deduplicated paper to the **one** student it suits best, and only if it is a research paper close enough to that student's own work (relevance ≥ 0.7, or 0.43 from a title alone); there is no quota per student, and every paper it returns is recommended. A paper is compared with every student's reference papers by meaning (SPECTER2) and by wording (TF-IDF). Design decisions and measurements: [m6plan.txt](../../../../../../m6plan.txt).
 
-A second matcher asks a language model instead (on Groq): see [AI matching](#ai-matching). Both are a [PaperMatcher](PaperMatcher.java) and give the same output.
-
 ## Input and output
 
 - **In:**
@@ -96,63 +94,17 @@ On the batch: 16 of 26 matched, the 14 the professor wants plus the flood cost�
 - [Terms](Terms.java): lowercase, accent-folded stems plus pairs of adjacent stems (`rank_aggregation`). Words under 3 letters, function words and boilerplate are dropped, and a dropped word breaks a pair.
 - [LexicalIndex](LexicalIndex.java#L57): `idf = ln((N+1)/(df+1)) + 1` ([line 73](LexicalIndex.java#L73)); each term is weighted `(1 + ln(count)) × idf` ([weigh](LexicalIndex.java#L201)); terms in only one paper or in more than half of them are dropped; vectors are unit length.
 
-## AI matching
-
-[AiPaperMatcher](ai/AiPaperMatcher.java) sends every student and the whole batch to a language model in one prompt and gets back, per student, the relevant papers with a 0–100 score and the one paper to focus on, with a one-line reason. Each student is described by the keywords M5 stored with their profile ([ProfileKeywords](../profile/ProfileKeywords.java)) and their six most typical paper titles. It is chosen per run: **Matcher: Groq language model** in the UI's Pipeline tab, or `PipelineRunnerCli --matcher=ai`. The classes are described in the [scoring/ai readme](ai/readme.md).
-
-```
-ProfileBrief per student            the batch (M7c)
- (name, keywords, 6 typical titles)  │
-        └──────────┬─────────────────┘
-                   ▼
-   split the batch into as few requests as keep each prompt within the token window
-   (8,000 − 2,500 for the answer = 5,500 tokens on the free tier); every request names every student
-                   │
-                   ▼
-   MatchPrompt: text (students by name, papers as P1..Pn, abstracts cut to 300 characters)
-              + JSON Schema (only those names and ids allowed)
-                   │
-                   ▼
-   LlmClient.generateJson ── GroqClient ── POST api.groq.com/openai/v1/chat/completions
-                                           openai/gpt-oss-120b, strict Structured Outputs
-                   │
-                   ▼
-   check the answer: unknown students / paper ids dropped, scores clamped to 0–100,
-                     a focus paper outside the student's matches gives way to their best match
-                   │
-                   ▼
-   Map<student, List<ScoredPaper>>   score = AI score / 100, recommended = the focus paper,
-                                     rationale = the model's one-line reason
-```
-
-- **One paper, several students:** unlike `RelevanceScorer`, the model may match a paper to every student it is relevant to.
-- **[LlmClient](ai/LlmClient.java)** is the seam for the provider. [GroqClient](ai/GroqClient.java) implements it, posting through [JsonPoster](ai/JsonPoster.java) / [JdkJsonPoster](ai/JdkJsonPoster.java) and [ApiCalls](ai/ApiCalls.java).
-- **Settings:** `GROQ_API_KEY` (required, from [console.groq.com](https://console.groq.com/keys)); it is sent only in the `Authorization: Bearer` header and never saved. `GROQ_MODEL` overrides the default `openai/gpt-oss-120b`, and must be a model Groq offers strict Structured Outputs for (`openai/gpt-oss-20b` also works).
-- **JSON output:** `response_format` = `json_schema` with `strict: true`. Strict mode wants every object closed and all its fields required, so [GroqClient.strictSchema](ai/GroqClient.java) rewrites the matcher's schema: optional fields become nullable, numeric bounds are dropped (the matcher clamps scores itself). The model reasons briefly (`reasoning_effort: low`) and its reasoning isn't sent back (`include_reasoning: false`).
-- **Fitting the free tier:** Groq's free limit for these models is 8,000 tokens a minute (and 200,000 a day), counting the prompt and the answer. So a student is described by the titles of their 6 most typical papers, those whose SPECTER2 vectors are closest to the student's mean ([ProfileBrief.from](ai/ProfileBrief.java)), abstracts are cut to 300 characters, and the answer may use up to 2,500 tokens. For the 8 students and 31 sample alert papers the prompt is 17,700 characters (≈ 4,400 tokens); with all ~300 titles and full abstracts it was 61,000.
-- **Always within the token window:** [AiPaperMatcher](ai/AiPaperMatcher.java) never sends more papers than fit. A request may hold what the answer leaves of the tokens a minute ([LlmClient.maxPromptTokens](ai/LlmClient.java); for Groq 8,000 − 2,500 = 5,500, or `GROQ_TOKENS_PER_MINUTE` − 2,500 on a paid account). Prompts are measured at 4 characters a token, which over-estimates (Groq counted 15,916 characters as 3,512 tokens). A batch that doesn't fit is split into as few requests as do, runs of near-equal length in batch order, each naming every student. The next request waits as long as Groq's rate-limit reply asks. Each request picks a focus paper per student, and the student keeps the best-scored one; the others keep the model's reason as their rationale but aren't recommended.
-- **Errors:** a 429 or 5xx is retried after 10 s, 30 s and 60 s, or after the wait Groq names ("Please try again in 7.66s") if longer. A used-up daily limit names hours and is reported at once. A refused request (400, or 413 too large), an answer cut short (`finish_reason: length`), or one that isn't JSON is an `IOException`, never an empty result.
-
-**Recording the test reply.** The tests replay one real Groq answer. Record it again whenever the prompt or the profiles change:
-
-```
-GROQ_API_KEY=... mvn -q test-compile exec:java -Dexec.classpathScope=test -Dexec.mainClass=com.litroute.scoring.ai.AiRecorder
-```
-
-[AiRecorder](../../../../../test/java/com/litroute/scoring/ai/AiRecorder.java) sends the stored profiles and the client's sample alert papers, saves `src/test/resources/ai/groq-match-request.json` (without the key) and `groq-match-reply.json` (only for a successful reply), and prints the matches. `-Dexec.args=--dry-run` prints the prompt instead and sends nothing.
-
 ## The classes
 
 | Class | Role |
 |---|---|
-| [PaperMatcher](PaperMatcher.java) | M6's interface: `match(batch)` → `Map<student, List<ScoredPaper>>`. Both matchers implement it, so M9 and M7e don't care which ran. |
-| [RelevanceScorer](RelevanceScorer.java) | The default matcher: SPECTER2 meaning + TF-IDF wording, calibrated on the profiles, one student per paper, floors 0.7 / 0.43. |
+| [PaperMatcher](PaperMatcher.java) | M6's interface: `match(batch)` → `Map<student, List<ScoredPaper>>`, which M9 and M7e take as it is. |
+| [RelevanceScorer](RelevanceScorer.java) | The matcher: SPECTER2 meaning + TF-IDF wording, calibrated on the profiles, one student per paper, floors 0.7 / 0.43. |
 | [LexicalIndex](LexicalIndex.java) | Package-private. The TF-IDF index over every profile paper's text; closeness and shared terms for a candidate's text. |
 | [Terms](Terms.java) | Package-private. Text to term counts: folded stems and adjacent stem pairs, stopwords dropped. |
 | [LocalPdfCandidates](LocalPdfCandidates.java) | A PDF dropped in by hand, as a candidate. |
 | [MatchEvaluation](MatchEvaluation.java) | Package-private. Papers assigned correctly, and per-student P@3, against the professor's filing. |
 | [RelevanceScorerCli](RelevanceScorerCli.java) | Terminal entry point: match M7c into M7e, or score PDFs and compare the strategies. |
-| [ai/](ai/readme.md) | The AI matcher on Groq: [AiPaperMatcher](ai/AiPaperMatcher.java) and its prompt, schema and HTTP client. |
 
 ## Interaction with M7 (the stores)
 
@@ -160,7 +112,6 @@ M6 reads two stores and writes none itself; M9 writes its result.
 
 ```
 M7d profiles.json ──loadAll()──▶ RelevanceScorer(provider, profiles)   (vectors, text; modelId must match)
-                                 or AiPaperMatcher.of(groq, profiles)   (keywords + 6 typical titles)
 M7c enrichment_cache.json ──enriched, minus papers already scored──▶ match(batch)
                                                                         │ Map<student, List<ScoredPaper>>
                          sent_papers.json ── keys already sent ──▶ M9 filters them out
@@ -186,7 +137,7 @@ mvn -q compile exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCl
 
 ## Tests
 
-Real data only: the real model, the real profiles, the professor's filed papers, the client's real alert emails, and a real Groq reply.
+Real data only: the real model, the real profiles, the professor's filed papers and the client's real alert emails.
 
 - [RelevanceScorerTest](../../../../../test/java/com/litroute/scoring/RelevanceScorerTest.java):
   - a paper goes to at most one student, its best, and only with relevance ≥ 0.7; every student is listed, in profile order, papers best first;
@@ -196,6 +147,4 @@ Real data only: the real model, the real profiles, the professor's filed papers,
   - every score is in 0–1 and explained;
   - blank, other-model and text-less profiles are handled;
   - from the client's alerts, the relevant SSI review is matched; the irrelevant ceramic-coating paper is not (M2 has already dropped the discussion, closure, book reviews and erratum).
-- [AiPaperMatcherTest](../../../../../test/java/com/litroute/scoring/ai/AiPaperMatcherTest.java), on Groq's recorded answer: every student listed in order, papers best first and only from the batch; one focus paper per matched student with a one-line reason; the prompt names every student and paper; invented students and paper ids are dropped; a stray focus gives way to the best match; an empty batch asks nothing; each student is described by at most 6 titles and their keywords; the sample batch fits the token window in one request, and a batch too long for a smaller window goes in as few requests as fit, each within it, naming every paper once and in order, with still one focus paper per student.
-- [GroqClientTest](../../../../../test/java/com/litroute/scoring/ai/GroqClientTest.java): the request (endpoint, key only in a header, strict JSON schema, low reasoning, answer budget); the strict-mode rewrite; the recorded answer parses; a per-minute rate limit is waited out and a used-up daily one reported at once; the wait is read from Groq's message; a lasting outage, a refused or too-large request and a truncated answer are errors; key and model from the environment; the prompt budget is the tokens a minute (free tier, or `GROQ_TOKENS_PER_MINUTE`) less the answer.
 - [LexicalIndexTest](../../../../../test/java/com/litroute/scoring/LexicalIndexTest.java), [TermsTest](../../../../../test/java/com/litroute/scoring/TermsTest.java): held-out papers are closest to their own student; term folding, stems and pairs.
