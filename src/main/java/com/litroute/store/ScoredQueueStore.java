@@ -52,10 +52,11 @@ public final class ScoredQueueStore {
      * JSON shape of one queue entry; the candidate is stored as M7c stores it. {@code recommended} is
      * absent in queues written before recommendations existed, and reads as false. {@code relevance} is
      * null when the matcher did not measure it; in queues written before it was stored, it is read from
-     * the rationale, which states it. {@link SentPaperStore} stores sent papers in the same shape.
+     * the rationale, which states it. {@code listedAuthor} is null for a paper by no listed author, and in
+     * queues written before the authors list existed. {@link SentPaperStore} stores sent papers in the same shape.
      */
     record StoredScoredPaper(StoredCandidate candidate, String profileName, double score, String rationale,
-            ReviewStatus status, Boolean recommended, Double relevance) {
+            ReviewStatus status, Boolean recommended, Double relevance, String listedAuthor) {
 
         /**
          * Input: a scored paper.
@@ -65,7 +66,8 @@ public final class ScoredQueueStore {
          */
         static StoredScoredPaper from(ScoredPaper scored) {
             return new StoredScoredPaper(StoredCandidate.from(scored.candidate()), scored.profileName(), scored.score(),
-                    scored.rationale(), scored.status(), scored.recommended(), scored.relevance().orElse(null));
+                    scored.rationale(), scored.status(), scored.recommended(), scored.relevance().orElse(null),
+                    scored.listedAuthor().orElse(null));
         }
 
         /**
@@ -77,7 +79,8 @@ public final class ScoredQueueStore {
         ScoredPaper toScoredPaper() throws IOException {
             try {
                 return new ScoredPaper(candidate.toCandidate(), profileName, score, rationale, status,
-                        Boolean.TRUE.equals(recommended), Optional.ofNullable(relevance).or(() -> statedIn(rationale)));
+                        Boolean.TRUE.equals(recommended), Optional.ofNullable(relevance).or(() -> statedIn(rationale)),
+                        Optional.ofNullable(listedAuthor));
             } catch (IllegalArgumentException | NullPointerException e) {
                 throw new IOException("Corrupt queue entry for " + profileName + ": " + e.getMessage(), e);
             }
@@ -197,7 +200,7 @@ public final class ScoredQueueStore {
      * folder left empty. A file outside {@link #pdfRoot()} is not this store's copy and is left alone.
      * Input: none.
      * Output: how many entries the queue held.
-     * Used by: PipelineRunner.reset (M9, Clear and re-run).
+     * Used by: PipelineRunner.reset (M9, Clear and re-run), DataCaches (the Caches tab).
      * Example: queue of 3 with copies in matched/alice -> returns 3; matched/alice deleted
      */
     public int clear() throws IOException {
@@ -206,20 +209,40 @@ public final class ScoredQueueStore {
             write(List.of());
             // Queue file first: a crash now leaves stray PDFs, never entries pointing to deleted files.
             for (ScoredPaper paper : queue) {
-                Optional<Path> copy = paper.candidate().pdfPath().map(Path::normalize).filter(path -> path.startsWith(pdfRoot));
+                Optional<Path> copy = pdfCopy(paper);
                 if (copy.isPresent()) {
-                    Files.deleteIfExists(copy.get());
-                    Path folder = copy.get().getParent();
-                    try (Stream<Path> left = Files.list(folder)) {
-                        if (left.findAny().isEmpty()) {
-                            Files.delete(folder);
-                        }
-                    } catch (NoSuchFileException gone) {
-                        // removed with an earlier entry's copy
-                    }
+                    deleteCopy(copy.get());
                 }
             }
             return queue.size();
+        }
+    }
+
+    /**
+     * Input: a queued or sent paper.
+     * Output: its PDF if that is a copy in the students' folders; a file elsewhere is not this store's.
+     * Used by: {@link #clear}, DataCaches.
+     * Example: pdfPath matched/alice/x.pdf -> that path; pdfPath pdfs/x.pdf -> empty
+     */
+    Optional<Path> pdfCopy(ScoredPaper paper) {
+        return paper.candidate().pdfPath().map(Path::normalize).filter(path -> path.startsWith(pdfRoot));
+    }
+
+    /**
+     * Input: a PDF copy in a student's folder.
+     * Output: none; the copy is deleted, and the folder too if that leaves it empty.
+     * Used by: {@link #clear}, DataCaches.
+     * Example: the last PDF in matched/alice -> matched/alice is gone too
+     */
+    void deleteCopy(Path copy) throws IOException {
+        Files.deleteIfExists(copy);
+        Path folder = copy.getParent();
+        try (Stream<Path> left = Files.list(folder)) {
+            if (left.findAny().isEmpty()) {
+                Files.delete(folder);
+            }
+        } catch (NoSuchFileException gone) {
+            // removed with an earlier entry's copy
         }
     }
 
@@ -299,7 +322,7 @@ public final class ScoredQueueStore {
         }
         PaperCandidate filed = paper.candidate().withPdfPath(Optional.of(target));
         return new ScoredPaper(filed, paper.profileName(), paper.score(), paper.rationale(), paper.status(),
-                paper.recommended(), paper.relevance());
+                paper.recommended(), paper.relevance(), paper.listedAuthor());
     }
 
     /**

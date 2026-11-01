@@ -22,6 +22,7 @@ import com.litroute.scoring.RelevanceScorer;
 import com.litroute.security.GmailCredentials;
 import com.litroute.store.EmailCacheStore;
 import com.litroute.store.EnrichmentCacheStore;
+import com.litroute.store.PriorityAuthorStore;
 import com.litroute.store.ProfileStore;
 import com.litroute.store.ScoredPaperLog;
 import com.litroute.store.ScoredQueueStore;
@@ -53,7 +54,8 @@ import java.util.function.Consumer;
  * The batch M6 sees is every deduplicated paper not yet scored, not just this run's emails, so papers
  * left unscored by an earlier run that failed after saving M7c (no profiles yet, or the matcher failed)
  * are scored by the next one. A paper already in the review queue counts as scored. Each step's stores
- * are written in the order that makes a crash repeat work rather than skip it.
+ * are written in the order that makes a crash repeat work rather than skip it. The matcher favours the papers
+ * of the authors on the professor's list ({@link PriorityAuthors}), read afresh for each run.
  */
 public final class PipelineRunner {
 
@@ -64,7 +66,7 @@ public final class PipelineRunner {
          * Input: the profiles as they stand after this run's sync.
          * Output: the M6 matcher for them; IOException if it can't be built.
          * Used by: {@link PipelineRunner#run}, step 5.
-         * Example: {@code students -> new RelevanceScorer(provider, students)}
+         * Example: {@code students -> new RelevanceScorer(provider, students, authors.load())}
          */
         PaperMatcher create(Collection<Profile> profiles) throws IOException;
     }
@@ -174,7 +176,7 @@ public final class PipelineRunner {
                 EnrichmentCacheStore.atDefaultLocation(), processedEmails);
         return new PipelineRunner(new ProfileBuilder(ProfileBuilder.defaultProfilesRoot(), profiles, provider),
                 profiles, new GmailEmailSource(maxUnread), processedEmails, batches,
-                students -> new RelevanceScorer(provider, students),
+                students -> new RelevanceScorer(provider, students, PriorityAuthorStore.atDefaultLocation().load()),
                 ScoredQueueStore.atDefaultLocation(), ScoredPaperLog.atDefaultLocation(),
                 SentPaperStore.atDefaultLocation(), markRead);
     }
@@ -278,6 +280,10 @@ public final class PipelineRunner {
             progress.accept("  " + entry.getKey() + ": " + entry.getValue().size() + " matched, " + picked + " recommended");
         }
         progress.accept(matched.size() + " match(es) queued for review; the queue holds " + updated.size() + ".");
+        long byListedAuthors = matched.stream().filter(paper -> paper.listedAuthor().isPresent()).count();
+        if (byListedAuthors > 0) {
+            progress.accept(byListedAuthors + " of them by authors on your list.");
+        }
         if (matched.size() + resent < fresh.size()) {
             progress.accept((fresh.size() - matched.size() - resent) + " paper(s) were not close enough to any student's "
                     + "work and were not queued.");

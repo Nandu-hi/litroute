@@ -6,6 +6,7 @@ import com.litroute.model.Profile;
 import com.litroute.model.ScoredPaper;
 import com.litroute.scoring.RelevanceScorer.Strategy;
 import com.litroute.store.EnrichmentCacheStore;
+import com.litroute.store.PriorityAuthorStore;
 import com.litroute.store.ProfileStore;
 import com.litroute.store.ScoredQueueStore;
 import java.io.IOException;
@@ -52,7 +53,7 @@ public final class RelevanceScorerCli {
             return;
         }
         try (Specter2EmbeddingProvider provider = Specter2EmbeddingProvider.atDefaultLocation()) {
-            RelevanceScorer scorer = new RelevanceScorer(provider, profiles.values());
+            RelevanceScorer scorer = new RelevanceScorer(provider, profiles.values(), PriorityAuthorStore.atDefaultLocation().load());
             if (pdfOrFolder != null) {
                 scorePdfs(scorer, pdfOrFolder, profiles);
             } else {

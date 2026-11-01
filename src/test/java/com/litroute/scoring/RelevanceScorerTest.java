@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
+import com.litroute.model.AuthorName;
 import com.litroute.model.PaperCandidate;
 import com.litroute.model.Profile;
 import com.litroute.model.Profile.ProfilePaper;
@@ -311,6 +312,69 @@ public class RelevanceScorerTest {
         assertTrue(titled(matches, "Advancing soil-structure interaction (SSI)").isPresent());
         assertFalse(titled(matches, "Hygrothermal analysis of ceramic coating durability").isPresent());
         assertTrue(deduplicated.stream().allMatch(PaperCandidate::isResearch));
+    }
+
+    /**
+     * With the first author of the client's alert papers on the list, where the alert spells out their name: a paper clears the lower floor and comes first,
+     * says its author is why when the usual floor would have left it out, and nothing matched before is lost or moved.
+     * The ceramic coating paper still stays out, listed author or not: it doesn't fit anyone's work.
+     */
+    @Test
+    public void aListedAuthorLowersTheFloorButAPaperFittingNoOneStaysOut() throws IOException {
+        List<PaperCandidate> deduplicated = ClientAlerts.deduplicated(tmp.newFolder("data").toPath());
+        List<AuthorName> firstAuthors = new ArrayList<>();
+        for (PaperCandidate paper : deduplicated) {
+            String[] words = paper.authors().isEmpty() ? new String[0] : paper.authors().get(0).split("\\s+");
+            if (words.length >= 2 && words[0].length() > 2) {
+                firstAuthors.add(new AuthorName(words[0], words[words.length - 1]));
+            }
+        }
+        RelevanceScorer favouring = new RelevanceScorer(TestModel.provider(), TestProfiles.profiles().values(), firstAuthors);
+
+        Map<String, List<ScoredPaper>> byStudent = favouring.match(deduplicated);
+        List<ScoredPaper> matches = flatten(byStudent);
+        List<ScoredPaper> before = flatten(scorer().match(deduplicated));
+
+        for (ScoredPaper earlier : before) {
+            assertTrue(earlier.candidate().title(), matches.stream().anyMatch(match -> match.queueKey().equals(earlier.queueKey())));
+        }
+        assertTrue("the lower floor let more through", matches.size() > before.size());
+        for (ScoredPaper match : matches) {
+            if (match.listedAuthor().isEmpty()) {
+                continue;
+            }
+            boolean fromTitle = match.rationale().contains("Scored from its title alone");
+            double usual = fromTitle ? RelevanceScorer.TITLE_FLOOR : RelevanceScorer.RELEVANCE_FLOOR;
+            double lower = fromTitle ? RelevanceScorer.AUTHOR_TITLE_FLOOR : RelevanceScorer.AUTHOR_FLOOR;
+            assertTrue(match.rationale(), relevance(match) >= lower);
+            assertTrue(match.rationale(), match.rationale().startsWith(match.relevance().orElseThrow() >= usual
+                    ? "By an author on your list: " : "Matched because "));
+            assertEquals(Optional.of(match.relevance().orElseThrow()), scorer().scoreAll(match.candidate()).stream()
+                    .filter(other -> other.profileName().equals(match.profileName())).findFirst().orElseThrow().relevance());
+        }
+        assertFalse(titled(matches, "Hygrothermal analysis of ceramic coating durability").isPresent());
+    }
+
+    /** A middle name on the paper doesn't hide a listed first and last name, and another first name is someone else. */
+    @Test
+    public void aListedAuthorIsFoundByFirstAndLastNameOnly() throws IOException {
+        List<PaperCandidate> deduplicated = ClientAlerts.deduplicated(tmp.newFolder("data").toPath());
+        PaperCandidate ssi = deduplicated.stream()
+                .filter(paper -> Titles.compact(paper.title()).startsWith(Titles.compact("Advancing soil-structure interaction")))
+                .findFirst().orElseThrow();
+        assertEquals("Imtiyaz Akbar Najar", ssi.authors().get(0));
+        RelevanceScorer favouring = new RelevanceScorer(TestModel.provider(), TestProfiles.profiles().values(),
+                List.of(new AuthorName("Imtiyaz", "Najar")));
+
+        ScoredPaper match = titled(flatten(favouring.match(List.of(ssi))), "Advancing soil-structure interaction").orElseThrow();
+
+        assertEquals(Optional.of("Imtiyaz Akbar Najar"), match.listedAuthor());
+        assertTrue(match.rationale(), match.rationale().contains("Imtiyaz Akbar Najar (listed as Imtiyaz Najar)"));
+
+        RelevanceScorer other = new RelevanceScorer(TestModel.provider(), TestProfiles.profiles().values(),
+                List.of(new AuthorName("Ibrahim", "Najar")));
+        assertEquals(Optional.empty(), titled(flatten(other.match(List.of(ssi))), "Advancing soil-structure interaction")
+                .orElseThrow().listedAuthor());
     }
 
     private static Optional<ScoredPaper> titled(List<ScoredPaper> matches, String titleStart) {

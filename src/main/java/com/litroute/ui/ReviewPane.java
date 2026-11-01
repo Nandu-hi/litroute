@@ -230,15 +230,17 @@ final class ReviewPane extends BorderPane {
         TableColumn<ScoredPaper, String> title = column("Title", 520, paper -> paper.candidate().title());
         table.getColumns().add(title);
         table.getColumns().add(column("Student", 160, ScoredPaper::profileName));
+        table.getColumns().add(column("Listed author", 130, paper -> paper.listedAuthor().orElse("")));
         table.getColumns().add(column("Venue", 200, paper -> paper.candidate().venue().orElse("")));
         table.getColumns().add(column("Year", 55, paper -> paper.candidate().year().map(String::valueOf).orElse("")));
         table.getColumns().add(column("PDF", 45, paper -> paper.candidate().pdfPath().isPresent() ? "yes" : ""));
         table.getColumns().add(column("Status", 85, paper -> paper.status().name().toLowerCase(Locale.ROOT)));
 
-        // Always best score first, whatever the papers' status or star; the columns don't re-sort.
+        // Listed authors' papers first, then best score first, whatever the status or star; the columns don't re-sort.
         table.getColumns().forEach(column -> column.setSortable(false));
         SortedList<ScoredPaper> sorted = new SortedList<>(shown,
-                Comparator.comparingDouble(ScoredPaper::score).reversed());
+                Comparator.comparing((ScoredPaper paper) -> paper.listedAuthor().isEmpty())
+                        .thenComparing(Comparator.comparingDouble(ScoredPaper::score).reversed()));
         table.setItems(sorted);
         table.getSelectionModel().setSelectionMode(SelectionMode.MULTIPLE);
         table.setPlaceholder(new Label("No papers here. Run the pipeline to fetch and score new alerts."));
@@ -265,7 +267,8 @@ final class ReviewPane extends BorderPane {
         });
     }
 
-    private static final String SCORE_HELP = "Score = relevance × share. The table is sorted by it, best first.\n\n"
+    private static final String SCORE_HELP = "Score = relevance × share. The table is sorted by it, best first, after "
+            + "the papers by authors on your list.\n\n"
             + "Share: how much of the paper's fit belongs to this student rather than to the other students "
             + "(the shares of all students add up to 1). A paper that suits two students splits its share, so it "
             + "can score low and still be a strong match - check its relevance.";
@@ -273,9 +276,11 @@ final class ReviewPane extends BorderPane {
             + "own papers, whoever else it suits.\n\n0.9: as close as the student's own papers typically are to each "
             + "other.\n0.5: halfway - no closer to this student than to the others.\n0.1: as close as another "
             + "student's papers.\n\nA paper is matched only at %.2f or more, or %.2f when only its title is known (a "
-            + "title alone seldom scores high). A paper's title can lift the relevance of its abstract when it looks "
-            + "closer still. \"–\" means it was not recorded when the paper was queued.",
-            RelevanceScorer.RELEVANCE_FLOOR, RelevanceScorer.TITLE_FLOOR);
+            + "title alone seldom scores high); a paper by an author on your list, at %.2f or %.2f. A paper's title can "
+            + "lift the relevance of its abstract when it looks closer still. \"–\" means it was not recorded when the "
+            + "paper was queued.",
+            RelevanceScorer.RELEVANCE_FLOOR, RelevanceScorer.TITLE_FLOOR, RelevanceScorer.AUTHOR_FLOOR,
+            RelevanceScorer.AUTHOR_TITLE_FLOOR);
 
     /**
      * Puts the column's explanation on its header and a paper-specific one on each of its cells.
@@ -354,14 +359,19 @@ final class ReviewPane extends BorderPane {
             return "Not recorded when this paper was queued.";
         }
         double relevance = paper.relevance().get();
-        double floor = paper.rationale().contains("title alone") ? RelevanceScorer.TITLE_FLOOR : RelevanceScorer.RELEVANCE_FLOOR;
+        // Not just "title alone": a rationale also says that of a title that lifted an abstract's relevance.
+        boolean fromTitle = paper.rationale().contains("Scored from its title alone");
+        double floor = paper.listedAuthor().isPresent()
+                ? fromTitle ? RelevanceScorer.AUTHOR_TITLE_FLOOR : RelevanceScorer.AUTHOR_FLOOR
+                : fromTitle ? RelevanceScorer.TITLE_FLOOR : RelevanceScorer.RELEVANCE_FLOOR;
         String meaning = relevance >= 0.8 ? "about as close as the student's own papers are to each other"
-                : relevance >= floor ? String.format(Locale.ROOT, "close enough to match (at least %.2f for this evidence)", floor)
+                : relevance >= floor ? String.format(Locale.ROOT, "close enough to match (at least %.2f for this evidence%s)",
+                        floor, paper.listedAuthor().isPresent() ? " and a listed author" : "")
                 : relevance >= 0.5 ? "only somewhat closer to this student's papers than to others' - below the match floor"
                 : "no closer to this student's papers than to other students' papers";
         String basis = paper.rationale().contains("full PDF") ? "its full PDF"
                 : paper.rationale().contains("title and abstract") ? "its title and abstract"
-                : paper.rationale().contains("title alone") ? "its title alone, so it is less certain" : null;
+                : fromTitle ? "its title alone, so it is less certain" : null;
         return String.format(Locale.ROOT, "%.2f for %s: %s.%s", relevance, paper.profileName(), meaning,
                 basis == null ? "" : "\n\nMeasured from " + basis + ".");
     }
@@ -676,9 +686,11 @@ final class ReviewPane extends BorderPane {
             Optional<String> url = link(candidate);
             link.setText(url.orElse(""));
             link.setVisible(url.isPresent());
-            match.setText(String.format(Locale.ROOT, "Matched to %s, score %.2f%s%s, %s", chosen.profileName(),
+            match.setText(String.format(Locale.ROOT, "Matched to %s, score %.2f%s%s%s, %s", chosen.profileName(),
                     chosen.score(), chosen.relevance().map(r -> String.format(Locale.ROOT, ", relevance %.2f", r)).orElse(""),
-                    chosen.recommended() ? ", recommended" : "", chosen.status() == ReviewStatus.SENT
+                    chosen.recommended() ? ", recommended" : "",
+                    chosen.listedAuthor().map(name -> ", by listed author " + name).orElse(""),
+                    chosen.status() == ReviewStatus.SENT
                             && sentAt.containsKey(chosen.queueKey())
                             ? "sent " + SENT_TIME.format(sentAt.get(chosen.queueKey()))
                             : chosen.status().name().toLowerCase(Locale.ROOT)));

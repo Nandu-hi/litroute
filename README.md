@@ -50,9 +50,9 @@ It runs on the professor's own machine. Papers are read out of the emails by pat
 | M3 | `ingestion/enrich` | Fills in DOI, venue, year and abstract from the publisher's page, Crossref and OpenAlex, and downloads the PDF. |
 | M4 | `ingestion/dedup` | Merges copies of the same paper. |
 | M5 | `profile` | Turns each student's folder of PDFs into a profile. |
-| M6 | `scoring` | Matches each paper to at most one student, and only when it is close to that student's work (relevance ≥ 0.7). |
+| M6 | `scoring` | Matches each paper to at most one student, and only when it is close to that student's work (relevance ≥ 0.7, or a lower cutoff for an author on the professor's list). |
 | M7 | `store` | JSON stores that keep the pipeline's progress between runs. Every write is atomic, so a crash makes the next run repeat work instead of losing it. |
-| M8 | `ui` | JavaFX desktop app with Review, Pipeline, Profiles and Gmail tabs. |
+| M8 | `ui` | JavaFX desktop app with Review, Pipeline, Authors, Profiles, Caches and Gmail tabs. |
 | M9 | `pipeline` | Runs the whole pipeline once, and provides **Clear and re-run**. |
 | M10 | `delivery` | Emails the approved papers to their students over Gmail SMTP and never sends a paper twice. |
 
@@ -303,6 +303,11 @@ A typical session:
    - Press **Send approved** to email the approved papers to their students. Each student gets one digest with the PDFs attached, split into several emails if the attachments exceed Gmail's size limit.
    - Choose **Show: Sent** to see what has been sent and when.
 
+Two more tabs are there when you need them:
+
+- **Authors tab:** list the authors you want to follow. Their papers need a lower relevance to be matched (0.50 instead of 0.70, or 0.36 instead of 0.43 from a title alone), come first in the Review tab, and give the author as the reason for the match. A paper that fits no student's work is still ignored. Enter a first and a last name, both spelled out. Matching is strict: Alice Carter finds Alice Carter and Alice K. Carter, but not A. Carter, AK Carter, Alice or Carter.
+- **Caches tab:** see how much space each cache takes and what it holds, sent papers included. Choose caches to see what clearing them means, tick that you accept it, then press **Clear selected**. Your Gmail isn't touched; to process emails again from scratch, use **Clear and re-run…** instead.
+
 ### Command line
 
 Every entry point runs through Maven's `exec:java`.
@@ -369,6 +374,7 @@ Everything lives under `~/.litroute/`, outside the repository:
 | `data/matched/<student>/` | Each student's copies of their matched PDFs |
 | `data/scored_papers.json` | Papers already scored, so they are not scored twice |
 | `data/sent_papers.json` | Papers sent to each student, so they are never sent twice |
+| `data/priority_authors.json` | The authors listed in the Authors tab |
 | `data/pdfs/` | PDFs downloaded during enrichment |
 
 To start over, use **Clear and re-run…** in the app. Deleting `data/` loses the record of sent papers.

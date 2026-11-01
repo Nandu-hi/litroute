@@ -25,6 +25,7 @@ PipelineRunner.run(credentials, progress)
 
 - **Crash safety.** Each step's stores are written in the order that makes a crash repeat work rather than skip it. Alerts are marked read only after M7a holds them, since M1 looks at unread mail only. A batch is recorded as scored only after its matches are queued.
 - **What M6 sees.** Every deduplicated paper not yet scored, not just this run's. So papers left unscored by a run that failed after saving M7c (no profiles yet, or the matcher failed) are scored by the next one. A run in Local AI mode whose model can't be reached fails before anything is saved for its emails, so the next run reads them.
+- **Listed authors.** The matcher reads the authors list ([PriorityAuthorStore](../store/PriorityAuthorStore.java)) afresh for each run and holds those authors' papers to a lower floor ([scoring readme](../scoring/readme.md)). [PriorityAuthors](PriorityAuthors.java) changes the list. M6 scores a paper once, so adding an author also forgets their held papers in `scored_papers.json`, and the next run scores those once more; a paper queued or sent keeps its place, since it has had its decision. Removing an author leaves queued papers queued.
 - **Keep emails unread** (for testing; [PipelineRunner](PipelineRunner.java)'s `markRead` flag, `--keep-unread` on the command line) skips step 4. M7a still keeps the alerts from being processed twice.
 
 ## Clear and re-run
@@ -56,6 +57,7 @@ The classes:
 | Class | Role |
 |---|---|
 | [PipelineRunner](PipelineRunner.java) | One run (`run`) and **Clear and re-run** (`reset`) over injected stages and stores; `atDefaultLocations` wires the real ones under `~/.litroute`. Also the `Report`, `ResetReport` and `MatcherFactory` types. |
+| [PriorityAuthors](PriorityAuthors.java) | Adds an author to the list and removes one, forgetting a new author's held papers in the scored log. |
 | [PipelineRunnerCli](PipelineRunnerCli.java) | The terminal / cron entry point: parses the flags, unlocks the credentials (terminal or `LITROUTE_PASSPHRASE`), runs once, optionally sends the approved papers (M10). |
 
 ## Running it without the UI
@@ -70,4 +72,5 @@ mvn -q compile exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCl
 
 | Test | What it checks |
 |---|---|
+| [PriorityAuthorsTest](../../../../../test/java/com/litroute/pipeline/PriorityAuthorsTest.java) | Adding an author forgets their held papers, past a middle name, and only theirs; a different first name is someone else; a queued or sent paper keeps its place in the log; the same spelling is listed once; removing an author leaves the rest. |
 | [PipelineRunnerTest](../../../../../test/java/com/litroute/pipeline/PipelineRunnerTest.java) | On the client's six real alerts, enriched offline from recorded replies and matched by the real model against the real profiles: a first run scores every paper and queues the close ones, each for one student; alerts are marked read only once M7a holds them; told to keep mail unread, it marks none and still skips processed alerts; a second run finds nothing new and keeps the professor's decisions; papers fetched before any profile existed are scored once there is one; papers are scored again when the matcher failed. **Reset:** the next run processes the same six emails afresh, with decisions discarded and the alerts read again; a reset that can't reach Gmail clears nothing; a paper already sent is not queued for its student again after a reset. |

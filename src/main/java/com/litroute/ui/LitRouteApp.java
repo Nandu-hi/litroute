@@ -21,9 +21,10 @@ import javafx.scene.layout.VBox;
 import javafx.stage.Stage;
 
 /**
- * M8: the professor's desktop UI. Four tabs - Review (the M7e queue: approve or drop each matched paper, and
+ * M8: the professor's desktop UI. Six tabs - Review (the M7e queue: approve or drop each matched paper, and
  * email the approved ones to the students),
- * Pipeline (run M9 on demand), Profiles (rebuild M5) and Gmail (unlock, set up or rotate the credentials).
+ * Pipeline (run M9 on demand), Authors (the authors whose papers M6 favours), Profiles (rebuild M5), Caches (how
+ * much each cache holds, and clearing it) and Gmail (unlock, set up or rotate the credentials).
  * Everything happens inside this one window, with no dialogs, so a tiling window manager cannot hide a
  * modal prompt behind it. While the credentials are locked a banner says so, and LitRoute opens on the
  * Gmail tab.
@@ -48,7 +49,7 @@ public final class LitRouteApp extends Application {
 
     /**
      * Input: the primary window JavaFX provides.
-     * Output: none; the window shows the Review, Pipeline, Profiles and Gmail tabs, a locked banner, and opens on Gmail.
+     * Output: none; the window shows the Review, Pipeline, Authors, Profiles, Caches and Gmail tabs, a locked banner, and opens on Gmail.
      * Used by: JavaFX, once at startup.
      * Example: first launch -> Gmail tab focused, banner "Gmail credentials are locked ..."
      */
@@ -65,14 +66,30 @@ public final class LitRouteApp extends Application {
         ReviewPane review = new ReviewPane(session, ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation(),
                 openDocument, showCredentials);
         Tab reviewTab = new Tab("Review", review);
+        ProfilesPane profiles = new ProfilesPane(session, openDocument);
+        CachesPane caches = new CachesPane(session, () -> {
+            review.reload();
+            profiles.reload();
+        });
+        Tab cachesTab = new Tab("Caches", caches);
         tabs.getTabs().addAll(reviewTab,
                 new Tab("Pipeline", new PipelinePane(session, review::reload, showCredentials)),
-                new Tab("Profiles", new ProfilesPane(session, openDocument)),
+                new Tab("Authors", new AuthorsPane(session)),
+                new Tab("Profiles", profiles),
+                cachesTab,
                 gmailTab);
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
         tabs.getSelectionModel().selectedItemProperty().addListener((o, was, now) -> {
             if (now == reviewTab) {
                 review.reload();
+            } else if (now == cachesTab) {
+                caches.refresh();
+            }
+        });
+        // A job that ends while the tab is open has just changed what it shows.
+        session.busyProperty().addListener((o, was, busy) -> {
+            if (!busy && tabs.getSelectionModel().getSelectedItem() == cachesTab) {
+                caches.refresh();
             }
         });
 

@@ -113,6 +113,19 @@ public final class SentPaperStore {
     }
 
     /**
+     * Forgets every paper sent. Nothing else does: it is what keeps a student from getting a paper twice.
+     * Input: none.
+     * Output: none; the file is deleted.
+     * Used by: DataCaches (the Caches tab), once the professor has agreed to the consequences.
+     * Example: {@code clear(); load()} -> empty
+     */
+    public void clear() throws IOException {
+        synchronized (lock) {
+            Files.deleteIfExists(storeFile);
+        }
+    }
+
+    /**
      * Input: none; the caller holds the lock.
      * Output: the sent papers on disk; empty if no file; IOException on a corrupt entry.
      * Used by: {@link #load}, {@link #addAll}.

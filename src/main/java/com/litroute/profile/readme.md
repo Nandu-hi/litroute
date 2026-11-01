@@ -109,16 +109,16 @@ A missing view is left out of the sum. Because the result is normalized, the rem
 
 ### How a profile stands for a student
 
-**No single profile vector is stored.** A profile is just its papers, each with its own vectors and text; nothing is summarized or grouped when it is built. M6 computes the student's profile vector, the **centroid**, from those papers each time it builds its scorer ([RelevanceScorer.Space](../scoring/RelevanceScorer.java#L842)):
+**No single profile vector is stored.** A profile is just its papers, each with its own vectors and text; nothing is summarized or grouped when it is built. M6 computes the student's profile vector, the **centroid**, from those papers each time it builds its scorer ([RelevanceScorer.Space](../scoring/RelevanceScorer.java#L943)):
 
-1. **Take the student's distinct papers.** Copies of one paper (same SHA-256, or vectors at cosine ≥ 0.99) count once, so a duplicate doesn't get double weight ([Index.of](../scoring/RelevanceScorer.java#L809), [sameAs](../scoring/RelevanceScorer.java#L786)).
-2. **Pick the vectors that match the candidate's evidence.** Use the papers' combined vectors for a candidate with a full PDF, and their abstract views for a candidate with only a title and abstract, or a title. Each student therefore has two centroids ([RelevanceScorer.java:859](../scoring/RelevanceScorer.java#L859)).
-3. **Average with equal weight and scale to unit length** ([RelevanceScorer.java:860](../scoring/RelevanceScorer.java#L860)):
+1. **Take the student's distinct papers.** Copies of one paper (same SHA-256, or vectors at cosine ≥ 0.99) count once, so a duplicate doesn't get double weight ([Index.of](../scoring/RelevanceScorer.java#L910), [sameAs](../scoring/RelevanceScorer.java#L887)).
+2. **Pick the vectors that match the candidate's evidence.** Use the papers' combined vectors for a candidate with a full PDF, and their abstract views for a candidate with only a title and abstract, or a title. Each student therefore has two centroids ([RelevanceScorer.java:859](../scoring/RelevanceScorer.java#L960)).
+3. **Average with equal weight and scale to unit length** ([RelevanceScorer.java:860](../scoring/RelevanceScorer.java#L961)):
    ```
    centroid = normalize((v₁ + v₂ + … + vₙ) / n)
    ```
 
-Because every paper vector has length 1, a candidate's cosine with the centroid equals its **average cosine with all n papers**, divided by the length of their mean (close to 1 when the papers resemble each other). So the centroid stands for the student's work as a whole. M6 blends it with the student's closest papers ([Space.closeness](../scoring/RelevanceScorer.java#L880); the formula is on [line 891](../scoring/RelevanceScorer.java#L891)):
+Because every paper vector has length 1, a candidate's cosine with the centroid equals its **average cosine with all n papers**, divided by the length of their mean (close to 1 when the papers resemble each other). So the centroid stands for the student's work as a whole. M6 blends it with the student's closest papers ([Space.closeness](../scoring/RelevanceScorer.java#L981); the formula is on [line 992](../scoring/RelevanceScorer.java#L992)):
 ```
 similarity = ½ · cosine(candidate, centroid) + ½ · mean cosine to the student's 3 closest papers
 ```

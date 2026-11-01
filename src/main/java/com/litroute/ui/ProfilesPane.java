@@ -85,10 +85,10 @@ final class ProfilesPane extends BorderPane {
     /**
      * Input: none.
      * Output: none; the table shows the profiles now in M7d (errors go to the log).
-     * Used by: the constructor, after a rebuild.
+     * Used by: the constructor, after a rebuild, LitRouteApp (after a cache is cleared).
      * Example: -> rows alice (40 papers), bob (12 papers), ...
      */
-    private void reload() {
+    void reload() {
         try {
             table.getItems().setAll(store.loadAll().values());
         } catch (IOException e) {

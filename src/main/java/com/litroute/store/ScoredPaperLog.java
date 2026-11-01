@@ -66,11 +66,28 @@ public final class ScoredPaperLog {
      * Forgets every paper recorded, so the next run scores them all again.
      * Input: none.
      * Output: none; the file is deleted.
-     * Used by: PipelineRunner.reset (M9, Clear and re-run).
+     * Used by: PipelineRunner.reset (M9, Clear and re-run), DataCaches (the Caches tab).
      * Example: {@code clear(); load()} -> {@code {}}
      */
     public void clear() throws IOException {
         Files.deleteIfExists(storeFile);
+    }
+
+    /**
+     * Forgets these papers, so the next run scores them again.
+     * Input: paper keys ({@link ScoredPaper#paperKey}).
+     * Output: how many of them were recorded; the file is rewritten only if any were.
+     * Used by: PriorityAuthors (M9), when an author is added to the list.
+     * Example: file {@code ["doi:a","doi:b"]}, {@code removeAll(["doi:a","doi:c"])} -> 1; file {@code ["doi:b"]}
+     */
+    public int removeAll(Collection<String> paperKeys) throws IOException {
+        Set<String> keys = load();
+        int before = keys.size();
+        keys.removeAll(paperKeys);
+        if (keys.size() < before) {
+            AtomicFiles.writeAtomically(storeFile, JSON.writeValueAsBytes(keys));
+        }
+        return before - keys.size();
     }
 
     /**

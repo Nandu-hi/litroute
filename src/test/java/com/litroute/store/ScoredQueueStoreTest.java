@@ -84,6 +84,25 @@ public class ScoredQueueStoreTest {
         assertEquals(Optional.of(0.91), new ScoredQueueStore(olderFile).load().get(0).relevance());
     }
 
+    /** A paper's listed author survives a save and reload; an entry queued before the list existed has none. */
+    @Test
+    public void theListedAuthorLoadsBackAndOlderEntriesHaveNone() throws IOException {
+        Path file = newFile();
+        ScoredQueueStore store = new ScoredQueueStore(file);
+        ScoredPaper byListed = new ScoredPaper(Candidates.full(), "RP1-mh-risk", 0.29, "...", ReviewStatus.PENDING, true,
+                Optional.of(0.55), Optional.of("Elton Bauer"));
+        store.addAll(List.of(byListed));
+
+        assertEquals(Optional.of("Elton Bauer"), new ScoredQueueStore(file).load().get(0).listedAuthor());
+
+        ObjectMapper json = new ObjectMapper();
+        ArrayNode entries = (ArrayNode) json.readTree(file.toFile());
+        ((ObjectNode) entries.get(0)).remove("listedAuthor");
+        Files.write(file, json.writeValueAsBytes(entries));
+
+        assertEquals(Optional.empty(), new ScoredQueueStore(file).load().get(0).listedAuthor());
+    }
+
     /** Clearing empties the queue and deletes the students' PDF copies, and only those. */
     @Test
     public void clearingEmptiesTheQueueAndDeletesOnlyItsPdfCopies() throws IOException {

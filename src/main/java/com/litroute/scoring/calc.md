@@ -1,6 +1,6 @@
 # M6 scoring: the calculations
 
-**Notation.** c is the candidate paper, and s is one of the S students. A student's papers p₁ … pₙ are their **distinct** reference papers: copies of one paper (same SHA-256, or cosine ≥ 0.99) count once ([sameAs](RelevanceScorer.java#L612)). All SPECTER2 vectors have unit length.
+**Notation.** c is the candidate paper, and s is one of the S students. A student's papers p₁ … pₙ are their **distinct** reference papers: copies of one paper (same SHA-256, or cosine ≥ 0.99) count once ([sameAs](RelevanceScorer.java#L713)). All SPECTER2 vectors have unit length.
 
 ## 1. Meaning similarity (SPECTER2)
 
@@ -10,10 +10,10 @@ Vectors compared:
 
 These are the papers' vectors v₁ … vₙ in the formulas below.
 
-- `centroid_s = normalize((v₁ + … + vₙ) / n)` ([line 662](RelevanceScorer.java#L662))
-- `top3_s = mean of the 3 largest cos(c, vᵢ)`, or of all of them if n < 3 ([lines 679–680](RelevanceScorer.java#L679))
-- `sem_s = 0.5 · cos(c, centroid_s) + 0.5 · top3_s` ([line 681](RelevanceScorer.java#L681))
-- `sem_s = 0` if the student has no papers ([line 672](RelevanceScorer.java#L672))
+- `centroid_s = normalize((v₁ + … + vₙ) / n)` ([line 763](RelevanceScorer.java#L763))
+- `top3_s = mean of the 3 largest cos(c, vᵢ)`, or of all of them if n < 3 ([lines 780–781](RelevanceScorer.java#L780))
+- `sem_s = 0.5 · cos(c, centroid_s) + 0.5 · top3_s` ([line 666](RelevanceScorer.java#L666))
+- `sem_s = 0` if the student has no papers ([line 773](RelevanceScorer.java#L773))
 
 ## 2. Wording similarity (TF-IDF)
 
@@ -29,35 +29,35 @@ Terms are stems and adjacent-stem pairs ([Terms](Terms.java)). N is the number o
 
 ## 3. Fit (z-scores across the students)
 
-For each signal, with values x₁ … x_S (the sem or lex values of the S students) ([zScores](RelevanceScorer.java#L419)):
+For each signal, with values x₁ … x_S (the sem or lex values of the S students) ([zScores](RelevanceScorer.java#L509)):
 
-- `mean = (x₁ + … + x_S) / S` ([line 422](RelevanceScorer.java#L422))
-- `sd = √( Σₛ (xₛ − mean)² / S )` ([lines 426–428](RelevanceScorer.java#L426))
-- `zₛ = (xₛ − mean) / sd`; every z is 0 if sd < 1e-12 ([lines 430–432](RelevanceScorer.java#L430))
-- `fit_s = (z_s(sem) + z_s(lex)) / 2` ([line 413](RelevanceScorer.java#L413))
+- `mean = (x₁ + … + x_S) / S` ([line 512](RelevanceScorer.java#L512))
+- `sd = √( Σₛ (xₛ − mean)² / S )` ([lines 516–518](RelevanceScorer.java#L516))
+- `zₛ = (xₛ − mean) / sd`; every z is 0 if sd < 1e-12 ([lines 520–522](RelevanceScorer.java#L520))
+- `fit_s = (z_s(sem) + z_s(lex)) / 2` ([line 503](RelevanceScorer.java#L503))
 
 ## 4. Share (softmax)
 
-- `share_s = exp(2 · (fit_s − max fit)) / Σₜ exp(2 · (fit_t − max fit))` ([lines 446–450](RelevanceScorer.java#L446))
-- The shares sum to 1. Subtracting `max fit` ([line 441](RelevanceScorer.java#L441)) doesn't change them; it only keeps `exp` from overflowing.
+- `share_s = exp(2 · (fit_s − max fit)) / Σₜ exp(2 · (fit_t − max fit))` ([lines 536–540](RelevanceScorer.java#L536))
+- The shares sum to 1. Subtracting `max fit` ([line 531](RelevanceScorer.java#L531)) doesn't change them; it only keeps `exp` from overflowing.
 
 ## 5. Relevance
 
-**Anchors**, measured once per signal and per kind of evidence (PDF, title + abstract, title) ([calibrate](RelevanceScorer.java#L554)):
-- Each distinct reference paper is held out and scored like a candidate with that evidence against every student; its own student is scored without it ([line 573](RelevanceScorer.java#L573)).
-- `own` is the median similarity to its own student, and `other` the median similarity to the other students ([lines 596–608](RelevanceScorer.java#L596)). For an even count the median is the upper of the two middle values.
-- If they can't be measured, or `own ≤ other`, fixed fallback anchors are used ([anchors](RelevanceScorer.java#L592)).
+**Anchors**, measured once per signal and per kind of evidence (PDF, title + abstract, title) ([calibrate](RelevanceScorer.java#L615)):
+- Each distinct reference paper is held out and scored like a candidate with that evidence against every student; its own student is scored without it ([line 674](RelevanceScorer.java#L674)).
+- `own` is the median similarity to its own student, and `other` the median similarity to the other students ([lines 599–611](RelevanceScorer.java#L599)). For an even count the median is the upper of the two middle values.
+- If they can't be measured, or `own ≤ other`, fixed fallback anchors are used ([anchors](RelevanceScorer.java#L693)).
 
 **Per candidate:**
-- `n(sem) = (sem_s − other) / (own − other)`, and the same for lex ([line 165](RelevanceScorer.java#L165))
-- `n = (n(sem) + n(lex)) / 2` ([lines 459–466](RelevanceScorer.java#L459))
-- `relevance_s = 1 / (1 + e^(−ln 9 · (2n − 1)))` ([line 169](RelevanceScorer.java#L169)). This gives 0.1 at n = 0 (like another student's paper), 0.5 at n = 0.5 and 0.9 at n = 1 (like the student's own).
+- `n(sem) = (sem_s − other) / (own − other)`, and the same for lex ([line 189](RelevanceScorer.java#L189))
+- `n = (n(sem) + n(lex)) / 2` ([lines 549–556](RelevanceScorer.java#L549))
+- `relevance_s = 1 / (1 + e^(−ln 9 · (2n − 1)))` ([line 193](RelevanceScorer.java#L193)). This gives 0.1 at n = 0 (like another student's paper), 0.5 at n = 0.5 and 0.9 at n = 1 (like the student's own).
 
 ## 6. Score, assignment, recommendation
 
-- `score_s = relevance_s · share_s` ([line 337](RelevanceScorer.java#L337))
-- **Best student** = the one with the highest score ([line 339](RelevanceScorer.java#L339))
-- **Matched** to that student (queued, recommended) only if both hold, otherwise matched to no one ([line 293](RelevanceScorer.java#L293)):
+- `score_s = relevance_s · share_s` ([line 406](RelevanceScorer.java#L406))
+- **Best student** = the one with the highest score ([line 408](RelevanceScorer.java#L408))
+- **Matched** to that student (queued, recommended) only if both hold, otherwise matched to no one ([line 361](RelevanceScorer.java#L361)):
   - it is a research paper ([PaperCandidate.isResearch](../model/PaperCandidate.java); M2 already drops notes);
   - `relevance ≥ 0.7`, i.e. `n ≥ 0.69`: its similarity is at least 69% of the way from a typical other student's paper to a typical own paper; from a title alone, `relevance ≥ 0.43`.
 - From a title alone, `n = 0.65 · n(sem) + 0.35 · n(lex)` instead of the plain average.
@@ -70,10 +70,10 @@ With `SEMANTIC` or `LEXICAL` alone, steps 3 and 5 use just that one signal.
 
 | Constant | Value | Used in |
 |---|---|---|
-| [PROFILE_WEIGHT](RelevanceScorer.java#L79) | 0.5 | centroid / closest-papers blend (sections 1, 2) |
-| [CLOSEST_PAPERS](RelevanceScorer.java#L80) | 3 | top-3 closest papers (sections 1, 2) |
-| [SAME_PAPER](RelevanceScorer.java#L82) | 0.99 | cosine at which two papers count as one |
+| [PROFILE_WEIGHT](RelevanceScorer.java#L83) | 0.5 | centroid / closest-papers blend (sections 1, 2) |
+| [CLOSEST_PAPERS](RelevanceScorer.java#L84) | 3 | top-3 closest papers (sections 1, 2) |
+| [SAME_PAPER](RelevanceScorer.java#L86) | 0.99 | cosine at which two papers count as one |
 | [MIN_PAPERS](LexicalIndex.java#L27) / [MAX_PAPER_SHARE](LexicalIndex.java#L28) | 2 / 0.5 | TF-IDF term filter (section 2) |
-| [SHARE_SHARPNESS](RelevanceScorer.java#L88) | 2 | softmax (section 4) |
-| [LOG_9](RelevanceScorer.java#L120) | ln 9 | relevance curve (section 5) |
-| [RELEVANCE_FLOOR](RelevanceScorer.java#L98) | 0.7 | match floor (section 6) |
+| [SHARE_SHARPNESS](RelevanceScorer.java#L92) | 2 | softmax (section 4) |
+| [LOG_9](RelevanceScorer.java#L124) | ln 9 | relevance curve (section 5) |
+| [RELEVANCE_FLOOR](RelevanceScorer.java#L102) | 0.7 | match floor (section 6) |

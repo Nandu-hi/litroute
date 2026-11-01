@@ -23,15 +23,17 @@ import java.util.Optional;
  * @param relevance   0.0-1.0, how close the paper is to the student's own work whoever else it suits:
  *                    0.9 as close as the student's own papers typically are, 0.1 as close as another
  *                    student's; empty when none was recorded (older queue entries)
+ * @param listedAuthor the paper's author, as printed on it, who is on the professor's authors list; such a
+ *                    paper is held to a lower cutoff and listed first. Empty for any other paper
  */
 public record ScoredPaper(PaperCandidate candidate, String profileName, double score, String rationale,
-        ReviewStatus status, boolean recommended, Optional<Double> relevance) {
+        ReviewStatus status, boolean recommended, Optional<Double> relevance, Optional<String> listedAuthor) {
 
     /**
-     * Input: every field; score in 0-1, profileName non-blank, relevance non-null.
+     * Input: every field; score in 0-1, profileName non-blank, relevance and listedAuthor non-null.
      * Output: the scored paper; throws if any of those rules is broken.
      * Used by: RelevanceScorer (M6), ScoredQueueStore/SentPaperStore (M7e) when loading.
-     * Example: {@code new ScoredPaper(c, "alice", 0.82, "Relevance 0.82 ...", PENDING, true, Optional.of(0.82))} -> ok; score 1.2 -> throws
+     * Example: {@code new ScoredPaper(c, "alice", 0.82, "Relevance 0.82 ...", PENDING, true, Optional.of(0.82), Optional.empty())} -> ok; score 1.2 -> throws
      */
     public ScoredPaper {
         if (candidate == null || status == null || rationale == null) {
@@ -43,13 +45,24 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
         if (!(score >= 0.0 && score <= 1.0)) {
             throw new IllegalArgumentException("score must be within 0.0-1.0, was " + score);
         }
-        if (relevance == null) {
-            throw new IllegalArgumentException("relevance must be present or empty, not null");
+        if (relevance == null || listedAuthor == null) {
+            throw new IllegalArgumentException("relevance and listedAuthor must be present or empty, not null");
         }
     }
 
     /**
-     * Input: every field except relevance.
+     * Input: every field except listedAuthor.
+     * Output: a scored paper by no listed author.
+     * Used by: the shorter constructor below; tests.
+     * Example: {@code new ScoredPaper(c, "alice", 0.7, "why", PENDING, true, Optional.of(0.8)).listedAuthor()} -> {@code Optional.empty()}
+     */
+    public ScoredPaper(PaperCandidate candidate, String profileName, double score, String rationale,
+            ReviewStatus status, boolean recommended, Optional<Double> relevance) {
+        this(candidate, profileName, score, rationale, status, recommended, relevance, Optional.empty());
+    }
+
+    /**
+     * Input: every field except relevance and listedAuthor.
      * Output: a scored paper with no relevance.
      * Used by: the shorter constructor below.
      * Example: {@code new ScoredPaper(c, "alice", 0.7, "why", PENDING, true).relevance()} -> {@code Optional.empty()}
@@ -77,7 +90,7 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
      * Example: {@code p.withStatus(APPROVED).status()} -> {@code APPROVED}
      */
     public ScoredPaper withStatus(ReviewStatus newStatus) {
-        return new ScoredPaper(candidate, profileName, score, rationale, newStatus, recommended, relevance);
+        return new ScoredPaper(candidate, profileName, score, rationale, newStatus, recommended, relevance, listedAuthor);
     }
 
     /**
@@ -87,7 +100,7 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
      * Example: {@code p.withRecommended(true).recommended()} -> true
      */
     public ScoredPaper withRecommended(boolean isRecommended) {
-        return new ScoredPaper(candidate, profileName, score, rationale, status, isRecommended, relevance);
+        return new ScoredPaper(candidate, profileName, score, rationale, status, isRecommended, relevance, listedAuthor);
     }
 
     /**

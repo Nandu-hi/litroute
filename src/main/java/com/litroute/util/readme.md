@@ -1,6 +1,6 @@
 # The `util` module
 
-**In one sentence:** small, stateless helpers that several stages share: safe file writes, finding DOIs, comparing titles, and vector arithmetic. None of them makes a decision for the pipeline; thresholds belong to the callers.
+**In one sentence:** small, stateless helpers that several stages share: safe file writes, finding DOIs, comparing titles and authors' names, and vector arithmetic. None of them makes a decision for the pipeline; thresholds belong to the callers.
 
 ## Who uses what
 
@@ -48,6 +48,16 @@ Example: `https://link.springer.com/content/pdf/10.1186/s43065-024-00115-x.pdf?u
 - **[similarity(a, b)](Titles.java#L26):** `1 − editDistance / longerLength` on the compacted titles, from 0 to 1 (1 means identical after compacting). The Levenshtein distance uses two rolling rows. Two empty titles score 0, not 1.
 - What counts as "similar enough" is decided by the caller, because M3 matching an API result and M4 merging two alerts need different thresholds.
 
+### [PersonNames](PersonNames.java): tell whether a printed name is a first and last name
+
+[matches(firstName, lastName, printed)](PersonNames.java) is strict: the printed name must start with the first name and end with the last name, spelled out, with at most middle names or initials between. For first name Alice and last name Carter:
+
+| Matches | Doesn't match |
+|---|---|
+| Alice Carter, Alice K. Carter, Alice K.Carter, Alice Kate Carter, ALICE CARTER, Carter, Alice K. | Alice, Carter, A. Carter, AK Carter, A. K. Carter, Alicia Carter, Carter Alice, Dr. Alice Carter |
+
+Only case, accents and punctuation inside a word don't matter: Beyaztunç is Beyaztunc, Zhan-Peng is Zhanpeng, and O'Brien is OBrien. A hyphenated name stays one name, so Jean-Pierre is not Jean, and Londono-Lopez is not Lopez. A comma puts the last name first, as publishers' pages print it.
+
 ### [Vectors](Vectors.java): embedding arithmetic
 
 - `cosine(a, b)`: −1 to 1, accumulated in `double` for precision.
@@ -67,6 +77,7 @@ Example: `https://link.springer.com/content/pdf/10.1186/s43065-024-00115-x.pdf?u
 | Test class | What it covers |
 |---|---|
 | [DoisTest](../../../../../test/java/com/litroute/util/DoisTest.java) | Finds the DOI in common publisher URL shapes, removing query strings and PDF suffixes. Finds a DOI in plain text and drops trailing punctuation. Handles a percent-encoded DOI. Ignores text that only looks numeric. |
+| [PersonNamesTest](../../../../../test/java/com/litroute/util/PersonNamesTest.java) | The forms in the table above match or don't; case, accents and punctuation inside a word don't matter; a hyphenated name stays one name; a last name of several words must be whole; the first and last name can't overlap. |
 | [VectorsTest](../../../../../test/java/com/litroute/util/VectorsTest.java) | Cosine of parallel, orthogonal and opposite vectors. A zero vector is similar to nothing instead of NaN. Normalizing gives unit length without changing the input. Mean and weighted sum. Different lengths are rejected. |
 
 `AtomicFiles` and `Titles` have no test class of their own. They are tested through the stores (atomic overwrite) and through the dedup and enrichment tests (title matching).

@@ -1,6 +1,7 @@
 package com.litroute.scoring;
 
 import com.litroute.embedding.EmbeddingProvider;
+import com.litroute.model.AuthorName;
 import com.litroute.model.PaperCandidate;
 import com.litroute.model.Profile;
 import com.litroute.model.Profile.ProfilePaper;
@@ -56,7 +57,10 @@ import java.util.stream.IntStream;
  * times share. A paper's title can lift the relevance of its abstract or PDF ({@link #TITLE_LIFT}), and a
  * paper known by its title alone weighs meaning above words ({@link #TITLE_MEANING_WEIGHT}). A paper is
  * assigned to its highest-scoring student, and matched only if its relevance for that student reaches
- * {@link #RELEVANCE_FLOOR}, or {@link #TITLE_FLOOR} from a title alone; there is no quota per student.
+ * {@link #RELEVANCE_FLOOR}, or {@link #TITLE_FLOOR} from a title alone; there is no quota per student. A paper
+ * by an author on the professor's list goes to the same student but is held to a lower floor
+ * ({@link #AUTHOR_FLOOR}, {@link #AUTHOR_TITLE_FLOOR}), comes first in that student's list and says so in its
+ * rationale; one that fits no student's work is still not matched, whoever wrote it.
  *
  * Why both signals: the eight reference students all work in structural and hazard engineering, so
  * SPECTER2 puts nearly every paper 0.85-0.95 from every student. Of the 48 papers the professor
@@ -123,6 +127,26 @@ public final class RelevanceScorer implements PaperMatcher {
      * filed papers known by title and abstract, it changes no match.
      */
     static final double TITLE_LIFT = 0.6;
+    /**
+     * The floor for a paper by a listed author, known from its abstract or PDF: the scale's midpoint, closer
+     * to the student's work than to the others'. On the professor's held papers (November 2026) it takes
+     * rural recovery barriers (0.64), landfill flowslides (0.56), seismic retrofitting (0.55) and coastal
+     * flooding decisions (0.51), and leaves population outmigration (0.46), landslide detection (0.40), the
+     * seismic stability of landfills (0.31), the client's irrelevant ceramic coating paper (0.29) and
+     * post-disaster education (0.09). Of 32 unrelated arXiv papers (spinors, image enhancement, market
+     * efficiency...), none reach it from an abstract (the highest is 0.43), and one from a full PDF:
+     * quasi-kernels in graphs (0.64), close to the rank aggregation profile's combinatorics.
+     */
+    public static final double AUTHOR_FLOOR = 0.5;
+    /**
+     * The floor for a paper by a listed author known by its title alone, which seldom scores high
+     * ({@link #TITLE_FLOOR}): just above what is known not to belong. Judged by their titles alone, the
+     * client's irrelevant ceramic coating paper reaches 0.34 and the highest of the 32 arXiv papers 0.35. Of
+     * the held papers really known only by a title, it adds one, the review of steels under impact (0.41).
+     * A title can't do better than this: the SSI review the professor called highly relevant reaches only
+     * 0.24 from its title, below all of those.
+     */
+    public static final double AUTHOR_TITLE_FLOOR = 0.36;
     /**
      * Anchors measured on the eight reference profiles, for when the loaded profiles cannot provide
      * their own: a single student, or students with a single paper each.
@@ -223,19 +247,40 @@ public final class RelevanceScorer implements PaperMatcher {
             String explanation) {
 
         /**
-         * Input: whether recommended, and a note to append to the explanation.
-         * Output: a PENDING ScoredPaper with this score, relevance and rationale.
+         * Input: whether recommended, and how the paper's author is on the authors list, if they are.
+         * Output: a PENDING ScoredPaper with this score, relevance and rationale, led by the author if listed.
          * Used by: scoreAll, match.
-         * Example: Assessment(P, alice, 0.62, 0.81, ...).toScoredPaper(true, "") -> ScoredPaper(P, alice, 0.62, recommended)
+         * Example: Assessment(P, alice, 0.62, 0.81, ...).toScoredPaper(true, Optional.empty()) -> ScoredPaper(P, alice, 0.62, recommended)
          */
-        ScoredPaper toScoredPaper(boolean recommended, String note) {
-            return new ScoredPaper(candidate, profileName, score, explanation + note, ReviewStatus.PENDING, recommended,
-                    Optional.of(relevance));
+        ScoredPaper toScoredPaper(boolean recommended, Optional<ListedAuthor> author) {
+            return new ScoredPaper(candidate, profileName, score,
+                    author.map(listed -> listed.reason(relevance, basis)).orElse("") + explanation, ReviewStatus.PENDING,
+                    recommended, Optional.of(relevance), author.map(ListedAuthor::printed));
+        }
+    }
+
+    /** An author of a paper who is on the authors list: as the paper prints them, and as the list does. */
+    private record ListedAuthor(String printed, AuthorName listed) {
+
+        /**
+         * Input: the paper's relevance for its student and what it was scored from.
+         * Output: the rationale's opening sentence: why the author matters for this paper.
+         * Used by: {@link Assessment#toScoredPaper}.
+         * Example: relevance 0.55 from an abstract -> "Matched because Alice K. Carter (listed as Alice Carter) wrote it: ..."
+         */
+        String reason(double relevance, Basis basis) {
+            String who = printed.equals(listed.toString()) ? printed : printed + " (listed as " + listed + ")";
+            if (relevance >= floor(basis)) {
+                return "By an author on your list: " + who + ". ";
+            }
+            return String.format(Locale.ROOT, "Matched because %s wrote it, an author on your list: its relevance %.2f "
+                    + "reaches their floor of %.2f, below the usual %.2f. ", who, relevance, authorFloor(basis), floor(basis));
         }
     }
 
     private final EmbeddingProvider provider;
     private final Strategy strategy;
+    private final List<AuthorName> priorityAuthors;
     private final PdfTextExtractor extractor = new PdfTextExtractor();
     private final PaperEmbedder embedder;
     private final List<Index> indexes;
@@ -260,12 +305,34 @@ public final class RelevanceScorer implements PaperMatcher {
     }
 
     /**
+     * A scorer using both signals, favouring the papers of the authors on the professor's list.
+     * Input: the embedding model, every student's profile (M7d) and the authors list.
+     * Output: a HYBRID scorer whose match holds those authors' papers to the lower floors.
+     * Used by: PipelineRunner.atDefaultLocations (M9), RelevanceScorerCli, RelevanceScorerTest.
+     * Example: {@code new RelevanceScorer(specter2, students, List.of(new AuthorName("Alice", "Carter")))}
+     */
+    public RelevanceScorer(EmbeddingProvider provider, Collection<Profile> profiles, List<AuthorName> priorityAuthors) {
+        this(provider, profiles, Strategy.HYBRID, priorityAuthors);
+    }
+
+    /**
      * Input: the model, every profile, and the strategy to score by.
-     * Output: a scorer with full-text and abstract calibration measured on held-out profile papers; throws if a profile used another model, or words are needed and a profile has no text.
+     * Output: a scorer with no authors list.
      * Used by: the two-argument constructor; RelevanceScorerTest (SEMANTIC vs HYBRID).
-     * Example: profile built with another modelId -> IllegalArgumentException "... rebuild the profiles first"
+     * Example: {@code new RelevanceScorer(specter2, students, Strategy.SEMANTIC)}
      */
     public RelevanceScorer(EmbeddingProvider provider, Collection<Profile> profiles, Strategy strategy) {
+        this(provider, profiles, strategy, List.of());
+    }
+
+    /**
+     * Input: the model, every profile, the strategy to score by, and the authors list.
+     * Output: a scorer with full-text and abstract calibration measured on held-out profile papers; throws if a profile used another model, or words are needed and a profile has no text.
+     * Used by: the other constructors.
+     * Example: profile built with another modelId -> IllegalArgumentException "... rebuild the profiles first"
+     */
+    public RelevanceScorer(EmbeddingProvider provider, Collection<Profile> profiles, Strategy strategy,
+            List<AuthorName> priorityAuthors) {
         List<String> withoutText = new ArrayList<>();
         for (Profile profile : profiles) {
             if (!profile.modelId().equals(provider.modelId())) {
@@ -282,6 +349,7 @@ public final class RelevanceScorer implements PaperMatcher {
         }
         this.provider = provider;
         this.strategy = strategy;
+        this.priorityAuthors = List.copyOf(priorityAuthors);
         this.embedder = new PaperEmbedder(provider);
         this.indexes = profiles.stream().map(Index::of).toList();
         Map<String, List<ProfilePaper>> distinctPapers = new LinkedHashMap<>();
@@ -326,7 +394,8 @@ public final class RelevanceScorer implements PaperMatcher {
      * Example: scoreAll(P, SEMANTIC) -> [bob 0.40, alice 0.35, ...]
      */
     public List<ScoredPaper> scoreAll(PaperCandidate candidate, Strategy byStrategy) {
-        return assess(candidate, byStrategy).stream().map(assessment -> assessment.toScoredPaper(false, "")).toList();
+        return assess(candidate, byStrategy).stream()
+                .map(assessment -> assessment.toScoredPaper(false, Optional.empty())).toList();
     }
 
     /**
@@ -347,12 +416,12 @@ public final class RelevanceScorer implements PaperMatcher {
      * Matches a batch of deduplicated papers to students: each candidate is scored for every student and
      * goes to the one it scores highest for, but only if it is a research paper (not a book review,
      * discussion, correction or the like) whose relevance for that student reaches
-     * {@link #RELEVANCE_FLOOR}. Such a paper is returned once, recommended; any other is not returned.
-     * A student gets as many papers as qualify, however many or few.
+     * {@link #RELEVANCE_FLOOR}, or {@link #AUTHOR_FLOOR} for a paper by a listed author. Such a paper is returned
+     * once, recommended; any other is not returned. A student gets as many papers as qualify, however many or few.
      * Input: deduplicated papers and a strategy.
-     * Output: every student (profile order) mapped to the research papers whose best student they are and whose relevance reaches the floor, recommended, best first.
+     * Output: every student (profile order) mapped to the research papers whose best student they are and whose relevance reaches the floor, recommended, listed authors' papers first, then best first.
      * Used by: {@link #match(List)}; RelevanceScorerCli and tests comparing strategies.
-     * Example: P1 relevance 0.81 for alice (best) -> alice=[P1]; P2 best for bob at 0.55 -> not returned
+     * Example: P1 relevance 0.81 for alice (best) -> alice=[P1]; P2 best for bob at 0.55 -> not returned, unless a listed author wrote it
      */
     public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch, Strategy byStrategy) {
         // Papers are independent and one with a PDF takes seconds to embed, so they are scored in parallel.
@@ -360,13 +429,34 @@ public final class RelevanceScorer implements PaperMatcher {
         Map<String, List<ScoredPaper>> byStudent = new LinkedHashMap<>();
         indexes.forEach(index -> byStudent.put(index.profile().name(), new ArrayList<>()));
         for (Assessment assessment : best) {
-            if (assessment.candidate().isResearch() && assessment.relevance() >= floor(assessment.basis())) {
-                byStudent.get(assessment.profileName()).add(assessment.toScoredPaper(true, ""));
+            Optional<ListedAuthor> author = listedAuthor(assessment.candidate());
+            double floor = author.isPresent() ? authorFloor(assessment.basis()) : floor(assessment.basis());
+            if (assessment.candidate().isResearch() && assessment.relevance() >= floor) {
+                byStudent.get(assessment.profileName()).add(assessment.toScoredPaper(true, author));
             }
         }
         byStudent.replaceAll((name, papers) -> papers.stream()
-                .sorted(Comparator.comparingDouble(ScoredPaper::score).reversed()).toList());
+                .sorted(Comparator.comparing((ScoredPaper paper) -> paper.listedAuthor().isEmpty())
+                        .thenComparing(Comparator.comparingDouble(ScoredPaper::score).reversed()))
+                .toList());
         return byStudent;
+    }
+
+    /**
+     * Input: a candidate.
+     * Output: its first author, in the order printed, who is on the authors list; empty if none is.
+     * Used by: {@link #match(List, Strategy)}.
+     * Example: authors [B. Lee, Alice K. Carter], list [Alice Carter] -> ListedAuthor("Alice K. Carter", Alice Carter)
+     */
+    private Optional<ListedAuthor> listedAuthor(PaperCandidate candidate) {
+        for (String printed : candidate.authors()) {
+            for (AuthorName listed : priorityAuthors) {
+                if (listed.matches(printed)) {
+                    return Optional.of(new ListedAuthor(printed, listed));
+                }
+            }
+        }
+        return Optional.empty();
     }
 
     /**
@@ -533,11 +623,22 @@ public final class RelevanceScorer implements PaperMatcher {
      * The least relevance a paper known from this evidence needs to be matched.
      * Input: what a candidate was scored from.
      * Output: the least relevance it needs to be matched: {@value #TITLE_FLOOR} for a title alone, else {@value #RELEVANCE_FLOOR}.
-     * Used by: {@link #match(List, Strategy)}; tests.
+     * Used by: {@link #match(List, Strategy)}, ListedAuthor.reason; tests.
      * Example: floor(TITLE) -> 0.43; floor(ABSTRACT) -> 0.7
      */
     public static double floor(Basis basis) {
         return basis == Basis.TITLE ? TITLE_FLOOR : RELEVANCE_FLOOR;
+    }
+
+    /**
+     * The least relevance a paper by a listed author, known from this evidence, needs to be matched.
+     * Input: what a candidate was scored from.
+     * Output: {@value #AUTHOR_TITLE_FLOOR} for a title alone, else {@value #AUTHOR_FLOOR}.
+     * Used by: {@link #match(List, Strategy)}, ListedAuthor.reason.
+     * Example: authorFloor(TITLE) -> 0.36; authorFloor(FULL_TEXT) -> 0.5
+     */
+    public static double authorFloor(Basis basis) {
+        return basis == Basis.TITLE ? AUTHOR_TITLE_FLOOR : AUTHOR_FLOOR;
     }
 
     /**

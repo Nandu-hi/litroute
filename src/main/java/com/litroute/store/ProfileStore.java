@@ -181,6 +181,17 @@ public final class ProfileStore {
     }
 
     /**
+     * Forgets every profile; the next sync embeds all the students' PDFs again.
+     * Input: none.
+     * Output: none; the file is deleted.
+     * Used by: DataCaches (the Caches tab).
+     * Example: {@code clear(); loadAll()} -> empty
+     */
+    public void clear() throws IOException {
+        Files.deleteIfExists(storeFile);
+    }
+
+    /**
      * Input: every profile to keep.
      * Output: none; the file is atomically replaced.
      * Used by: {@link #save}, {@link #remove}.

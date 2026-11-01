@@ -81,9 +81,14 @@ How relevant one candidate is to one student, and why.
 | `status` | The professor's decision so far ([ReviewStatus](ReviewStatus.java)). |
 | `recommended` | Whether M6 recommends it to the professor (★ in the review screen). The matcher only returns papers it recommends. The professor still decides. |
 | `relevance` | 0.0–1.0, optional: how close the paper is to the student's own work whoever else it suits (0.9 as close as their own papers, 0.1 as close as another student's). Empty on older queue entries that did not record it. |
+| `listedAuthor` | Optional: the paper's author, as printed on it, who is on the professor's authors list. Such a paper is held to a lower cutoff and listed first. Empty for any other paper, and on older queue entries. |
 
 - `withStatus(...)` and `withRecommended(...)` return changed copies; the record itself never changes.
-- **[queueKey()](ScoredPaper.java#L100)** identifies an entry in the review queue: the student plus the paper, identified by `doi:<lowercased DOI>` or, without a DOI, `title:<compacted title>` (the same way M4 identifies papers). M7e uses it to update a re-scored paper instead of adding it twice.
+- **[queueKey()](ScoredPaper.java#L113)** identifies an entry in the review queue: the student plus the paper, identified by `doi:<lowercased DOI>` or, without a DOI, `title:<compacted title>` (the same way M4 identifies papers). M7e uses it to update a re-scored paper instead of adding it twice.
+
+### [AuthorName](AuthorName.java): one entry on the authors list
+
+A first and a last name, spelled out: the constructor refuses a blank part or an initial. [matches(printed)](AuthorName.java) says whether a name printed on a paper is this author, strictly ([PersonNames](../util/PersonNames.java)); `sameAs(other)` keeps one author from being listed twice.
 
 ### [ReviewStatus](ReviewStatus.java)
 
