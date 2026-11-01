@@ -82,10 +82,10 @@ public class ProfileBuilderTest {
     @Test
     public void emailFileSkipsCommentsBlanksDuplicatesAndNonAddresses() throws IOException {
         Path file = Files.createTempDirectory("litroute-emails").resolve(ProfileBuilder.EMAIL_FILE);
-        Files.writeString(file, "# the student\ncs24b027@smail.iitm.ac.in\n\n  CS24B027@smail.iitm.ac.in  \n"
+        Files.writeString(file, "# the student\nstudent@example.edu\n\n  STUDENT@example.edu  \n"
                 + "advisor@example.org, second@example.org; not-an-address\n");
 
-        assertEquals(List.of("cs24b027@smail.iitm.ac.in", "advisor@example.org", "second@example.org"),
+        assertEquals(List.of("student@example.edu", "advisor@example.org", "second@example.org"),
                 ProfileBuilder.readEmails(file));
         assertEquals(List.of(), ProfileBuilder.readEmails(file.resolveSibling("missing.txt")));
     }

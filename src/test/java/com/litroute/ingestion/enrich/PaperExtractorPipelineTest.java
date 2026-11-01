@@ -31,7 +31,7 @@ import org.junit.rules.TemporaryFolder;
  * The whole of M2 and M3 - parse, enrich, save the PDF - run over the six real alert mails against
  * the replies Crossref, OpenAlex and the publishers really gave for the 31 papers in them.
  *
- * Nothing here is constructed: the emails are the ones Prof. Badal forwarded, and every DOI, venue
+ * Nothing here is constructed: the emails are the ones the client forwarded, and every DOI, venue
  * and year asserted is what the real pipeline produced from the real responses. That makes this the
  * test that would notice if any stage quietly changed what it produces.
  */

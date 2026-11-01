@@ -20,7 +20,7 @@ import org.junit.Test;
 
 /**
  * M2 on the six alerts exactly as they reached the pipeline's inbox: the HTML parts of the real messages
- * (forwarded by Prof. Badal, then forwarded on again), in {@code src/test/resources/samples/received/}.
+ * (forwarded by the client, then forwarded on again), in {@code src/test/resources/samples/received/}.
  * {@link SampleMails} holds tidied copies of the same alerts, with headings for section labels, direct DOI
  * links and no Gmail-added links; the real ones turned up papers the tidied ones never showed: a footer
  * address, the journal's own name, the email's banner as an article type, and lost papers. Each real

@@ -11,10 +11,12 @@ import java.util.Optional;
 import org.jsoup.Jsoup;
 
 /**
- * The six alert emails Prof. Prakash Badal forwarded as reference material, and the only email
+ * The six alert emails the client forwarded as reference material, and the only email
  * input the tests use. Each one is a real message: a real publisher's alert, forwarded from
- * aprakashn@gmail.com to cs24b027@smail.iitm.ac.in on 4 September 2026, with the envelope headers
- * below taken from the Gmail print of that message. The bodies here are tidied copies: the forwarder's
+ * forward@example.com to student@example.edu on 4 September 2026, with the envelope headers
+ * below taken from the Gmail print of that message. The people's details are placeholders, here and in
+ * {@code samples/}: names, addresses, the signature's contact details, account IDs and the links that act on an
+ * account (unsubscribe, preferences, cancel alert). The papers and the publishers' text are real. The bodies here are tidied copies: the forwarder's
  * note and signature, the "Forwarded message" header block and the publisher's text are real, but
  * section labels are headings, links are direct DOI links where the real ones are tracking links, and
  * Gmail's own address links are gone. The HTML exactly as it reached the pipeline's inbox is in
@@ -50,8 +52,8 @@ public final class SampleMails {
         }
     }
 
-    /** Every one of these mails reached the inbox from Prof. Badal's address, not the publisher's. */
-    public static final String FORWARDER = "aprakashn@gmail.com";
+    /** Every one of these mails reached the inbox from the client's address, not the publisher's. */
+    public static final String FORWARDER = "forward@example.com";
 
     private static final Instant SEP_4 = Instant.parse("2026-09-04T00:00:00Z");
 

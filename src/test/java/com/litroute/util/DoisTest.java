@@ -34,7 +34,7 @@ public class DoisTest {
     public void ignoresThingsThatMerelyLookNumeric() {
         assertEquals(Optional.empty(), Dois.find("https://www.sciencedirect.com/science/article/pii/S0000000000000001"));
         assertEquals(Optional.empty(), Dois.find("Reston, VA 20191-4400 703-295-6300 | 800-548-2723"));
-        assertEquals(Optional.empty(), Dois.find("Subscription ID: a98cd847-4fe8-4479-b551-c4495182f8b4 Webuser ID: 25820359"));
+        assertEquals(Optional.empty(), Dois.find("Subscription ID: 00000000-0000-0000-0000-000000000000 Webuser ID: 00000000"));
         assertEquals(Optional.empty(), Dois.find("10.1186/"));
         assertEquals(Optional.empty(), Dois.find(null));
         assertEquals(Optional.empty(), Dois.find("  "));

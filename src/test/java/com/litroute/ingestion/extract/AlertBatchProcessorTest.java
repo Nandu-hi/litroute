@@ -161,7 +161,7 @@ public class AlertBatchProcessorTest {
     }
 
     /**
-     * Prof. Badal's covering note with no alert under it still has to be marked done, or every run
+     * the client's covering note with no alert under it still has to be marked done, or every run
      * would process it again for ever.
      */
     @Test

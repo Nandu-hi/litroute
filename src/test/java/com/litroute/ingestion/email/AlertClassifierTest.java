@@ -9,11 +9,11 @@ import java.util.Optional;
 import org.junit.Test;
 
 /**
- * M1 AlertClassifier against the six alert emails Prof. Prakash Badal forwarded (see
+ * M1 AlertClassifier against the six alert emails the client forwarded (see
  * {@link SampleMails}). Every mail here is a real message: a real publisher's alert, forwarded by a
  * real person, with the envelope headers and body Gmail actually delivered.
  *
- * All six reach the inbox from aprakashn@gmail.com rather than from the publisher, so they are the
+ * All six reach the inbox from forward@example.com rather than from the publisher, so they are the
  * case the classifier exists for - deciding "is this a paper alert" from content alone, with no
  * forwarder allowlist and no publisher pre-registration.
  */
@@ -57,14 +57,14 @@ public class AlertClassifierTest {
         for (Sample sample : SampleMails.ALL) {
             String body = "Worth a look.\n\n"
                     + "---------- Forwarded message ---------\n"
-                    + "From: Prakash Singh <" + SampleMails.FORWARDER + ">\n"
+                    + "From: Alex Sample <" + SampleMails.FORWARDER + ">\n"
                     + "Date: Fri, Sep 4, 2026 at 12:58 PM\n"
                     + "Subject: " + sample.subject() + "\n"
-                    + "To: <cs24b027@smail.iitm.ac.in>\n\n"
+                    + "To: <student@example.edu>\n\n"
                     + sample.plainTextBody();
 
             assertTrue(sample.file(), classifier.isPublicationAlert(
-                    "cs24b027@smail.iitm.ac.in", "FYI", Optional.of(body)));
+                    "student@example.edu", "FYI", Optional.of(body)));
         }
     }
 

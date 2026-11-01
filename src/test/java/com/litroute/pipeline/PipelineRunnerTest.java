@@ -94,7 +94,7 @@ public class PipelineRunnerTest {
         }
     }
 
-    private static final GmailCredentials CREDENTIALS = new GmailCredentials("cs24b027@smail.iitm.ac.in",
+    private static final GmailCredentials CREDENTIALS = new GmailCredentials("student@example.edu",
             "not-used-offline".toCharArray());
 
     private Path data;

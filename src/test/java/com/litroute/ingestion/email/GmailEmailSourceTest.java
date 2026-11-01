@@ -31,7 +31,7 @@ import org.junit.Test;
 
 /**
  * M1 against an embedded IMAP server (GreenMail) carrying the six real alert emails - the same
- * messages Prof. Badal forwarded, delivered as Gmail delivers them: multipart/alternative with a
+ * messages the client forwarded, delivered as Gmail delivers them: multipart/alternative with a
  * text part and an HTML part.
  *
  * The server is local because reaching a real Gmail account from a test would need real credentials
@@ -58,7 +58,7 @@ public class GmailEmailSourceTest {
         greenMail.stop();
     }
 
-    /** All six, forwarded from Prof. Badal's address exactly as they arrived, must be picked up. */
+    /** All six, forwarded from the client's address exactly as they arrived, must be picked up. */
     @Test
     public void everyOneOfTheSixRealAlertsIsFetched() throws Exception {
         for (Sample sample : SampleMails.ALL) {
@@ -122,12 +122,12 @@ public class GmailEmailSourceTest {
         assertEquals("alerts@tandfonline.com", fetched.get(0).fromAddress());
     }
 
-    /** Prof. Badal's covering note, with no alert quoted under it, is not an alert. */
+    /** the client's covering note, with no alert quoted under it, is not an alert. */
     @Test
     public void ordinaryMailFromTheSameForwarderIsIgnored() throws Exception {
         MimeMessage note = message(SampleMails.FORWARDER, "Re: research profiles",
                 "I need to send you different research profiles and papers for each of them too. "
-                        + "I will do that later today in a separate email.\n\nBest regards,\nPrakash S Badal",
+                        + "I will do that later today in a separate email.\n\nBest regards,\nAlex Q Sample",
                 "<div>I need to send you different research profiles and papers for each of them too.</div>");
         GreenMailUtil.sendMimeMessage(note);
         greenMail.waitForIncomingEmail(1);

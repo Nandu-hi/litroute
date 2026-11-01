@@ -17,7 +17,7 @@ import java.util.Set;
 import org.junit.Test;
 
 /**
- * M2 PaperExtractor against the six alert emails the client (Prof. Prakash Badal) forwarded as
+ * M2 PaperExtractor against the six alert emails the client (the client) forwarded as
  * references: SpringerOpen (x2), Taylor &amp; Francis, Google Scholar, ScienceDirect and ASCE. Each
  * fixture in src/test/resources/samples/ reproduces the forward exactly as Gmail delivers one: the
  * forwarder's note and signature, the "Forwarded message" header block, then the original HTML.
@@ -163,7 +163,7 @@ public class PaperExtractorTest {
         List<PaperCandidate> papers = extract("sciencedirect_recommendations.html",
                 "New recommendations available on ScienceDirect");
 
-        // Not the "Hello Prakash, ..." greeting, "View more recommendations", "Support | Unsubscribe", or the footer IDs.
+        // Not the "Hello Alex, ..." greeting, "View more recommendations", "Support | Unsubscribe", or the footer IDs.
         assertEquals(SCIENCEDIRECT_PAPERS.size(), papers.size());
         for (int i = 0; i < SCIENCEDIRECT_PAPERS.size(); i++) {
             ScienceDirectPaper expected = SCIENCEDIRECT_PAPERS.get(i);
@@ -316,7 +316,7 @@ public class PaperExtractorTest {
             "privacy policy", "your profile", "sitemap", "terms of use", "subscribe", "contact us",
             "journal of infrastructure preservation and resilience", "sustainable and resilient infrastructure",
             "natural hazards review", "springer nature", "elsevier b.v.", "terms and conditions",
-            "prakash s badal", "https://sites.google.com/view/prakashbadal/");
+            "alex q sample", "https://example.edu/~asample/");
 
     @Test
     public void noAlertFurnitureOrForwarderTextIsEverExtractedAsAPaperOrAuthor() {
@@ -332,7 +332,7 @@ public class PaperExtractorTest {
                     assertFalse(where + " author=" + author, author.isBlank());
                     assertFalse(where + " author=" + author, author.equalsIgnoreCase("others"));
                     assertFalse(where + " author=" + author, author.contains("…"));
-                    assertFalse(where + " author=" + author, author.contains("Prakash"));
+                    assertFalse(where + " author=" + author, author.contains("Sample"));
                 }
             }
         }
@@ -357,9 +357,9 @@ public class PaperExtractorTest {
     /** M2 outputs "zero or more" candidates: a forward with a personal note and no alert content is not an error. */
     @Test
     public void mailWithNoPapersInItYieldsAnEmptyListInsteadOfFailing() {
-        RawEmail noteOnly = new RawEmail("<note-only@mail.gmail.com>", "Fwd: something", "aprakashn@gmail.com",
+        RawEmail noteOnly = new RawEmail("<note-only@mail.gmail.com>", "Fwd: something", "forward@example.com",
                 Instant.parse("2026-09-04T07:28:00Z"),
-                Optional.of("<div>Please see my comments on the draft. <a href=\"https://sites.google.com/view/prakashbadal/\">"
+                Optional.of("<div>Please see my comments on the draft. <a href=\"https://example.edu/~asample/\">"
                         + "my page</a></div>"),
                 Optional.empty());
 
@@ -377,7 +377,7 @@ public class PaperExtractorTest {
         return new RawEmail(
                 "<sample-" + sampleFile + "@mail.gmail.com>",
                 "Fwd: " + originalSubject,
-                "aprakashn@gmail.com",
+                "forward@example.com",
                 Instant.parse("2026-09-04T07:28:00Z"),
                 Optional.of(readResource("/samples/" + sampleFile)),
                 Optional.empty());
