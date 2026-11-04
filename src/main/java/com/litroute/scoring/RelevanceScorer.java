@@ -36,7 +36,8 @@ import java.util.stream.IntStream;
 /**
  * M6: matches deduplicated papers (M4's output) to the students' profiles (M7d). A paper goes to
  * the one student it suits best, and only if it is a research paper close to that student's own work;
- * the rest of a batch matches no one and never reaches the professor's queue.
+ * the rest of a batch matches no one: {@link #matchAll} still returns them, under the student each is
+ * closest to, for the professor's dropped list.
  *
  * A candidate is compared with every student's reference papers in two ways, from the best evidence
  * it has: its PDF if M2 saved a readable one, otherwise its title and abstract, otherwise its title.
@@ -247,15 +248,38 @@ public final class RelevanceScorer implements PaperMatcher {
             String explanation) {
 
         /**
-         * Input: whether recommended, and how the paper's author is on the authors list, if they are.
+         * Input: whether recommended, how the paper's author is on the authors list, if they are, and every student's fit.
          * Output: a PENDING ScoredPaper with this score, relevance and rationale, led by the author if listed.
-         * Used by: scoreAll, match.
-         * Example: Assessment(P, alice, 0.62, 0.81, ...).toScoredPaper(true, Optional.empty()) -> ScoredPaper(P, alice, 0.62, recommended)
+         * Used by: scoreAll, judge.
+         * Example: Assessment(P, alice, 0.62, 0.81, ...).toScoredPaper(true, Optional.empty(), fits) -> ScoredPaper(P, alice, 0.62, recommended)
          */
-        ScoredPaper toScoredPaper(boolean recommended, Optional<ListedAuthor> author) {
+        ScoredPaper toScoredPaper(boolean recommended, Optional<ListedAuthor> author, List<ScoredPaper.Fit> fits) {
             return new ScoredPaper(candidate, profileName, score,
                     author.map(listed -> listed.reason(relevance, basis)).orElse("") + explanation, ReviewStatus.PENDING,
-                    recommended, Optional.of(relevance), author.map(ListedAuthor::printed));
+                    recommended, Optional.of(relevance), author.map(ListedAuthor::printed), fits);
+        }
+
+        /**
+         * Input: why the paper was not matched, how its author is on the authors list, if they are, and every student's fit.
+         * Output: an UNMATCHED, unrecommended ScoredPaper for this (closest) student, its rationale led by the reason.
+         * Used by: judge.
+         * Example: relevance 0.55 from an abstract -> rationale "Not matched: relevance 0.55 is below the floor of 0.70 ..."
+         */
+        ScoredPaper toUnmatched(String reason, Optional<ListedAuthor> author, List<ScoredPaper.Fit> fits) {
+            return new ScoredPaper(candidate, profileName, score, reason
+                    + author.map(listed -> "By an author on your list: " + listed.printed() + ". ").orElse("")
+                    + explanation, ReviewStatus.UNMATCHED, false, Optional.of(relevance),
+                    author.map(ListedAuthor::printed), fits);
+        }
+
+        /**
+         * Input: none.
+         * Output: this student's fit, as kept with the queued paper.
+         * Used by: scoreAll, judge.
+         * Example: Assessment(P, bob, 0.21, 0.55, ...) -> Fit(bob, 0.21, 0.55, explanation)
+         */
+        ScoredPaper.Fit toFit() {
+            return new ScoredPaper.Fit(profileName, clamp(score), clamp(relevance), explanation);
         }
     }
 
@@ -394,8 +418,9 @@ public final class RelevanceScorer implements PaperMatcher {
      * Example: scoreAll(P, SEMANTIC) -> [bob 0.40, alice 0.35, ...]
      */
     public List<ScoredPaper> scoreAll(PaperCandidate candidate, Strategy byStrategy) {
-        return assess(candidate, byStrategy).stream()
-                .map(assessment -> assessment.toScoredPaper(false, Optional.empty())).toList();
+        List<Assessment> assessments = assess(candidate, byStrategy);
+        List<ScoredPaper.Fit> fits = assessments.stream().map(Assessment::toFit).toList();
+        return assessments.stream().map(assessment -> assessment.toScoredPaper(false, Optional.empty(), fits)).toList();
     }
 
     /**
@@ -424,15 +449,11 @@ public final class RelevanceScorer implements PaperMatcher {
      * Example: P1 relevance 0.81 for alice (best) -> alice=[P1]; P2 best for bob at 0.55 -> not returned, unless a listed author wrote it
      */
     public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch, Strategy byStrategy) {
-        // Papers are independent and one with a PDF takes seconds to embed, so they are scored in parallel.
-        List<Assessment> best = batch.parallelStream().map(candidate -> assess(candidate, byStrategy).get(0)).toList();
         Map<String, List<ScoredPaper>> byStudent = new LinkedHashMap<>();
         indexes.forEach(index -> byStudent.put(index.profile().name(), new ArrayList<>()));
-        for (Assessment assessment : best) {
-            Optional<ListedAuthor> author = listedAuthor(assessment.candidate());
-            double floor = author.isPresent() ? authorFloor(assessment.basis()) : floor(assessment.basis());
-            if (assessment.candidate().isResearch() && assessment.relevance() >= floor) {
-                byStudent.get(assessment.profileName()).add(assessment.toScoredPaper(true, author));
+        for (ScoredPaper judged : judge(batch, byStrategy)) {
+            if (judged.status() == ReviewStatus.PENDING) {
+                byStudent.get(judged.profileName()).add(judged);
             }
         }
         byStudent.replaceAll((name, papers) -> papers.stream()
@@ -440,6 +461,62 @@ public final class RelevanceScorer implements PaperMatcher {
                         .thenComparing(Comparator.comparingDouble(ScoredPaper::score).reversed()))
                 .toList());
         return byStudent;
+    }
+
+    /**
+     * Judges a batch for the review queue, by this scorer's strategy: see {@link #judge}.
+     * Input: deduplicated papers (M4/M7c).
+     * Output: one scored paper per paper, in batch order: matched ones PENDING and recommended, the rest UNMATCHED.
+     * Used by: PipelineRunner.run (M9) through PaperMatcher.
+     * Example: [P1, P2] -> [alice/P1 PENDING, bob/P2 UNMATCHED]
+     */
+    @Override
+    public List<ScoredPaper> matchAll(List<PaperCandidate> batch) {
+        return judge(batch, strategy);
+    }
+
+    /**
+     * Each paper goes to the student it scores highest for. It is matched (PENDING, recommended) if it is a research
+     * paper whose relevance reaches the floor for its evidence (lower for a listed author); otherwise it is
+     * UNMATCHED, with the reason leading its rationale. Every paper keeps every student's fit, so the professor can
+     * move it to another student with that student's own score.
+     * Input: deduplicated papers and a strategy.
+     * Output: one scored paper per paper, in batch order.
+     * Used by: {@link #match(List, Strategy)}, {@link #matchAll}.
+     * Example: P1 relevance 0.81 for alice -> alice/P1 PENDING; P2 best for bob at 0.55 -> bob/P2 UNMATCHED "Not matched: relevance 0.55 is below ..."
+     */
+    private List<ScoredPaper> judge(List<PaperCandidate> batch, Strategy byStrategy) {
+        // Papers are independent and one with a PDF takes seconds to embed, so they are scored in parallel.
+        List<List<Assessment>> assessed = batch.parallelStream().map(candidate -> assess(candidate, byStrategy)).toList();
+        List<ScoredPaper> judged = new ArrayList<>();
+        for (List<Assessment> students : assessed) {
+            Assessment best = students.get(0);
+            List<ScoredPaper.Fit> fits = students.stream().map(Assessment::toFit).toList();
+            Optional<ListedAuthor> author = listedAuthor(best.candidate());
+            double floor = author.isPresent() ? authorFloor(best.basis()) : floor(best.basis());
+            if (!best.candidate().isResearch()) {
+                judged.add(best.toUnmatched("Not matched: it looks like a book review, discussion, correction or the "
+                        + "like" + best.candidate().articleType().map(type -> " (" + type + ")").orElse("")
+                        + ", not a research paper. ", author, fits));
+            } else if (best.relevance() < floor) {
+                judged.add(best.toUnmatched(String.format(Locale.ROOT, "Not matched: relevance %.2f is below the floor "
+                        + "of %.2f for %s%s. ", best.relevance(), floor, best.basis().label,
+                        author.isPresent() ? " by a listed author" : ""), author, fits));
+            } else {
+                judged.add(best.toScoredPaper(true, author, fits));
+            }
+        }
+        return judged;
+    }
+
+    /**
+     * Input: a score or relevance, which rounding may push a hair outside 0-1.
+     * Output: the value within 0-1.
+     * Used by: {@link Assessment#toFit}.
+     * Example: clamp(1.0000000002) -> 1.0
+     */
+    private static double clamp(double value) {
+        return Math.max(0.0, Math.min(1.0, value));
     }
 
     /**

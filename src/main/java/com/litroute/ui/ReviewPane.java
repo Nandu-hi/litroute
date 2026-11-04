@@ -6,12 +6,16 @@ import com.litroute.delivery.GmailSmtpSender;
 import com.litroute.model.PaperCandidate;
 import com.litroute.model.ReviewStatus;
 import com.litroute.model.ScoredPaper;
+import com.litroute.profile.ProfileBuilder;
 import com.litroute.scoring.RelevanceScorer;
 import com.litroute.security.GmailCredentials;
 import com.litroute.store.ProfileStore;
 import com.litroute.store.ScoredQueueStore;
 import com.litroute.store.SentPaperStore;
 import com.litroute.store.SentPaperStore.Sent;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
@@ -23,8 +27,11 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
+import java.util.TreeSet;
 import java.util.function.Consumer;
 import java.util.function.Function;
+import java.util.stream.Stream;
 import javafx.application.Platform;
 import javafx.beans.property.BooleanProperty;
 import javafx.beans.property.ReadOnlyObjectWrapper;
@@ -63,9 +70,12 @@ import javafx.scene.layout.VBox;
  * M8's review screen over the M7e queue: the students on the left with how many of their papers wait
  * for a decision, their matched papers in the middle (always best score first), and the chosen
  * paper's details and M6's rationale below. Approve, Drop and Back to pending (or the A, D and P keys)
- * record the decision for every selected paper; the queue file is written off the UI thread. Send approved
- * emails every approved paper to its student (M10), which moves it from the queue to the sent papers; it
- * needs the Gmail credentials unlocked. Show: Sent lists the sent papers, read only.
+ * record the decision for every selected paper; the queue file is written off the UI thread. Move to (or
+ * the M key) gives the selected papers to another student instead, with M6's score for that student.
+ * Show: Dropped also lists the papers M6 matched to no one ("not matched"), under the student each is
+ * closest to, so the professor can still approve one or move it to a student. Send approved emails every
+ * approved paper to its student (M10), which moves it from the queue to the sent papers; it needs the
+ * Gmail credentials unlocked. Show: Sent lists the sent papers, read only.
  */
 final class ReviewPane extends BorderPane {
 
@@ -91,12 +101,12 @@ final class ReviewPane extends BorderPane {
 
         /**
          * Input: a paper's status.
-         * Output: true if this filter shows it (ALL shows everything).
+         * Output: true if this filter shows it (ALL shows everything; DROPPED also shows the papers M6 matched to no one).
          * Used by: {@link ReviewPane#applyFilter}.
-         * Example: PENDING.accepts(APPROVED) -> false; ALL.accepts(SENT) -> true
+         * Example: PENDING.accepts(APPROVED) -> false; ALL.accepts(SENT) -> true; DROPPED.accepts(UNMATCHED) -> true
          */
         boolean accepts(ReviewStatus status) {
-            return this == ALL || name().equals(status.name());
+            return this == ALL || name().equals(status.name()) || this == DROPPED && status == ReviewStatus.UNMATCHED;
         }
 
         /**
@@ -121,6 +131,8 @@ final class ReviewPane extends BorderPane {
     private final ObservableList<ScoredPaper> entries = FXCollections.observableArrayList();
     private final FilteredList<ScoredPaper> shown = new FilteredList<>(entries);
     private final ObservableList<String> students = FXCollections.observableArrayList();
+    /** Every student a paper can be moved to: the profile folders and the students already in the queue. */
+    private final Set<String> profileNames = new TreeSet<>();
     private final ListView<String> studentList = new ListView<>(students);
     private final ComboBox<Filter> filter = new ComboBox<>(FXCollections.observableArrayList(Filter.values()));
     private final CheckBox recommendedOnly = new CheckBox("Recommended only");
@@ -203,14 +215,36 @@ final class ReviewPane extends BorderPane {
                     .filter(paper -> !sentAt.containsKey(paper.queueKey())).toList());
             sentPapers.forEach(entry -> loaded.add(entry.paper()));
             String chosen = studentList.getSelectionModel().getSelectedItem();
+            profileNames.clear();
+            profileNames.addAll(profileFolders());
+            loaded.forEach(paper -> profileNames.add(paper.profileName()));
             entries.setAll(loaded);
             List<String> names = new ArrayList<>(List.of(ALL_STUDENTS));
             loaded.stream().map(ScoredPaper::profileName).distinct().sorted().forEach(names::add);
             students.setAll(names);
             studentList.getSelectionModel().select(chosen != null && names.contains(chosen) ? chosen : ALL_STUDENTS);
             applyFilter();
-        } catch (java.io.IOException e) {
+        } catch (IOException e) {
             error("Could not read the review queue", e);
+        }
+    }
+
+    /**
+     * Input: none.
+     * Output: the names of the non-hidden folders under the profiles root; empty if it can't be listed.
+     * Used by: {@link #reload}, for the students a paper can be moved to.
+     * Example: profiles/{alice, bob, .git} -> [alice, bob]
+     */
+    private static List<String> profileFolders() {
+        Path root = ProfileBuilder.defaultProfilesRoot();
+        if (!Files.isDirectory(root)) {
+            return List.of();
+        }
+        try (Stream<Path> folders = Files.list(root)) {
+            return folders.filter(Files::isDirectory).map(folder -> folder.getFileName().toString())
+                    .filter(name -> !name.startsWith(".")).toList();
+        } catch (IOException e) {
+            return List.of();
         }
     }
 
@@ -234,7 +268,7 @@ final class ReviewPane extends BorderPane {
         table.getColumns().add(column("Venue", 200, paper -> paper.candidate().venue().orElse("")));
         table.getColumns().add(column("Year", 55, paper -> paper.candidate().year().map(String::valueOf).orElse("")));
         table.getColumns().add(column("PDF", 45, paper -> paper.candidate().pdfPath().isPresent() ? "yes" : ""));
-        table.getColumns().add(column("Status", 85, paper -> paper.status().name().toLowerCase(Locale.ROOT)));
+        table.getColumns().add(column("Status", 95, ReviewPane::statusLabel));
 
         // Listed authors' papers first, then best score first, whatever the status or star; the columns don't re-sort.
         table.getColumns().forEach(column -> column.setSortable(false));
@@ -261,6 +295,8 @@ final class ReviewPane extends BorderPane {
                 decide(ReviewStatus.DROPPED);
             } else if (event.getCode() == KeyCode.P) {
                 decide(ReviewStatus.PENDING);
+            } else if (event.getCode() == KeyCode.M) {
+                detail.chooseStudent();
             } else if (event.getCode() == KeyCode.ENTER) {
                 Optional.ofNullable(table.getSelectionModel().getSelectedItem()).ifPresent(this::open);
             }
@@ -377,6 +413,16 @@ final class ReviewPane extends BorderPane {
     }
 
     /**
+     * Input: a scored paper.
+     * Output: its status as the table shows it.
+     * Used by: the Status column, Detail.show.
+     * Example: UNMATCHED -> "not matched"; APPROVED -> "approved"
+     */
+    private static String statusLabel(ScoredPaper paper) {
+        return paper.status() == ReviewStatus.UNMATCHED ? "not matched" : paper.status().name().toLowerCase(Locale.ROOT);
+    }
+
+    /**
      * Input: a header, a width and how to show a paper in it.
      * Output: a read-only text column.
      * Used by: {@link #buildTable}.
@@ -403,12 +449,16 @@ final class ReviewPane extends BorderPane {
         shown.setPredicate(paper -> (student == null || student.equals(ALL_STUDENTS) || student.equals(paper.profileName()))
                 && status.accepts(paper.status())
                 && (!onlyRecommended || paper.recommended()));
-        long pending = entries.stream().filter(paper -> paper.status() == ReviewStatus.PENDING).count();
-        long approved = entries.stream().filter(paper -> paper.status() == ReviewStatus.APPROVED).count();
-        long sentCount = entries.stream().filter(paper -> paper.status() == ReviewStatus.SENT).count();
+        // The bar counts the chosen student's papers, like the table; Send approved always sends every student's.
+        boolean everyone = student == null || student.equals(ALL_STUDENTS);
+        List<ScoredPaper> theirs = entries.stream()
+                .filter(paper -> everyone || student.equals(paper.profileName())).toList();
         summary.setStyle("");
-        summary.setText((entries.size() - sentCount) + " queued: " + pending + " pending, " + approved + " approved · "
-                + sentCount + " sent");
+        summary.setText((everyone ? "All students: " : student + ": ") + count(theirs, ReviewStatus.PENDING)
+                + " pending, " + count(theirs, ReviewStatus.APPROVED) + " approved, " + count(theirs, ReviewStatus.DROPPED)
+                + " dropped, " + count(theirs, ReviewStatus.UNMATCHED) + " not matched · " + count(theirs, ReviewStatus.SENT)
+                + " sent");
+        long approved = count(entries, ReviewStatus.APPROVED);
         send.setText("Send approved (" + approved + ")");
         noneApproved.set(approved == 0);
         studentList.refresh();
@@ -416,6 +466,16 @@ final class ReviewPane extends BorderPane {
             table.getSelectionModel().select(0);
         }
         detail.show(table.getSelectionModel().getSelectedItem());
+    }
+
+    /**
+     * Input: papers and a status.
+     * Output: how many of the papers have that status.
+     * Used by: {@link #applyFilter}, for the bar's counts.
+     * Example: count([alice/X PENDING, alice/Y DROPPED], DROPPED) -> 1
+     */
+    private static long count(List<ScoredPaper> papers, ReviewStatus status) {
+        return papers.stream().filter(paper -> paper.status() == status).count();
     }
 
     /**
@@ -495,6 +555,92 @@ final class ReviewPane extends BorderPane {
                 error("Could not save the decision", getException());
             }
         });
+    }
+
+    /**
+     * Gives every selected paper to another student instead (M7e {@code move}), then shows the queue again. A sent
+     * paper, a paper already the student's, and one already sent to or queued for that student are left as they are,
+     * and the bar says why.
+     * Input: the student to give the papers to.
+     * Output: none; the queue file is written off the UI thread, then the table reloads and the bar says what moved.
+     * Used by: the Move button and the M key (through Detail).
+     * Example: select alice/X (not matched), move to bob -> bob/X pending; "Moved 1 paper(s) to bob."
+     */
+    private void move(String student) {
+        List<ScoredPaper> chosen = table.getSelectionModel().getSelectedItems().stream()
+                .filter(paper -> paper.status() != ReviewStatus.SENT)
+                .filter(paper -> !paper.profileName().equals(student)).toList();
+        if (chosen.isEmpty()) {
+            summary.setText(table.getSelectionModel().isEmpty() ? "Select a paper to move."
+                    : "Nothing to move: the selected papers are " + student + "'s already, or were sent.");
+            return;
+        }
+        session.runIo(new Task<List<String>>() {
+            /**
+             * Input: none (io thread).
+             * Output: why each paper that wasn't moved was left, in selection order; the rest are moved in M7e.
+             * Used by: Session.runIo.
+             * Example: -> ["\"Wave loads\" was already sent to bob"]
+             */
+            @Override
+            protected List<String> call() throws Exception {
+                Set<String> alreadySent = sent.sentKeys();
+                List<String> left = new ArrayList<>();
+                for (ScoredPaper paper : chosen) {
+                    String title = "\"" + shorten(paper.candidate().title()) + "\"";
+                    if (alreadySent.contains(student + "\n" + ScoredPaper.paperKey(paper.candidate()))) {
+                        left.add(title + " was already sent to " + student);
+                        continue;
+                    }
+                    try {
+                        if (queue.move(paper, student).isEmpty()) {
+                            left.add(title + " is no longer in the queue");
+                        }
+                    } catch (IllegalArgumentException | IllegalStateException e) {
+                        left.add(e.getMessage());
+                    }
+                }
+                return left;
+            }
+
+            /**
+             * Input: none (UI thread).
+             * Output: none; the queue reloads, and the bar says how many moved and why any didn't.
+             * Used by: JavaFX, when call() returns.
+             * Example: -> "Moved 2 paper(s) to bob."
+             */
+            @Override
+            protected void succeeded() {
+                List<String> left = getValue();
+                reload();
+                summary.setStyle(left.isEmpty() ? "" : "-fx-text-fill: #b00020;");
+                summary.setText("Moved " + (chosen.size() - left.size()) + " paper(s) to " + student + "."
+                        + (left.isEmpty() ? "" : " Not moved: " + String.join("; ", left) + "."));
+                table.requestFocus();
+            }
+
+            /**
+             * Input: none (UI thread).
+             * Output: none; the queue reloads and the error is shown in the bar.
+             * Used by: JavaFX, when call() throws.
+             * Example: -> "Could not move the papers: disk full"
+             */
+            @Override
+            protected void failed() {
+                reload();
+                error("Could not move the papers", getException());
+            }
+        });
+    }
+
+    /**
+     * Input: a title.
+     * Output: at most 60 characters of it, with "…" if cut.
+     * Used by: {@link #move}, for the bar.
+     * Example: a 100-character title -> its first 59 characters + "…"
+     */
+    private static String shorten(String title) {
+        return title.length() <= 60 ? title : title.substring(0, 59).strip() + "…";
     }
 
     /**
@@ -617,6 +763,8 @@ final class ReviewPane extends BorderPane {
         private final Button approve = new Button("Approve (A)");
         private final Button drop = new Button("Drop (D)");
         private final Button reset = new Button("Back to pending (P)");
+        private final ComboBox<String> moveTo = new ComboBox<>();
+        private final Button move = new Button("Move");
         private ScoredPaper paper;
 
         /**
@@ -646,7 +794,27 @@ final class ReviewPane extends BorderPane {
             drop.setTooltip(new Tooltip("Do not send (applies to every selected paper)"));
             openPdf.setOnAction(event -> paper.candidate().pdfPath().ifPresent(path -> openDocument.accept(path.toUri().toString())));
             link.setOnAction(event -> openDocument.accept(link.getText()));
-            HBox buttons = new HBox(8, approve, drop, reset, openPdf);
+            moveTo.setPromptText("Move to student (M)");
+            moveTo.setCellFactory(list -> new StudentCell(false));
+            moveTo.setButtonCell(new StudentCell(true));
+            moveTo.setTooltip(new Tooltip("Give the selected papers to another student instead, with M6's score for "
+                    + "them. Students are listed closest first; a dropped or not-matched paper becomes pending."));
+            move.disableProperty().bind(moveTo.valueProperty().isNull());
+            move.setOnAction(event -> {
+                String student = moveTo.getValue();
+                if (student != null) {
+                    move(student);
+                }
+            });
+            moveTo.setOnKeyPressed(event -> {
+                if (event.getCode() == KeyCode.ENTER && moveTo.getValue() != null) {
+                    move(moveTo.getValue());
+                }
+            });
+            Region gap = new Region();
+            gap.setMinWidth(16);
+            HBox buttons = new HBox(8, approve, drop, reset, openPdf, gap, moveTo, move);
+            buttons.setAlignment(javafx.geometry.Pos.CENTER_LEFT);
             getChildren().addAll(title, authors, source, link, match, new Label("Why it was matched:"), rationale, buttons);
             show(null);
         }
@@ -660,9 +828,14 @@ final class ReviewPane extends BorderPane {
         void show(ScoredPaper chosen) {
             paper = chosen;
             boolean none = chosen == null;
-            approve.setDisable(none);
-            drop.setDisable(none);
-            reset.setDisable(none);
+            boolean movable = !none && chosen.status() != ReviewStatus.SENT;
+            // A sent paper is a record of what its student received: no decision changes it.
+            approve.setDisable(!movable);
+            drop.setDisable(!movable);
+            reset.setDisable(!movable);
+            moveTo.setDisable(!movable);
+            moveTo.setValue(null);
+            moveTo.getItems().setAll(movable ? candidatesFor(chosen) : List.of());
             if (none) {
                 title.setText("No paper selected");
                 authors.setText("");
@@ -686,17 +859,82 @@ final class ReviewPane extends BorderPane {
             Optional<String> url = link(candidate);
             link.setText(url.orElse(""));
             link.setVisible(url.isPresent());
-            match.setText(String.format(Locale.ROOT, "Matched to %s, score %.2f%s%s%s, %s", chosen.profileName(),
+            match.setText(String.format(Locale.ROOT, "%s %s, score %.2f%s%s%s, %s",
+                    chosen.status() == ReviewStatus.UNMATCHED ? "Not matched; closest to" : "Matched to", chosen.profileName(),
                     chosen.score(), chosen.relevance().map(r -> String.format(Locale.ROOT, ", relevance %.2f", r)).orElse(""),
                     chosen.recommended() ? ", recommended" : "",
                     chosen.listedAuthor().map(name -> ", by listed author " + name).orElse(""),
                     chosen.status() == ReviewStatus.SENT
                             && sentAt.containsKey(chosen.queueKey())
                             ? "sent " + SENT_TIME.format(sentAt.get(chosen.queueKey()))
-                            : chosen.status().name().toLowerCase(Locale.ROOT)));
+                            : statusLabel(chosen)));
             rationale.setText(chosen.rationale()
                     + candidate.abstractSnippet().map(text -> "\n\nAbstract: " + text).orElse(""));
             openPdf.setDisable(candidate.pdfPath().isEmpty());
+        }
+
+        /**
+         * Input: none.
+         * Output: none; the Move box opens, if a movable paper is shown.
+         * Used by: the table's M key.
+         * Example: press M -> the student list drops down
+         */
+        void chooseStudent() {
+            if (!moveTo.isDisabled()) {
+                moveTo.requestFocus();
+                moveTo.show();
+            }
+        }
+
+        /**
+         * Input: the shown paper.
+         * Output: every other student it can be moved to: those M6 scored it for, closest (best score) first, then the
+         * rest by name.
+         * Used by: {@link #show}.
+         * Example: alice's paper, fits [alice 0.6, carol 0.2, bob 0.1], folders [alice, bob, carol, dan] -> [carol, bob, dan]
+         */
+        private List<String> candidatesFor(ScoredPaper chosen) {
+            List<String> names = new ArrayList<>();
+            chosen.fits().stream().map(ScoredPaper.Fit::profileName)
+                    .filter(name -> !name.equals(chosen.profileName())).forEach(names::add);
+            profileNames.stream().filter(name -> !name.equals(chosen.profileName()) && !names.contains(name))
+                    .forEach(names::add);
+            return names;
+        }
+
+        /** A student in the Move box, with M6's relevance and score of the shown paper for them, when known. */
+        private final class StudentCell extends ListCell<String> {
+
+            private final boolean button;
+
+            /**
+             * Input: whether this is the box's button cell, which shows the prompt when nothing is chosen.
+             * Output: the cell.
+             * Used by: {@link Detail#Detail()}.
+             * Example: {@code new StudentCell(true)}
+             */
+            StudentCell(boolean button) {
+                this.button = button;
+            }
+
+            /**
+             * Input: a student name and whether the cell is empty.
+             * Output: none; the cell shows the name and the shown paper's relevance and score for that student.
+             * Used by: JavaFX, for the Move box's list and button.
+             * Example: "bob" -> "bob   relevance 0.55, score 0.21"; a student M6 didn't score it for -> "bob   (not scored)"
+             */
+            @Override
+            protected void updateItem(String student, boolean empty) {
+                super.updateItem(student, empty);
+                if (empty || student == null) {
+                    // A custom button cell would otherwise hide the prompt once the choice is cleared.
+                    setText(button ? moveTo.getPromptText() : null);
+                    return;
+                }
+                Optional<ScoredPaper.Fit> fit = paper == null ? Optional.empty() : paper.fitFor(student);
+                setText(student + fit.map(f -> String.format(Locale.ROOT, "   relevance %.2f, score %.2f", f.relevance(),
+                        f.score())).orElse("   (not scored)"));
+            }
         }
     }
 }

@@ -23,7 +23,7 @@ import javafx.scene.layout.VBox;
 /**
  * The authors whose papers M6 favours: their papers are held to a lower cutoff and listed first in the Review
  * tab, with the author given as the reason. An author is entered as a first and a last name, and matches strictly
- * ({@link AuthorName#matches}). A change is a job ({@link PriorityAuthors} writes the log a pipeline run writes), and
+ * ({@link AuthorName#matches}). A change is a job ({@link PriorityAuthors} writes the queue a pipeline run writes), and
  * takes effect on the next run.
  */
 final class AuthorsPane extends BorderPane {
@@ -89,7 +89,7 @@ final class AuthorsPane extends BorderPane {
 
     /**
      * Input: none (the first and last name typed).
-     * Output: none; as a job, the name joins the list and its held papers are forgotten by the scored log; a missing part, an initial or a name listed already is refused in the status line.
+     * Output: none; as a job, the name joins the list and its not-matched papers leave the queue, to be scored again; a missing part, an initial or a name listed already is refused in the status line.
      * Used by: the Add button, Enter in either name field.
      * Example: "A." and "Carter" -> "Spell out both names: an initial can't identify an author."
      */

@@ -31,7 +31,6 @@ public final class DataCaches {
     /** One thing that can be cleared. The order is the order a clear takes them in: see {@link #clear}. */
     public enum Cache {
         REVIEW_QUEUE("Review queue"),
-        SCORED_PAPERS("Scored papers"),
         SENT_PAPERS("Sent papers"),
         EXTRACTED_PAPERS("Extracted papers"),
         PROCESSED_EMAILS("Processed emails"),
@@ -96,7 +95,6 @@ public final class DataCaches {
     private static final String EXTRACTED_FILE = "enrichment_cache.json";
     private static final String PROFILES_FILE = "profiles.json";
     private static final String QUEUE_FILE = "scored_queue.json";
-    private static final String SCORED_FILE = "scored_papers.json";
     private static final String SENT_FILE = "sent_papers.json";
     private static final String MATCHED_FOLDER = "matched";
     private static final String PDFS_FOLDER = "pdfs";
@@ -119,7 +117,6 @@ public final class DataCaches {
     private final EnrichmentCacheStore extracted;
     private final ProfileStore profiles;
     private final ScoredQueueStore queue;
-    private final ScoredPaperLog scored;
     private final SentPaperStore sent;
 
     /**
@@ -134,7 +131,6 @@ public final class DataCaches {
         this.extracted = new EnrichmentCacheStore(this.folder.resolve(EXTRACTED_FILE));
         this.profiles = new ProfileStore(this.folder.resolve(PROFILES_FILE));
         this.queue = new ScoredQueueStore(this.folder.resolve(QUEUE_FILE), this.folder.resolve(MATCHED_FOLDER));
-        this.scored = new ScoredPaperLog(this.folder.resolve(SCORED_FILE));
         this.sent = new SentPaperStore(this.folder.resolve(SENT_FILE));
     }
 
@@ -163,18 +159,18 @@ public final class DataCaches {
      * Input: none.
      * Output: each cache's size and contents, and the size of everything else in the folder; IOException only if the folder can't be walked.
      * Used by: CachesPane (M8), on opening the tab, on Refresh and after a job.
-     * Example: -> Report([Usage(REVIEW_QUEUE, 2500000, "3 papers: 1 pending, 1 approved, 1 dropped", ...), ...], 180000)
+     * Example: -> Report([Usage(REVIEW_QUEUE, 2500000, "4 papers: 1 pending, 1 approved, 1 dropped, 1 not matched", ...), ...], 180000)
      */
     public Report report() throws IOException {
-        List<Usage> caches = List.of(queueUsage(), scoredUsage(), sentUsage(), extractedUsage(), emailsUsage(),
+        List<Usage> caches = List.of(queueUsage(), sentUsage(), extractedUsage(), emailsUsage(),
                 pdfsUsage(), profilesUsage());
         long all = sizeOf(folder);
         return new Report(caches, Math.max(0, all - caches.stream().mapToLong(Usage::bytes).sum()));
     }
 
     /**
-     * Clears the chosen caches, always in the {@link Cache} order: the queue before the record of what was scored,
-     * and the processed emails after the papers extracted from them, as Clear and re-run does, so a crash part-way
+     * Clears the chosen caches, always in the {@link Cache} order: the queue before the sent papers (whose PDF copies
+     * it may share), and the processed emails after the papers extracted from them, as Clear and re-run does, so a crash part-way
      * repeats work rather than losing it. Gmail is not touched: no email is marked unread.
      * Input: the caches to clear.
      * Output: none; each is empty; IOException at the first that fails, with those before it cleared.
@@ -186,7 +182,6 @@ public final class DataCaches {
             if (chosen.contains(cache)) {
                 switch (cache) {
                     case REVIEW_QUEUE -> queue.clear();
-                    case SCORED_PAPERS -> scored.clear();
                     case SENT_PAPERS -> clearSent();
                     case EXTRACTED_PAPERS -> extracted.save(EnrichmentCacheStore.Contents.empty());
                     case PROCESSED_EMAILS -> emails.save(Set.of());
@@ -224,7 +219,7 @@ public final class DataCaches {
      * Input: none.
      * Output: the queue's file and PDF copies, with how many papers are waiting at each decision.
      * Used by: {@link #report}.
-     * Example: -> Usage(REVIEW_QUEUE, 2500000, "3 papers: 1 pending, 1 approved, 1 dropped", "scored_queue.json + matched/")
+     * Example: -> Usage(REVIEW_QUEUE, 2500000, "4 papers: 1 pending, 1 approved, 1 dropped, 1 not matched", "scored_queue.json + matched/")
      */
     private Usage queueUsage() throws IOException {
         long bytes = sizeOf(folder.resolve(QUEUE_FILE));
@@ -233,7 +228,8 @@ public final class DataCaches {
             List<ScoredPaper> papers = queue.load();
             bytes += copiesSize(papers, Set.of());
             contents = papers.size() + " paper(s): " + count(papers, ReviewStatus.PENDING) + " pending, "
-                    + count(papers, ReviewStatus.APPROVED) + " approved, " + count(papers, ReviewStatus.DROPPED) + " dropped";
+                    + count(papers, ReviewStatus.APPROVED) + " approved, " + count(papers, ReviewStatus.DROPPED) + " dropped, "
+                    + count(papers, ReviewStatus.UNMATCHED) + " not matched";
         } catch (IOException | RuntimeException e) {
             contents = UNREADABLE;
         }
@@ -266,17 +262,6 @@ public final class DataCaches {
             contents = UNREADABLE;
         }
         return new Usage(Cache.SENT_PAPERS, bytes, contents, SENT_FILE + " + " + MATCHED_FOLDER + "/");
-    }
-
-    /**
-     * Input: none.
-     * Output: the scored log's file and how many papers it records.
-     * Used by: {@link #report}.
-     * Example: -> Usage(SCORED_PAPERS, 851, "26 paper(s)", "scored_papers.json")
-     */
-    private Usage scoredUsage() throws IOException {
-        return new Usage(Cache.SCORED_PAPERS, sizeOf(folder.resolve(SCORED_FILE)),
-                described(() -> scored.load().size() + " paper(s)"), SCORED_FILE);
     }
 
     /**
@@ -338,7 +323,7 @@ public final class DataCaches {
      * Input: how to say what a store holds.
      * Output: that, or that the store can't be read.
      * Used by: the Usage methods of the stores with nothing else to measure.
-     * Example: a corrupt scored_papers.json -> "can't be read: the file is corrupt"
+     * Example: a corrupt sent_papers.json -> "can't be read: the file is corrupt"
      */
     private static String described(Contents contents) {
         try {

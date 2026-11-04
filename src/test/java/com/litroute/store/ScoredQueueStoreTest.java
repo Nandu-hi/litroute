@@ -311,6 +311,135 @@ public class ScoredQueueStoreTest {
         assertFalse(Files.exists(store.pdfFolder("RP1-mh-risk")));
     }
 
+    /** How M6 scored {@link Candidates#full()}'s paper for two students: RP1 best, RP4 second. */
+    private static final List<ScoredPaper.Fit> FITS = List.of(
+            new ScoredPaper.Fit("RP1-mh-risk", 0.62, 0.81, "Best match: 76% of the paper's match goes to RP1-mh-risk ..."),
+            new ScoredPaper.Fit("RP4-mh-char", 0.13, 0.55, "16% of the paper's match goes to RP4-mh-char (best: ...) ..."));
+
+    private static ScoredPaper withFits(PaperCandidate candidate, ReviewStatus status) {
+        return new ScoredPaper(candidate, "RP1-mh-risk", 0.62, "Best match: ...", status, true, Optional.of(0.81),
+                Optional.empty(), FITS);
+    }
+
+    @Test
+    public void everyStudentsFitLoadsBack() throws IOException {
+        Path file = newFile();
+        ScoredPaper paper = withFits(Candidates.sparse(), ReviewStatus.PENDING);
+
+        new ScoredQueueStore(file).addAll(List.of(paper));
+
+        assertEquals(List.of(paper), new ScoredQueueStore(file).load());
+        assertEquals(FITS, new ScoredQueueStore(file).load().get(0).fits());
+    }
+
+    /** M6 matched it to no one: it is not one of the student's papers until the professor takes it up. */
+    @Test
+    public void anUnmatchedPapersPdfStaysWhereM2SavedItUntilTheProfessorDecides() throws IOException {
+        Path file = newFile();
+        Path pdf = downloadedPdf(file.getParent());
+        ScoredQueueStore store = new ScoredQueueStore(file);
+        ScoredPaper unmatched = new ScoredPaper(Candidates.full().withPdfPath(Optional.of(pdf)), "RP1-mh-risk", 0.3,
+                "Not matched: relevance 0.55 is below the floor of 0.70 for a full PDF. ...", ReviewStatus.UNMATCHED);
+
+        List<ScoredPaper> queue = store.addAll(List.of(unmatched));
+
+        assertEquals(Optional.of(pdf), queue.get(0).candidate().pdfPath());
+        assertFalse(Files.exists(store.pdfFolder("RP1-mh-risk")));
+
+        assertTrue(store.setStatus(unmatched, ReviewStatus.APPROVED));
+
+        Path copy = store.pdfFolder("RP1-mh-risk").resolve(pdf.getFileName());
+        assertEquals(Optional.of(copy), store.load().get(0).candidate().pdfPath());
+        assertEquals(-1, Files.mismatch(pdf, copy));
+    }
+
+    @Test
+    public void aMovedPaperTakesTheNewStudentsScoreAndPdfFolderAndKeepsItsPlace() throws IOException {
+        Path file = newFile();
+        Path pdf = downloadedPdf(file.getParent());
+        ScoredQueueStore store = new ScoredQueueStore(file);
+        ScoredPaper first = scored(Candidates.sparse(), "RP2-pbee-res-recov", 0.7);
+        ScoredPaper paper = withFits(Candidates.full().withPdfPath(Optional.of(pdf)), ReviewStatus.APPROVED);
+        ScoredPaper last = scored(Candidates.ssiReview(Path.of("/nowhere.pdf")), "RP8-doe-eq-unc-quant", 0.6);
+        store.addAll(List.of(first, paper, last));
+
+        ScoredPaper moved = store.move(paper, "RP4-mh-char").orElseThrow();
+
+        assertEquals("RP4-mh-char", moved.profileName());
+        assertEquals(0.13, moved.score(), 0.0);
+        assertEquals(Optional.of(0.55), moved.relevance());
+        assertEquals("Moved by you from RP1-mh-risk to RP4-mh-char. " + FITS.get(1).rationale(), moved.rationale());
+        assertEquals("an approved paper stays approved", ReviewStatus.APPROVED, moved.status());
+        assertFalse("not M6's recommendation any more", moved.recommended());
+        assertEquals(FITS, moved.fits());
+        Path copy = store.pdfFolder("RP4-mh-char").resolve(pdf.getFileName());
+        assertEquals(Optional.of(copy), moved.candidate().pdfPath());
+        assertEquals(-1, Files.mismatch(pdf, copy));
+        assertFalse("the old student's copy is gone", Files.exists(store.pdfFolder("RP1-mh-risk")));
+        assertEquals(List.of(first.queueKey(), moved.queueKey(), last.queueKey()),
+                store.load().stream().map(ScoredPaper::queueKey).toList());
+        assertEquals(moved, store.load().get(1));
+    }
+
+    @Test
+    public void aDroppedOrUnmatchedPaperBecomesPendingForItsNewStudent() throws IOException {
+        ScoredQueueStore store = new ScoredQueueStore(newFile());
+        ScoredPaper unmatched = withFits(Candidates.full(), ReviewStatus.UNMATCHED);
+        ScoredPaper dropped = withFits(Candidates.sparse(), ReviewStatus.DROPPED);
+        store.addAll(List.of(unmatched, dropped));
+
+        assertEquals(ReviewStatus.PENDING, store.move(unmatched, "RP4-mh-char").orElseThrow().status());
+        assertEquals(ReviewStatus.PENDING, store.move(dropped, "RP4-mh-char").orElseThrow().status());
+    }
+
+    /** An entry queued before every student's score was kept, or a profile added since: no score to take. */
+    @Test
+    public void aPaperMovedToAStudentM6DidNotScoreItForHasNoRelevance() throws IOException {
+        ScoredQueueStore store = new ScoredQueueStore(newFile());
+        ScoredPaper old = scored(Candidates.sparse(), "RP1-mh-risk", 0.7);
+        store.addAll(List.of(old));
+
+        ScoredPaper moved = store.move(old, "RP5-wf-risk").orElseThrow();
+
+        assertEquals(0.0, moved.score(), 0.0);
+        assertEquals(Optional.empty(), moved.relevance());
+        assertTrue(moved.rationale(), moved.rationale().contains("M6 has no score for RP5-wf-risk"));
+        assertTrue(moved.rationale(), moved.rationale().endsWith(old.rationale()));
+    }
+
+    @Test(expected = IllegalArgumentException.class)
+    public void aPaperCannotBeMovedToAStudentItIsAlreadyQueuedFor() throws IOException {
+        ScoredQueueStore store = new ScoredQueueStore(newFile());
+        ScoredPaper paper = withFits(Candidates.full(), ReviewStatus.PENDING);
+        store.addAll(List.of(paper, scored(Candidates.full(), "RP4-mh-char", 0.2)));
+
+        store.move(paper, "RP4-mh-char");
+    }
+
+    @Test
+    public void movingAPaperThatIsNotQueuedChangesNothing() throws IOException {
+        ScoredQueueStore store = new ScoredQueueStore(newFile());
+
+        assertEquals(Optional.empty(), store.move(withFits(Candidates.full(), ReviewStatus.PENDING), "RP4-mh-char"));
+        assertTrue(store.load().isEmpty());
+    }
+
+    @Test
+    public void removingUnmatchedEntriesLeavesThoseTheProfessorActedOn() throws IOException {
+        ScoredQueueStore store = new ScoredQueueStore(newFile());
+        ScoredPaper unmatched = new ScoredPaper(Candidates.full(), "RP1-mh-risk", 0.3, "Not matched: ...",
+                ReviewStatus.UNMATCHED);
+        ScoredPaper decided = new ScoredPaper(Candidates.sparse(), "RP1-mh-risk", 0.3, "Not matched: ...",
+                ReviewStatus.DROPPED);
+        store.addAll(List.of(unmatched, decided));
+
+        assertEquals(1, store.removeUnmatched(List.of(ScoredPaper.paperKey(Candidates.full()),
+                ScoredPaper.paperKey(Candidates.sparse()))));
+
+        assertEquals(List.of(decided), store.load());
+        assertEquals(0, store.removeUnmatched(List.of(ScoredPaper.paperKey(Candidates.sparse()))));
+    }
+
     @Test(expected = IllegalArgumentException.class)
     public void aProfileNameCannotPointOutsideTheMatchedFolder() throws IOException {
         new ScoredQueueStore(newFile()).pdfFolder("../elsewhere");

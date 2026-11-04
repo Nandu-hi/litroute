@@ -12,7 +12,7 @@ That command runs [LitRouteApp](LitRouteApp.java), the pom's `javafx-maven-plugi
 
 | Tab | Class | What it does |
 |---|---|---|
-| **Review** | [ReviewPane](ReviewPane.java) | The review queue (M7e). Students on the left with how many papers wait for each; their papers in the middle; the chosen paper's details and M6's rationale below. **Approve**, **Drop**, **Back to pending** (or A, D, P) record the decision for every selected paper. **Send approved** emails them to their students (M10), which moves them out of the queue. **Show: Sent** lists the sent papers with when they went, read only. |
+| **Review** | [ReviewPane](ReviewPane.java) | The review queue (M7e). Students on the left with how many papers wait for each; their papers in the middle; the chosen paper's details and M6's rationale below. **Approve**, **Drop**, **Back to pending** (or A, D, P) record the decision for every selected paper. **Move** (or M) gives the selected papers to another student, listed closest first with M6's relevance for each; the paper takes that student's score, and a dropped or not-matched one becomes pending. **Show: Dropped** also lists the papers M6 matched to no one (status *not matched*), each under its closest student with the reason first in its rationale. **Send approved** emails them to their students (M10), which moves them out of the queue. **Show: Sent** lists the sent papers with when they went, read only. |
 | **Pipeline** | [PipelinePane](PipelinePane.java) | Runs M9 with a live log. **Read emails with** toggles between **Pattern matching** and **Local AI model** (M2); that, how many unread emails a run examines, and **Keep emails unread** (for testing) are chosen here and remembered. **Clear and re-run…** undoes every run so far and runs again over the same emails ([pipeline readme](../pipeline/readme.md)). |
 | **Authors** | [AuthorsPane](AuthorsPane.java) | The authors whose papers M6 favours: a lower cutoff, first in the Review tab, the author given as the reason ([scoring readme](../scoring/readme.md)). It takes a **first name** and a **last name**, both spelled out, and matches strictly: Alice Carter finds Alice K. Carter but not A. Carter or AK Carter. A new author's papers that were turned down get one more look on the next run. |
 | **Profiles** | [ProfilesPane](ProfilesPane.java) | The stored profiles, **Rebuild profiles**, which syncs them with their folders (M5), and **Open profiles folder**. |
@@ -39,9 +39,9 @@ That command runs [LitRouteApp](LitRouteApp.java), the pom's `javafx-maven-plugi
  Pipeline   │ PipelinePane ──runJob──▶ PipelineRunner.run / reset (M9) ──▶ M1..M6 ──▶ M7a/c/d/e            │
             │                 │ log::line, LogPane.capture()                    │ queueChanged              │
  Review     │ ReviewPane ◀── reload() ── M7e scored_queue.json + sent_papers.json ◀┘                       │
-            │      │ A / D / P ──runIo──▶ ScoredQueueStore.setStatus (M7e)                                   │
+            │      │ A / D / P ──runIo──▶ ScoredQueueStore.setStatus (M7e);  Move ──runIo──▶ .move           │
             │      └ Send approved ──runJob──▶ ApprovedPaperSender (M10) ──▶ Gmail SMTP                      │
- Authors    │ AuthorsPane ──runJob──▶ PriorityAuthors ──▶ priority_authors.json, scored_papers.json         │
+ Authors    │ AuthorsPane ──runJob──▶ PriorityAuthors ──▶ priority_authors.json, scored_queue.json         │
  Profiles   │ ProfilesPane ──runJob──▶ ProfileBuilder.syncAll (M5) ──▶ M7d profiles.json ──▶ table          │
  Caches     │ CachesPane ──runIo: report / runJob: clear──▶ DataCaches ──▶ every store in M7, pdfs/         │
             └───────────────────────────────────────────────────────────────────────────────────────────────┘
@@ -56,9 +56,8 @@ Long work (a pipeline run, a rebuild, a send) goes through `Session.runJob` on o
 | **M7a** `email_cache.json` | PipelinePane (how many emails **Clear and re-run…** will mark unread), CachesPane | the pipeline run, through PipelineRunner; **Clear selected** |
 | **M7c** `enrichment_cache.json` | AuthorsPane (a new author's held papers), CachesPane | the pipeline run; **Clear selected** |
 | **M7d** `profiles.json` | ProfilesPane (the table), CachesPane | ProfilesPane's **Rebuild** (ProfileBuilder), and each pipeline run's profile sync; **Clear selected** |
-| **M7e** `scored_queue.json` + `matched/` | ReviewPane (the table), PipelinePane (counts for the confirmation), AuthorsPane, CachesPane | ReviewPane: Approve/Drop/Back to pending (`setStatus`); the pipeline adds papers; **Send approved** removes sent ones; **Clear and re-run…** and **Clear selected** empty it |
+| **M7e** `scored_queue.json` + `matched/` | ReviewPane (the table), PipelinePane (counts for the confirmation), AuthorsPane, CachesPane | ReviewPane: Approve/Drop/Back to pending (`setStatus`), Move (`move`); the pipeline adds papers; **Add** author removes their not-matched ones; **Send approved** removes sent ones; **Clear and re-run…** and **Clear selected** empty it |
 | `sent_papers.json` | ReviewPane (**Show: Sent**, and to show a paper caught between queue and record as sent), AuthorsPane, CachesPane | **Send approved**, through ApprovedPaperSender; **Clear selected** |
-| `scored_papers.json` | CachesPane | the pipeline run; **Add** author forgets some; **Clear selected** |
 | `priority_authors.json` | AuthorsPane | **Add**, **Remove** |
 
 Every one of these reads and writes goes through the store classes in [store](../store/readme.md), whose per-file locks let the review table and a running pipeline change the queue at the same time without losing either's update.

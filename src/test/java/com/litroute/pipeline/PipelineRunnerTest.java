@@ -24,7 +24,6 @@ import com.litroute.scoring.RelevanceScorer;
 import com.litroute.security.GmailCredentials;
 import com.litroute.store.EmailCacheStore;
 import com.litroute.store.EnrichmentCacheStore;
-import com.litroute.store.ScoredPaperLog;
 import com.litroute.store.ScoredQueueStore;
 import com.litroute.store.SentPaperStore;
 import com.litroute.testing.SampleMails;
@@ -124,8 +123,7 @@ public class PipelineRunnerTest {
         AlertBatchProcessor batches = new AlertBatchProcessor(new PaperExtractor(enrichment),
                 new EnrichmentCacheStore(data.resolve("enrichment_cache.json")), processed);
         return new PipelineRunner(profiles.builder(), profiles.store(), inbox, processed, batches, matchers,
-                queue, new ScoredPaperLog(data.resolve("scored_papers.json")),
-                new SentPaperStore(data.resolve("sent_papers.json")), markRead);
+                queue, new SentPaperStore(data.resolve("sent_papers.json")), markRead);
     }
 
     private static MatcherFactory hybrid() {
@@ -146,20 +144,29 @@ public class PipelineRunnerTest {
         Report report = runner().run(CREDENTIALS, progress::add);
 
         List<ScoredPaper> queued = queue.load();
+        List<ScoredPaper> matched = queued.stream().filter(p -> p.status() == ReviewStatus.PENDING).toList();
+        List<ScoredPaper> unmatched = queued.stream().filter(p -> p.status() == ReviewStatus.UNMATCHED).toList();
         assertEquals(SampleMails.ALL.size(), report.newAlerts());
         assertTrue(report.papersHeld() > 0);
         assertEquals(report.papersHeld(), report.papersScored());
         assertEquals(0, report.unscored());
         assertTrue(report.matches() > 0 && report.matches() < report.papersHeld());
         assertEquals(queued.size(), report.queueSize());
-        // RelevanceScorer gives a paper to at most one student, so the queue holds each match once.
-        assertEquals(report.matches(), queued.size());
+        // Every paper is queued once, for one student: a match pending, any other as not matched.
+        assertEquals(report.papersHeld(), queued.size());
+        assertEquals(report.matches(), matched.size());
+        assertEquals(report.unmatched(), unmatched.size());
+        assertEquals(queued.size(), matched.size() + unmatched.size());
         assertEquals(queued.size(), queued.stream().map(p -> ScoredPaper.paperKey(p.candidate())).distinct().count());
-        assertTrue(heldPaperKeys().containsAll(queued.stream().map(p -> ScoredPaper.paperKey(p.candidate())).toList()));
-        assertTrue(queued.stream().allMatch(p -> p.status() == ReviewStatus.PENDING));
-        assertEquals(report.recommended(), queued.stream().filter(ScoredPaper::recommended).count());
-        assertTrue(progress.contains((report.papersHeld() - report.matches())
-                + " paper(s) were not close enough to any student's work and were not queued."));
+        assertEquals(heldPaperKeys(), queued.stream().map(p -> ScoredPaper.paperKey(p.candidate())).collect(Collectors.toSet()));
+        assertEquals(report.recommended(), matched.stream().filter(ScoredPaper::recommended).count());
+        assertTrue(unmatched.stream().noneMatch(ScoredPaper::recommended));
+        assertTrue(unmatched.stream().allMatch(p -> p.rationale().startsWith("Not matched: ")));
+        assertTrue("an unmatched paper's PDF stays where M2 saved it", unmatched.stream()
+                .allMatch(p -> p.candidate().pdfPath().map(path -> !path.startsWith(data.resolve("matched"))).orElse(true)));
+        assertTrue("every student's score is kept", queued.stream().allMatch(p -> p.fits().size() > 1));
+        assertTrue(progress.contains(report.unmatched() + " paper(s) were not close enough to any student's work: "
+                + "listed under Dropped as \"not matched\", where you can approve one or move it to a student."));
         assertTrue(progress.stream().anyMatch(line -> line.startsWith(SampleMails.ALL.size() + " new alert")));
     }
 
@@ -208,7 +215,6 @@ public class PipelineRunnerTest {
         assertTrue(inbox.read.isEmpty());
         assertTrue(queue.load().isEmpty());
         assertTrue(new EmailCacheStore(data.resolve("email_cache.json")).load().isEmpty());
-        assertTrue(new ScoredPaperLog(data.resolve("scored_papers.json")).load().isEmpty());
         assertTrue(heldPaperKeys().isEmpty());
 
         Report again = runner().run(CREDENTIALS, progress::add);
@@ -218,27 +224,30 @@ public class PipelineRunnerTest {
         assertEquals(first.matches(), again.matches());
         assertEquals(firstQueue.stream().map(ScoredPaper::queueKey).toList(),
                 queue.load().stream().map(ScoredPaper::queueKey).toList());
-        assertTrue("decisions were discarded", queue.load().stream().allMatch(p -> p.status() == ReviewStatus.PENDING));
+        assertEquals("decisions were discarded", firstQueue.stream().map(ScoredPaper::status).toList(),
+                queue.load().stream().map(ScoredPaper::status).toList());
         assertEquals(SampleMails.ALL.size(), inbox.read.size());
     }
 
     /**
      * A student never gets the same paper twice: after a paper was sent, clearing and re-running the
-     * pipeline over the same emails does not queue it for that student again.
+     * pipeline over the same emails neither scores nor queues it again.
      */
     @Test
-    public void aPaperAlreadySentIsNeverQueuedForItsStudentAgain() throws IOException {
-        runner().run(CREDENTIALS, progress::add);
-        ScoredPaper delivered = queue.load().get(0);
+    public void aPaperAlreadySentIsNeverQueuedAgain() throws IOException {
+        Report first = runner().run(CREDENTIALS, progress::add);
+        ScoredPaper delivered = queue.load().stream().filter(p -> p.status() == ReviewStatus.PENDING).findFirst()
+                .orElseThrow();
         new SentPaperStore(data.resolve("sent_papers.json")).addAll(List.of(delivered), Instant.now());
         queue.remove(List.of(delivered));
         runner().reset(CREDENTIALS, progress::add);
 
         Report again = runner().run(CREDENTIALS, progress::add);
 
-        assertTrue(queue.load().stream().noneMatch(p -> p.queueKey().equals(delivered.queueKey())));
-        assertEquals(queue.load().size(), again.matches());
-        assertTrue(progress.contains("1 match(es) already sent to their student earlier; not queued again."));
+        String paper = ScoredPaper.paperKey(delivered.candidate());
+        assertTrue(queue.load().stream().noneMatch(p -> ScoredPaper.paperKey(p.candidate()).equals(paper)));
+        assertEquals(first.papersHeld() - 1, again.papersScored());
+        assertEquals(first.matches() - 1, again.matches());
     }
 
     /** If Gmail can't mark the alerts unread, nothing is cleared: clearing would lose them for good. */
@@ -289,7 +298,7 @@ public class PipelineRunnerTest {
 
         assertEquals(0, withProfiles.newAlerts());
         assertEquals(withoutProfiles.papersHeld(), withProfiles.papersScored());
-        assertEquals(withProfiles.matches(), queue.load().size());
+        assertEquals(withProfiles.papersScored(), queue.load().size());
         assertTrue(withProfiles.matches() > 0);
     }
 
@@ -312,7 +321,7 @@ public class PipelineRunnerTest {
 
         assertEquals(0, retried.newAlerts());
         assertEquals(retried.papersHeld(), retried.papersScored());
-        assertEquals(retried.matches(), queue.load().size());
+        assertEquals(retried.papersScored(), queue.load().size());
         assertTrue(retried.matches() > 0);
     }
 }

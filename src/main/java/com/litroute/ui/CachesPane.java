@@ -175,20 +175,17 @@ final class CachesPane extends BorderPane {
      * Input: a cache.
      * Output: what clearing it costs, and what it leaves.
      * Used by: {@link #showConsequences}.
-     * Example: SCORED_PAPERS -> "The next run matches every extracted paper again ..."
+     * Example: REVIEW_QUEUE -> "Every paper in the Review tab goes ..."
      */
     private static String consequenceOf(Cache cache) {
         return switch (cache) {
-            case REVIEW_QUEUE -> "Every paper in the Review tab goes, with your approve and drop decisions and its PDF "
-                    + "copy; approved papers not yet sent will not be sent. They don't come back on the next run, "
-                    + "because they stay recorded as scored. Clear Scored papers too to have them matched again, as "
-                    + "pending, with your decisions gone.";
-            case SCORED_PAPERS -> "The next run matches every paper in Extracted papers again (seconds per paper with a "
-                    + "PDF), except those in the review queue. Papers turned down before may now be queued. A paper "
-                    + "already sent isn't queued for the student who received it, but it could be queued for another.";
+            case REVIEW_QUEUE -> "Every paper in the Review tab goes, matched or not, with your approve, drop and move "
+                    + "decisions and its PDF copy; approved papers not yet sent will not be sent. The next run matches "
+                    + "every paper in Extracted papers again (seconds per paper with a PDF), except those already sent, "
+                    + "and queues them afresh with your decisions gone.";
             case SENT_PAPERS -> "The record of what each student received goes, with those papers' PDF copies, and the "
                     + "Review tab's Sent list empties. Nothing else stops a student getting a paper twice: a paper sent "
-                    + "earlier that is matched again (after Clear and re-run, or clearing Scored papers) can be queued "
+                    + "earlier that is matched again (after Clear and re-run, or clearing the Review queue) can be queued "
                     + "and emailed to the same student again.";
             case EXTRACTED_PAPERS -> "The papers read from alert emails and their looked-up details go. Papers not yet "
                     + "matched (waiting for a profile, say) are lost, because their emails stay recorded as processed. "

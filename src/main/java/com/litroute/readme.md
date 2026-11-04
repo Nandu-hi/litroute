@@ -47,9 +47,10 @@ Gmail ──M1──▶ RawEmail ──M2──▶ PaperCandidate ──M3──
   │                                                       M6 RelevanceScorer
   │                                                                       │ ScoredPaper
   │                                                                       ▼
-  │                         scored_papers.json ◀── M9 ──▶ M7e scored_queue.json + matched/<student>/
+  │                                            M9 ──▶ M7e scored_queue.json + matched/<student>/
+  │                                                    (matched: pending; the rest: not matched)
   │                                                                       │
-  │                                                     M8 ReviewPane: approve / drop
+  │                                              M8 ReviewPane: approve / drop / move
   │                                                                       │ APPROVED
   │                                                                       ▼
   └──────────────── Gmail SMTP ◀── M10 ApprovedPaperSender ──▶ sent_papers.json (never sent twice)
@@ -59,14 +60,14 @@ M9 ([PipelineRunner](pipeline/PipelineRunner.java)) runs M5 → M1 → M2–M4 �
 
 ## How the modules use M7
 
-| | M7a emails | M7c papers | M7d profiles | M7e queue | scored log | sent papers |
-|---|---|---|---|---|---|---|
-| M1 | skips its IDs | | | | | |
-| M2–M4 | writes last | reads, writes | | | | |
-| M5 | | | reads, writes | | | |
-| M6 | | input (via M9) | reads | output (via M9) | | |
-| M8 | counts | | shows | shows, sets status | | shows |
-| M9 | reads, clears | reads, clears | reads | adds, clears | reads, adds, clears | reads |
-| M10 | | | reads addresses | reads, removes | | adds |
+| | M7a emails | M7c papers | M7d profiles | M7e queue | sent papers |
+|---|---|---|---|---|---|
+| M1 | skips its IDs | | | | |
+| M2–M4 | writes last | reads, writes | | | |
+| M5 | | | reads, writes | | |
+| M6 | | input (via M9) | reads | output (via M9) | |
+| M8 | counts | | shows | shows, sets status, moves | shows |
+| M9 | reads, clears | reads, clears | reads | reads, adds, clears | reads |
+| M10 | | | reads addresses | reads, removes | adds |
 
 Every store write is atomic ([AtomicFiles](util/AtomicFiles.java)), and the write order in each module is chosen so that a crash repeats work instead of losing it. See the [store readme](store/readme.md) for the details.

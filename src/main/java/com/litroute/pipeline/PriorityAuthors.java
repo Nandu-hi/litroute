@@ -2,10 +2,10 @@ package com.litroute.pipeline;
 
 import com.litroute.model.AuthorName;
 import com.litroute.model.PaperCandidate;
+import com.litroute.model.ReviewStatus;
 import com.litroute.model.ScoredPaper;
 import com.litroute.store.EnrichmentCacheStore;
 import com.litroute.store.PriorityAuthorStore;
-import com.litroute.store.ScoredPaperLog;
 import com.litroute.store.ScoredQueueStore;
 import com.litroute.store.SentPaperStore;
 import java.io.IOException;
@@ -16,31 +16,30 @@ import java.util.Set;
 
 /**
  * Changes the list of authors M6 favours. M6 scores a paper once, so a paper an author on the list wrote
- * may already have been scored, and turned down, before the author was added. Adding an author therefore
- * forgets those papers in the scored log, so the next run gives them one more look under the lower
- * cutoff. A paper that is queued or was sent has had its decision and stays as it is.
+ * may already have been scored, and turned down, before the author was added: it waits in the review
+ * queue as not matched ({@link ReviewStatus#UNMATCHED}). Adding an author therefore takes those entries
+ * out of the queue, so the next run gives them one more look under the lower cutoff. A paper the
+ * professor has acted on, or that was sent, has had its decision and stays as it is.
  *
- * Not safe to run alongside a pipeline run, which writes the same log: the UI runs it as a job.
+ * Not safe to run alongside a pipeline run, which writes the same queue: the UI runs it as a job.
  */
 public final class PriorityAuthors {
 
     private final PriorityAuthorStore authors;
     private final EnrichmentCacheStore held;
-    private final ScoredPaperLog scored;
     private final ScoredQueueStore queue;
     private final SentPaperStore sent;
 
     /**
-     * Input: the authors list, M7c, the scored log, M7e and the sent papers.
+     * Input: the authors list, M7c, M7e and the sent papers.
      * Output: the list's editor.
      * Used by: {@link #atDefaultLocations}; PriorityAuthorsTest with a temp folder.
-     * Example: {@code new PriorityAuthors(authors, m7c, log, queue, sent)}
+     * Example: {@code new PriorityAuthors(authors, m7c, queue, sent)}
      */
-    public PriorityAuthors(PriorityAuthorStore authors, EnrichmentCacheStore held, ScoredPaperLog scored,
-            ScoredQueueStore queue, SentPaperStore sent) {
+    public PriorityAuthors(PriorityAuthorStore authors, EnrichmentCacheStore held, ScoredQueueStore queue,
+            SentPaperStore sent) {
         this.authors = authors;
         this.held = held;
-        this.scored = scored;
         this.queue = queue;
         this.sent = sent;
     }
@@ -53,7 +52,7 @@ public final class PriorityAuthors {
      */
     public static PriorityAuthors atDefaultLocations() {
         return new PriorityAuthors(PriorityAuthorStore.atDefaultLocation(), EnrichmentCacheStore.atDefaultLocation(),
-                ScoredPaperLog.atDefaultLocation(), ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation());
+                ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation());
     }
 
     /**
@@ -67,11 +66,11 @@ public final class PriorityAuthors {
     }
 
     /**
-     * Adds an author, unless they are listed, and forgets their held papers in the scored log.
+     * Adds an author, unless they are listed, and takes their not-matched papers out of the queue.
      * Input: a first and a last name.
-     * Output: how many held papers the next run will score again; the list is saved first, then the log.
+     * Output: how many held papers the next run will score again; the list is saved first, then the queue.
      * Used by: AuthorsPane (M8) Add.
-     * Example: M7c holds a paper by "Alice K. Carter", scored and not queued -> add(Alice Carter) returns 1
+     * Example: M7c holds a paper by "Alice K. Carter", queued as not matched -> add(Alice Carter) returns 1
      */
     public int add(AuthorName name) throws IOException {
         List<AuthorName> names = authors.load();
@@ -80,7 +79,8 @@ public final class PriorityAuthors {
             authors.save(names);
         }
         Set<String> decided = new HashSet<>();
-        queue.load().forEach(paper -> decided.add(ScoredPaper.paperKey(paper.candidate())));
+        queue.load().stream().filter(paper -> paper.status() != ReviewStatus.UNMATCHED)
+                .forEach(paper -> decided.add(ScoredPaper.paperKey(paper.candidate())));
         sent.load().forEach(entry -> decided.add(ScoredPaper.paperKey(entry.paper().candidate())));
         List<String> again = new ArrayList<>();
         for (PaperCandidate paper : held.load().enriched()) {
@@ -89,7 +89,7 @@ public final class PriorityAuthors {
                 again.add(ScoredPaper.paperKey(paper));
             }
         }
-        return scored.removeAll(again);
+        return queue.removeUnmatched(again);
     }
 
     /**

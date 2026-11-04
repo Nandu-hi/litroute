@@ -66,7 +66,7 @@ Profiles (M7d)                                   Candidate (M7c or a local PDF)
 
 ## Assigning and recommending
 
-[match](RelevanceScorer.java#L411) gives each paper to its highest-scoring student, but only if it is a research paper (not a book review, discussion, erratum and the like; [PaperCandidate.isResearch](../model/PaperCandidate.java), which M2 already applies) with relevance ≥ 0.7 ([RELEVANCE_FLOOR](RelevanceScorer.java#L103)). Any other paper matches no one and is not queued. There is no quota per student: a student gets every paper that qualifies, however many or few.
+[match](RelevanceScorer.java#L411) gives each paper to its highest-scoring student, but only if it is a research paper (not a book review, discussion, erratum and the like; [PaperCandidate.isResearch](../model/PaperCandidate.java), which M2 already applies) with relevance ≥ 0.7 ([RELEVANCE_FLOOR](RelevanceScorer.java#L103)). Any other paper matches no one: [matchAll](RelevanceScorer.java) still returns it, as `UNMATCHED` under its highest-scoring student and unrecommended, its rationale led by the reason ("Not matched: relevance 0.64 is below the floor of 0.70 for a title and abstract."), and M9 queues it with the dropped papers so the professor can still take it up. Every returned paper keeps every student's fit (score, relevance, reasoning), which the Review tab's Move uses. There is no quota per student: a student gets every paper that qualifies, however many or few.
 
 **Why 0.7 and no quota** (October 2026, the professor's first reviewed batch of 31 alert papers): with the old rule every paper was queued and each student's top 3 above 0.5 recommended, so 20 of the 31 queued papers were dropped, 15 of them landing on RP4-mh-char, the broadest hazard profile. Five were book reviews, a discussion, a closure and an erratum (one book review scored relevance 0.96); nine were below 0.5. Above 0.5, six of the 17 research papers were generic hazard or disaster-management papers the professor dropped, and the quota of 3 had cut a rainstorm hazard-chain paper (relevance 0.91) from RP4. Raising the floor while queuing only what clears it:
 
@@ -134,17 +134,17 @@ M6 reads two stores and writes none itself; M9 writes its result.
 
 ```
 M7d profiles.json ──loadAll()──▶ RelevanceScorer(provider, profiles)   (vectors, text; modelId must match)
-M7c enrichment_cache.json ──enriched, minus papers already scored──▶ match(batch)
-                                                                        │ Map<student, List<ScoredPaper>>
-                         sent_papers.json ── keys already sent ──▶ M9 filters them out
+M7c enrichment_cache.json ──enriched, minus papers already scored──▶ matchAll(batch)
+                                                                        │ List<ScoredPaper> (PENDING or UNMATCHED)
+                         sent_papers.json ── papers already sent ──▶ M9 never scores them
                                                                         ▼
-                         M7e scored_queue.json ◀── addAll ── M9 (matched PDFs copied to matched/<student>/)
-                         scored_papers.json   ◀── addAll(paperKeys) ── M9, after the queue
+                         M7e scored_queue.json ◀── addAll ── M9 (matched and not matched; matched PDFs
+                                                                copied to matched/<student>/)
 ```
 
 - **M7d → M6:** a profile saved by another model is rejected; one saved without text forces `SEMANTIC` only (and the default `HYBRID` refuses it).
-- **M7c → M6:** M9 passes every deduplicated paper not yet in `scored_papers.json` or the queue, so papers left unscored by a failed run are scored by the next one.
-- **M6 → M7e:** each `ScoredPaper` carries the candidate as M7c held it; M7e keys it by `queueKey()` and copies its `pdfPath` into the student's folder. Re-scoring a queued paper updates its score and rationale but keeps the professor's decision.
+- **M7c → M6:** M9 passes every deduplicated paper neither in the queue (which holds every paper judged, matched or not) nor sent, so papers left unscored by a failed run are scored by the next one.
+- **M6 → M7e:** each `ScoredPaper` carries the candidate as M7c held it; M7e keys it by `queueKey()` and copies its `pdfPath` into the student's folder (a not-matched paper's only once the professor takes it up). Re-scoring a queued paper updates its score and rationale but keeps the professor's decision.
 - **RelevanceScorerCli** is the exception that writes: without a path it reads M7c and M7d and calls `ScoredQueueStore.addAll(matches)` directly.
 
 ## Running it

@@ -88,8 +88,8 @@ public final class PipelineRunnerCli {
             try (Specter2EmbeddingProvider provider = Specter2EmbeddingProvider.atDefaultLocation()) {
                 Report report = PipelineRunner.atDefaultLocations(provider, mode, maxUnread, markRead).run(credentials.get(), System.out::println);
                 System.out.printf("%nDone: %d new alert(s), %d paper(s) scored, %d match(es) (%d recommended), "
-                        + "%d in the review queue.%n", report.newAlerts(), report.papersScored(), report.matches(),
-                        report.recommended(), report.queueSize());
+                        + "%d not matched, %d in the review queue.%n", report.newAlerts(), report.papersScored(),
+                        report.matches(), report.recommended(), report.unmatched(), report.queueSize());
                 if (sendApproved) {
                     ApprovedPaperSender.Report sent = ApprovedPaperSender.atDefaultLocations()
                             .send(credentials.get(), System.out::println);

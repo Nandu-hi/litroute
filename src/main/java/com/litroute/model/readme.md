@@ -27,6 +27,7 @@ ScoredPaper  (status = ReviewStatus.PENDING)              in M7e review queue
    │  M8 professor approves / drops
    ▼
 ScoredPaper  (status = APPROVED ─▶ M10 sends to the student ─▶ SENT, or DROPPED)
+ScoredPaper  (status = UNMATCHED: M6 matched it to no one; listed with the dropped papers)
 ```
 
 ## The records
@@ -79,6 +80,7 @@ How relevant one candidate is to one student, and why.
 | `score` | 0.0–1.0: *relevance* times *share*. The constructor rejects values outside this range. |
 | `rationale` | Readable evidence: the share, the relevance, shared words, the closest of the student's papers, and what the paper was scored from. |
 | `status` | The professor's decision so far ([ReviewStatus](ReviewStatus.java)). |
+| `fits` | How M6 scored the paper for every student (score, relevance, reasoning), best first; empty for entries queued before they were kept. [movedTo(student)](ScoredPaper.java) uses them when the professor gives the paper to another student. |
 | `recommended` | Whether M6 recommends it to the professor (★ in the review screen). The matcher only returns papers it recommends. The professor still decides. |
 | `relevance` | 0.0–1.0, optional: how close the paper is to the student's own work whoever else it suits (0.9 as close as their own papers, 0.1 as close as another student's). Empty on older queue entries that did not record it. |
 | `listedAuthor` | Optional: the paper's author, as printed on it, who is on the professor's authors list. Such a paper is held to a lower cutoff and listed first. Empty for any other paper, and on older queue entries. |
@@ -92,7 +94,7 @@ A first and a last name, spelled out: the constructor refuses a blank part or an
 
 ### [ReviewStatus](ReviewStatus.java)
 
-An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10), `DROPPED` (not to be sent) or `SENT` (emailed to the student by M10: such a paper leaves the queue for [SentPaperStore](../store/SentPaperStore.java) and is never queued for that student again).
+An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10), `DROPPED` (not to be sent), `SENT` (emailed to the student by M10: such a paper leaves the queue for [SentPaperStore](../store/SentPaperStore.java) and is never queued again) or `UNMATCHED` (M6 matched it to no one, below the floor or not a research paper: queued under its closest student and shown with the dropped papers, until the professor approves, drops, returns it to pending or moves it).
 
 ## Interaction with M7 (the stores)
 
@@ -104,7 +106,6 @@ The records are what the stores hold, but the stores never serialize them direct
 | `PaperCandidate` | **M7c** `enrichment_cache.json` (`enriched` and `lookups`), and inside every M7e / sent entry | [StoredCandidate](../store/StoredCandidate.java) | M7c lookups: `Titles.compact(title)` |
 | `Profile` / `ProfilePaper` | **M7d** `profiles.json` | `StoredProfile` / `StoredPaper` in [ProfileStore](../store/ProfileStore.java) | profile `name` |
 | `ScoredPaper` | **M7e** `scored_queue.json`; `sent_papers.json` once sent | `StoredScoredPaper` in [ScoredQueueStore](../store/ScoredQueueStore.java) | `queueKey()` |
-| `ScoredPaper.paperKey` | `scored_papers.json` ([ScoredPaperLog](../store/ScoredPaperLog.java)) | a JSON array of keys | `paperKey()` |
 | `ReviewStatus` | inside each M7e / sent entry | its name | — |
 
 The `with...` copies are how a store changes a record: M7e's `setStatus` stores `withStatus(...)`, and filing a matched PDF into a student's folder stores `candidate.withPdfPath(copy)`.

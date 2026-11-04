@@ -128,16 +128,15 @@ final class PipelinePane extends BorderPane {
             summary.setText("Could not read the stores: " + e.getMessage());
             return;
         }
-        long decided = queued.stream().filter(paper -> paper.status() != ReviewStatus.PENDING).count();
+        long decided = queued.stream().filter(paper -> paper.status() == ReviewStatus.APPROVED
+                || paper.status() == ReviewStatus.DROPPED).count();
         Alert confirm = new Alert(Alert.AlertType.CONFIRMATION, String.format("This undoes every run so far and runs "
                 + "the pipeline again over the same alert emails:%n%n"
                 + "• the %d processed alert email(s) are marked unread in Gmail;%n"
                 + "• the review queue is emptied: %d paper(s), %d of them approved or dropped - those decisions are "
                 + "lost;%n"
-                + "• the matched PDF copies in the students' folders, the scored papers and the extracted papers are "
-                + "cleared.%n%n"
-                + "Papers already sent are kept on record, and are never queued again for the student who received "
-                + "them. If Gmail can't be reached, nothing is cleared.", processed, queued.size(), decided),
+                + "• the matched PDF copies in the students' folders and the extracted papers are cleared.%n%n"
+                + "Papers already sent are kept on record, and are never queued again. If Gmail can't be reached, nothing is cleared.", processed, queued.size(), decided),
                 ButtonType.CANCEL, ButtonType.OK);
         confirm.setTitle("Clear and re-run");
         confirm.setHeaderText("Clear all matches and re-run the pipeline?");
@@ -195,15 +194,16 @@ final class PipelinePane extends BorderPane {
              * Input: none (UI thread).
              * Output: none; the summary shows the run's numbers and the review queue reloads.
              * Used by: JavaFX, when call() returns.
-             * Example: -> "Last run: 6 new alert(s), 31 paper(s) scored, 11 match(es) queued (11 recommended). The review queue holds 11."
+             * Example: -> "Last run: 6 new alert(s), 31 paper(s) scored, 11 match(es) queued (11 recommended), 20 not matched (under Dropped). The review queue holds 31."
              */
             @Override
             protected void succeeded() {
                 Report report = getValue();
                 String waiting = report.unscored() > 0 ? ", " + report.unscored() + " waiting for profiles" : "";
                 summary.setText(String.format("Last run: %d new alert(s), %d paper(s) scored, %d match(es) queued "
-                        + "(%d recommended)%s. The review queue holds %d.", report.newAlerts(), report.papersScored(),
-                        report.matches(), report.recommended(), waiting, report.queueSize()));
+                        + "(%d recommended), %d not matched (under Dropped)%s. The review queue holds %d.",
+                        report.newAlerts(), report.papersScored(), report.matches(), report.recommended(),
+                        report.unmatched(), waiting, report.queueSize()));
                 log.line("Run finished.");
                 queueChanged.run();
             }

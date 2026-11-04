@@ -12,7 +12,6 @@ All files live in `~/.litroute/data/` by default (each class has `atDefaultLocat
 | **M7c** [EnrichmentCacheStore](EnrichmentCacheStore.java) | `enrichment_cache.json` | M3/M4 → M6 | The enriched, deduplicated candidates, plus the lookup cache |
 | **M7d** [ProfileStore](ProfileStore.java) | `profiles.json` | M5 → M6 | Every student's [Profile](../model/Profile.java) (vectors, text and keywords) |
 | **M7e** [ScoredQueueStore](ScoredQueueStore.java) | `scored_queue.json` + `matched/<profile>/` | M6 → M8/M9 | The professor's review queue of [ScoredPaper](../model/ScoredPaper.java)s, and each student's matched PDFs |
-| [ScoredPaperLog](ScoredPaperLog.java) | `scored_papers.json` | M6 → M9 | The papers M6 has already scored, matched or not, so a run scores only new ones |
 | [SentPaperStore](SentPaperStore.java) | `sent_papers.json` | M10 → M9 | Every paper emailed to its student, and when; such a paper is never queued for that student again |
 | [PriorityAuthorStore](PriorityAuthorStore.java) | `priority_authors.json` | M8 → M6 | The authors whose papers M6 favours: a setting, not a cache |
 
@@ -53,8 +52,7 @@ student PDFs ──▶ M5 ProfileBuilder ──▶ M7d profiles.json ──┐  
 | **M7a** `email_cache.json` | [AlertBatchProcessor](../ingestion/extract/AlertBatchProcessor.java) (`process`: last; `forgetAll`: last) | [PipelineRunner](../pipeline/PipelineRunner.java) (IDs for M1 to skip; IDs to mark unread on reset), AlertBatchProcessor, [PipelinePane](../ui/PipelinePane.java) (count) |
 | **M7c** `enrichment_cache.json` | AlertBatchProcessor (papers + lookups in one write; empty on `forgetAll`) | AlertBatchProcessor (held papers, live lookups for [CachingPaperEnricher](../ingestion/enrich/CachingPaperEnricher.java)), [RelevanceScorerCli](../scoring/RelevanceScorerCli.java) |
 | **M7d** `profiles.json` | [ProfileBuilder](../profile/ProfileBuilder.java) (`save`, `remove`) | ProfileBuilder, PipelineRunner (profiles for M6), [ApprovedPaperSender](../delivery/ApprovedPaperSender.java) (addresses), [ProfilesPane](../ui/ProfilesPane.java), the CLIs |
-| **M7e** `scored_queue.json` + `matched/` | PipelineRunner (`addAll`, `clear`), [ReviewPane](../ui/ReviewPane.java) (`setStatus`), ApprovedPaperSender (`remove`), RelevanceScorerCli (`addAll`) | ReviewPane, PipelineRunner (already-queued papers, counts), ApprovedPaperSender (approved papers and their PDF copies) |
-| `scored_papers.json` | PipelineRunner (`addAll` after the queue; `clear` on reset), PriorityAuthors (`removeAll` when an author is added) | PipelineRunner |
+| **M7e** `scored_queue.json` + `matched/` | PipelineRunner (`addAll`, `clear`), [ReviewPane](../ui/ReviewPane.java) (`setStatus`, `move`), ApprovedPaperSender (`remove`), PriorityAuthors (`removeUnmatched` when an author is added), RelevanceScorerCli (`addAll`) | ReviewPane, PipelineRunner (already-scored papers, counts), ApprovedPaperSender (approved papers and their PDF copies) |
 | `sent_papers.json` | ApprovedPaperSender (`addAll` before removing from M7e), [DataCaches](DataCaches.java) (`clear`) | PipelineRunner (never re-queue), ApprovedPaperSender (`settle`), ReviewPane (**Show: Sent**), [PriorityAuthors](../pipeline/PriorityAuthors.java) |
 | `priority_authors.json` | [PriorityAuthors](../pipeline/PriorityAuthors.java) | PriorityAuthors, PipelineRunner and RelevanceScorerCli (the list for M6) |
 
@@ -93,6 +91,8 @@ The review queue: a JSON list of scored (paper, student) pairs in the order they
   - A paper without a PDF (paywalled), or whose download has since gone, is still queued, with no file; a gone PDF is logged.
   - A profile name that would lead outside the folder (`../x`) is refused.
 - **[setStatus(paper, status)](ScoredQueueStore.java):** records the professor's decision. Returns `false` if that paper isn't queued for that student.
+- **Not matched.** The queue holds every paper M6 judged, so it is also the record of what is already scored. A paper M6 matched to no one is queued as `UNMATCHED` under its closest student, and keeps pointing at its download in `pdfs/` until the professor decides on it or moves it; only then is its PDF copied into a student's folder. [removeUnmatched(keys)](ScoredQueueStore.java) takes such entries out again (and only those) when an author is added to the list, so the next run scores them once more.
+- **[move(paper, student)](ScoredQueueStore.java):** gives a queued paper to another student instead ([ScoredPaper.movedTo](../model/ScoredPaper.java)). It keeps its place in the queue and takes M6's score, relevance and reasoning for that student, kept in the entry's `fits`. A dropped or not-matched paper becomes pending; a pending or approved one keeps its status. Its PDF is copied into the new student's folder, and the old copy is deleted once nothing else points to it, after the queue is written. Moving to a student who already has the paper queued is refused.
 - **[clear()](ScoredQueueStore.java):** empties the queue, decisions included, and deletes the PDF copies its entries point to in the students' folders (and any folder left empty). A file outside `matched/` is never touched. Used by M9's **Clear and re-run**.
 - **Concurrency:** the GUI (M8) changes statuses while the pipeline (M9) adds papers. Every change is a read-modify-write inside `synchronized` on **one lock per file path**, shared by all store objects for that file, so neither side can lose the other's update.
 - Queues saved before recommendations existed load with `recommended = false`.
@@ -108,9 +108,6 @@ The papers already emailed to their students, kept **apart from the review queue
 - **[queue.remove(papers)](ScoredQueueStore.java)** takes sent papers out of the queue, leaving their PDF copies in the students' folders.
 - One lock per file path, like the queue.
 
-### [ScoredPaperLog](ScoredPaperLog.java)
-
-The paper keys ([ScoredPaper.paperKey](../model/ScoredPaper.java)) M6 has scored, whether or not they were matched. M9 records a batch here only after its matches are in the queue, so a crash in between scores the batch again rather than losing it. [clear()](ScoredPaperLog.java) forgets them all, for **Clear and re-run**; [removeAll(keys)](ScoredPaperLog.java) forgets some, when an author is added to the list.
 
 ### [PriorityAuthorStore](PriorityAuthorStore.java)
 
@@ -123,14 +120,13 @@ Measures and clears what the stores keep, one `Cache` per row of the tab. It hol
 | Cache | Measures | Clearing it |
 |---|---|---|
 | Review queue | `scored_queue.json` + the queue's PDF copies | `ScoredQueueStore.clear` |
-| Scored papers | `scored_papers.json` | `ScoredPaperLog.clear` |
 | Sent papers | `sent_papers.json` + PDF copies only the sent papers point to | `SentPaperStore.clear`, then those copies |
 | Extracted papers | `enrichment_cache.json` | saves empty contents |
 | Processed emails | `email_cache.json` | saves an empty set, and doesn't touch Gmail |
 | Downloaded PDFs | `pdfs/` | deletes what is in the folder |
 | Student profiles | `profiles.json` | `ProfileStore.clear`; the students' PDF folders stay |
 
-Caches are cleared in that order, whichever were chosen: the queue before the scored log and M7c before M7a, as **Clear and re-run** does, so a crash repeats work rather than losing it. `report()` says how big everything else in the folder is (the authors list, backups, stray copies) and nothing clears that. A corrupt store still shows its size and says it can't be read, though clearing the queue or the sent papers then fails, since each has to read its entries to find their PDF copies.
+Caches are cleared in that order, whichever were chosen: the queue before the sent papers and M7c before M7a, as **Clear and re-run** does, so a crash repeats work rather than losing it. `report()` says how big everything else in the folder is (the authors list, backups, stray copies) and nothing clears that. A corrupt store still shows its size and says it can't be read, though clearing the queue or the sent papers then fails, since each has to read its entries to find their PDF copies.
 
 ### [StoredCandidate](StoredCandidate.java): the shared JSON shape of a `PaperCandidate`
 

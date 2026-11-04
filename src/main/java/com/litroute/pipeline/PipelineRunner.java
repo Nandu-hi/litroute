@@ -13,6 +13,7 @@ import com.litroute.ingestion.extract.PaperExtractor;
 import com.litroute.model.PaperCandidate;
 import com.litroute.model.Profile;
 import com.litroute.model.RawEmail;
+import com.litroute.model.ReviewStatus;
 import com.litroute.model.ScoredPaper;
 import com.litroute.profile.ProfileBuilder;
 import com.litroute.profile.ProfileBuilder.BuildReport;
@@ -24,11 +25,11 @@ import com.litroute.store.EmailCacheStore;
 import com.litroute.store.EnrichmentCacheStore;
 import com.litroute.store.PriorityAuthorStore;
 import com.litroute.store.ProfileStore;
-import com.litroute.store.ScoredPaperLog;
 import com.litroute.store.ScoredQueueStore;
 import com.litroute.store.SentPaperStore;
 import java.io.IOException;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -47,13 +48,15 @@ import java.util.function.Consumer;
  *       at unread mail only, so an alert marked read before M7a held it would be lost to a crash. When
  *       testing, the runner can be told to leave the alerts unread; M7a still keeps them from being
  *       processed twice;
- *   <li>match the papers no matcher has seen yet against the profiles (M6) and add the matches to the
- *       review queue (M7e), then record those papers as scored ({@link ScoredPaperLog}), matched or not.
+ *   <li>match the papers no matcher has seen yet against the profiles (M6) and add them all to the
+ *       review queue (M7e): the matches as pending, the rest as {@link ReviewStatus#UNMATCHED}, listed
+ *       with the dropped papers under the student each is closest to.
  * </ol>
  *
  * The batch M6 sees is every deduplicated paper not yet scored, not just this run's emails, so papers
  * left unscored by an earlier run that failed after saving M7c (no profiles yet, or the matcher failed)
- * are scored by the next one. A paper already in the review queue counts as scored. Each step's stores
+ * are scored by the next one. A paper counts as scored once it is in the review queue or was sent to a
+ * student: the queue holds every paper M6 judged, matched or not. Each step's stores
  * are written in the order that makes a crash repeat work rather than skip it. The matcher favours the papers
  * of the authors on the professor's list ({@link PriorityAuthors}), read afresh for each run.
  */
@@ -79,12 +82,13 @@ public final class PipelineRunner {
      * @param papersHeld   deduplicated papers in M7c after the run
      * @param papersScored papers matched in this run (0 when there were no profiles to match against)
      * @param unscored     papers held but still not scored: waiting for a profile to exist
-     * @param matches      (paper, student) pairs added to or refreshed in the review queue
+     * @param matches      (paper, student) pairs added to or refreshed in the review queue as matches
      * @param recommended  of those, how many were recommended
      * @param queueSize    entries in the review queue after the run
+     * @param unmatched    papers matched to no one, queued as {@link ReviewStatus#UNMATCHED} with the dropped ones
      */
     public record Report(BuildReport profiles, int newAlerts, int papersHeld, int papersScored, int unscored,
-            int matches, int recommended, int queueSize) {
+            int matches, int recommended, int queueSize, int unmatched) {
     }
 
     /**
@@ -105,7 +109,6 @@ public final class PipelineRunner {
     private final AlertBatchProcessor batches;
     private final MatcherFactory matchers;
     private final ScoredQueueStore queue;
-    private final ScoredPaperLog scored;
     private final SentPaperStore sent;
     private final boolean markRead;
 
@@ -113,7 +116,7 @@ public final class PipelineRunner {
      * Input: every stage and store (listed below).
      * Output: a runner that marks processed alerts read.
      * Used by: tests wiring their own stages; the other constructor.
-     * Example: {@code new PipelineRunner(builder, profiles, fakeGmail, m7a, batches, matchers, queue, log, sent)}
+     * Example: {@code new PipelineRunner(builder, profiles, fakeGmail, m7a, batches, matchers, queue, sent)}
      *
      * @param profileBuilder  syncs the profile folders into {@code profiles}
      * @param profiles        M7d, read after the sync
@@ -121,14 +124,13 @@ public final class PipelineRunner {
      * @param processedEmails M7a, the same store {@code batches} marks processed emails in
      * @param batches         M2-M4, saving into M7c and M7a
      * @param matchers        M6
-     * @param queue           M7e
-     * @param scored          the papers M6 has matched already
-     * @param sent            the papers already emailed to their students, never queued for them again
+     * @param queue           M7e, which also tells which papers M6 has judged already
+     * @param sent            the papers already emailed to their students, never scored or queued again
      */
     public PipelineRunner(ProfileBuilder profileBuilder, ProfileStore profiles, EmailSource emails,
             EmailCacheStore processedEmails, AlertBatchProcessor batches, MatcherFactory matchers,
-            ScoredQueueStore queue, ScoredPaperLog scored, SentPaperStore sent) {
-        this(profileBuilder, profiles, emails, processedEmails, batches, matchers, queue, scored, sent, true);
+            ScoredQueueStore queue, SentPaperStore sent) {
+        this(profileBuilder, profiles, emails, processedEmails, batches, matchers, queue, sent, true);
     }
 
     /**
@@ -139,7 +141,7 @@ public final class PipelineRunner {
      */
     public PipelineRunner(ProfileBuilder profileBuilder, ProfileStore profiles, EmailSource emails,
             EmailCacheStore processedEmails, AlertBatchProcessor batches, MatcherFactory matchers,
-            ScoredQueueStore queue, ScoredPaperLog scored, SentPaperStore sent, boolean markRead) {
+            ScoredQueueStore queue, SentPaperStore sent, boolean markRead) {
         this.profileBuilder = profileBuilder;
         this.profiles = profiles;
         this.emails = emails;
@@ -147,7 +149,6 @@ public final class PipelineRunner {
         this.batches = batches;
         this.matchers = matchers;
         this.queue = queue;
-        this.scored = scored;
         this.sent = sent;
         this.markRead = markRead;
     }
@@ -177,22 +178,21 @@ public final class PipelineRunner {
         return new PipelineRunner(new ProfileBuilder(ProfileBuilder.defaultProfilesRoot(), profiles, provider),
                 profiles, new GmailEmailSource(maxUnread), processedEmails, batches,
                 students -> new RelevanceScorer(provider, students, PriorityAuthorStore.atDefaultLocation().load()),
-                ScoredQueueStore.atDefaultLocation(), ScoredPaperLog.atDefaultLocation(),
-                SentPaperStore.atDefaultLocation(), markRead);
+                ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation(), markRead);
     }
 
     /**
      * Undoes every run so far, so the next run processes the same alert emails from scratch: extracted,
      * enriched, matched and queued again. First the emails M7a has recorded are marked unread in Gmail;
      * only if that worked are the review queue (with the professor's decisions and the students' PDF
-     * copies), the record of scored papers, M7c and finally M7a cleared. So a Gmail failure changes
+     * copies), M7c and finally M7a cleared. So a Gmail failure changes
      * nothing, and a crash part-way leaves M7a for last: its emails are skipped, never lost. Downloaded
      * PDFs stay where M2 saved them, and the record of papers already sent is kept, so the re-run never
-     * queues a paper for a student who has received it.
+     * scores or queues a paper that was sent.
      * Input: the Gmail account (not cleared) and a progress sink.
      * Output: how many emails were processed / marked unread and queue entries discarded; IOException if Gmail failed (then nothing is cleared).
      * Used by: PipelinePane (M8) Clear and re-run, before run().
-     * Example: M7a holds 6 IDs, 6 in inbox, queue of 9 -> ResetReport(6, 6, 9); M7a/M7c/M7e/scored log empty
+     * Example: M7a holds 6 IDs, 6 in inbox, queue of 9 -> ResetReport(6, 6, 9); M7a/M7c/M7e empty
      */
     public ResetReport reset(GmailCredentials credentials, Consumer<String> progress) throws IOException {
         Set<String> processed = processedEmails.load();
@@ -201,20 +201,20 @@ public final class PipelineRunner {
         int unread = emails.markUnread(credentials, processed);
         progress.accept(unread + " of " + processed.size() + " are unread again"
                 + (unread < processed.size() ? "; the rest are no longer in the inbox and won't be fetched again." : "."));
-        // Only now that Gmail agreed: clear M7e, the scored log, then M7c and M7a (last).
+        // Only now that Gmail agreed: clear M7e, then M7c and M7a (last).
         int queued = queue.clear();
-        scored.clear();
         batches.forgetAll();
-        progress.accept("Cleared the review queue (" + queued + " paper(s)), the scored papers and the processed emails.");
+        progress.accept("Cleared the review queue (" + queued + " paper(s)), the extracted papers and the processed "
+                + "emails.");
         return new ResetReport(processed.size(), unread, queued);
     }
 
     /**
      * Runs the pipeline once.
      * Input: the Gmail account (not cleared) and a progress sink.
-     * Output: what the run did; M7d, M7a, M7c, M7e and the scored log updated; IOException if a store, the local model or the matcher failed.
+     * Output: what the run did; M7d, M7a, M7c and M7e updated; IOException if a store, the local model or the matcher failed.
      * Used by: PipelinePane (M8) Run, PipelineRunnerCli.
-     * Example: 6 new alerts, 31 papers, 8 profiles -> Report(newAlerts 6, papersHeld 31, papersScored 31, matches 11, ...)
+     * Example: 6 new alerts, 31 papers, 8 profiles -> Report(newAlerts 6, papersHeld 31, papersScored 31, matches 11, ..., unmatched 20)
      */
     public Report run(GmailCredentials credentials, Consumer<String> progress) throws IOException {
         // 1. M5: embed new or changed profile PDFs into M7d.
@@ -239,43 +239,34 @@ public final class PipelineRunner {
             progress.accept("Marked " + marked + " of " + alerts.size() + " alert email(s) as read in Gmail.");
         }
 
-        // 5. M6 on papers neither scored before nor already queued.
-        Set<String> done = scored.load();
+        // 5. M6 on papers neither queued (matched or not) nor sent: the queue holds every paper M6 has judged.
+        Set<String> done = new HashSet<>();
         for (ScoredPaper queued : queue.load()) {
             done.add(ScoredPaper.paperKey(queued.candidate()));
         }
+        sent.load().forEach(entry -> done.add(ScoredPaper.paperKey(entry.paper().candidate())));
         List<PaperCandidate> fresh = held.stream().filter(paper -> !done.contains(ScoredPaper.paperKey(paper))).toList();
         progress.accept(held.size() + " deduplicated paper(s) held, " + fresh.size() + " not scored yet.");
         if (fresh.isEmpty()) {
-            return new Report(built, alerts.size(), held.size(), 0, 0, 0, 0, queue.load().size());
+            return new Report(built, alerts.size(), held.size(), 0, 0, 0, 0, queue.load().size(), 0);
         }
         if (students.isEmpty()) {
             progress.accept("No profiles yet, so nothing was scored: add a folder of PDFs per student under "
                     + ProfileBuilder.defaultProfilesRoot() + " and run again.");
-            return new Report(built, alerts.size(), held.size(), 0, fresh.size(), 0, 0, queue.load().size());
+            return new Report(built, alerts.size(), held.size(), 0, fresh.size(), 0, 0, queue.load().size(), 0);
         }
 
         progress.accept("Matching " + fresh.size() + " paper(s) against " + students.size() + " profile(s)...");
-        // A student never gets the same paper twice: what was already sent to them is not queued again.
-        Set<String> alreadySent = sent.sentKeys();
-        Map<String, List<ScoredPaper>> matches = new LinkedHashMap<>();
-        int resent = 0;
-        for (Map.Entry<String, List<ScoredPaper>> entry : matchers.create(students.values()).match(fresh).entrySet()) {
-            List<ScoredPaper> unsent = entry.getValue().stream().filter(paper -> !alreadySent.contains(paper.queueKey()))
-                    .toList();
-            resent += entry.getValue().size() - unsent.size();
-            matches.put(entry.getKey(), unsent);
-        }
-        if (resent > 0) {
-            progress.accept(resent + " match(es) already sent to their student earlier; not queued again.");
-        }
-        List<ScoredPaper> matched = matches.values().stream().flatMap(List::stream).toList();
-        // Queue (M7e) first, then the scored log: a crash in between scores the batch again, never loses it.
-        List<ScoredPaper> updated = queue.addAll(matched);
-        scored.addAll(fresh.stream().map(ScoredPaper::paperKey).toList());
+        List<ScoredPaper> judged = matchers.create(students.values()).matchAll(fresh);
+        List<ScoredPaper> matched = judged.stream().filter(paper -> paper.status() != ReviewStatus.UNMATCHED).toList();
+        List<ScoredPaper> unmatched = judged.stream().filter(paper -> paper.status() == ReviewStatus.UNMATCHED).toList();
+        List<ScoredPaper> updated = queue.addAll(judged);
 
         int recommended = (int) matched.stream().filter(ScoredPaper::recommended).count();
-        for (Map.Entry<String, List<ScoredPaper>> entry : matches.entrySet()) {
+        Map<String, List<ScoredPaper>> byStudent = new LinkedHashMap<>();
+        students.keySet().forEach(name -> byStudent.put(name, matched.stream()
+                .filter(paper -> paper.profileName().equals(name)).toList()));
+        for (Map.Entry<String, List<ScoredPaper>> entry : byStudent.entrySet()) {
             long picked = entry.getValue().stream().filter(ScoredPaper::recommended).count();
             progress.accept("  " + entry.getKey() + ": " + entry.getValue().size() + " matched, " + picked + " recommended");
         }
@@ -284,11 +275,12 @@ public final class PipelineRunner {
         if (byListedAuthors > 0) {
             progress.accept(byListedAuthors + " of them by authors on your list.");
         }
-        if (matched.size() + resent < fresh.size()) {
-            progress.accept((fresh.size() - matched.size() - resent) + " paper(s) were not close enough to any student's "
-                    + "work and were not queued.");
+        if (!unmatched.isEmpty()) {
+            progress.accept(unmatched.size() + " paper(s) were not close enough to any student's work: listed under "
+                    + "Dropped as \"not matched\", where you can approve one or move it to a student.");
         }
-        return new Report(built, alerts.size(), held.size(), fresh.size(), 0, matched.size(), recommended, updated.size());
+        return new Report(built, alerts.size(), held.size(), fresh.size(), 0, matched.size(), recommended,
+                updated.size(), unmatched.size());
     }
 
     /**

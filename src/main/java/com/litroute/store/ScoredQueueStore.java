@@ -2,7 +2,6 @@ package com.litroute.store;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.litroute.model.PaperCandidate;
 import com.litroute.model.ReviewStatus;
 import com.litroute.model.ScoredPaper;
 import com.litroute.util.AtomicFiles;
@@ -31,7 +30,9 @@ import java.util.stream.Stream;
  * It also keeps each student's matched PDFs together: a queued paper with a PDF has it copied into
  * the student's folder ({@code ~/.litroute/data/matched/<profile>/} by default), and its queue entry
  * points to that copy, so M10 can attach it. A paper matched to two students is copied into both
- * folders. A paper without a PDF (paywalled, say) is queued all the same.
+ * folders. A paper without a PDF (paywalled, say) is queued all the same. A paper M6 matched to no one
+ * ({@link ReviewStatus#UNMATCHED}) keeps pointing at its download until the professor takes it up
+ * (approves, drops, returns it to pending or moves it), and only then is copied.
  *
  * The GUI (M8) changes statuses while the pipeline (M9) adds newly scored papers, so every change is
  * a read-modify-write done under one lock per file (all store objects for the same file share it),
@@ -53,10 +54,11 @@ public final class ScoredQueueStore {
      * absent in queues written before recommendations existed, and reads as false. {@code relevance} is
      * null when the matcher did not measure it; in queues written before it was stored, it is read from
      * the rationale, which states it. {@code listedAuthor} is null for a paper by no listed author, and in
-     * queues written before the authors list existed. {@link SentPaperStore} stores sent papers in the same shape.
+     * queues written before the authors list existed. {@code fits} is null in queues written before every
+     * student's score was kept. {@link SentPaperStore} stores sent papers in the same shape.
      */
     record StoredScoredPaper(StoredCandidate candidate, String profileName, double score, String rationale,
-            ReviewStatus status, Boolean recommended, Double relevance, String listedAuthor) {
+            ReviewStatus status, Boolean recommended, Double relevance, String listedAuthor, List<StoredFit> fits) {
 
         /**
          * Input: a scored paper.
@@ -67,7 +69,7 @@ public final class ScoredQueueStore {
         static StoredScoredPaper from(ScoredPaper scored) {
             return new StoredScoredPaper(StoredCandidate.from(scored.candidate()), scored.profileName(), scored.score(),
                     scored.rationale(), scored.status(), scored.recommended(), scored.relevance().orElse(null),
-                    scored.listedAuthor().orElse(null));
+                    scored.listedAuthor().orElse(null), scored.fits().stream().map(StoredFit::from).toList());
         }
 
         /**
@@ -80,10 +82,35 @@ public final class ScoredQueueStore {
             try {
                 return new ScoredPaper(candidate.toCandidate(), profileName, score, rationale, status,
                         Boolean.TRUE.equals(recommended), Optional.ofNullable(relevance).or(() -> statedIn(rationale)),
-                        Optional.ofNullable(listedAuthor));
+                        Optional.ofNullable(listedAuthor),
+                        fits == null ? List.of() : fits.stream().map(StoredFit::toFit).toList());
             } catch (IllegalArgumentException | NullPointerException e) {
                 throw new IOException("Corrupt queue entry for " + profileName + ": " + e.getMessage(), e);
             }
+        }
+    }
+
+    /** JSON shape of one student's {@link ScoredPaper.Fit}. */
+    record StoredFit(String profileName, double score, double relevance, String rationale) {
+
+        /**
+         * Input: a fit.
+         * Output: its JSON shape.
+         * Used by: {@link StoredScoredPaper#from}.
+         * Example: Fit(bob, 0.21, 0.55, "...") -> StoredFit(bob, 0.21, 0.55, "...")
+         */
+        static StoredFit from(ScoredPaper.Fit fit) {
+            return new StoredFit(fit.profileName(), fit.score(), fit.relevance(), fit.rationale());
+        }
+
+        /**
+         * Input: none (this stored fit).
+         * Output: the fit; IllegalArgumentException if invalid (reported as a corrupt entry).
+         * Used by: {@link StoredScoredPaper#toScoredPaper}.
+         * Example: StoredFit(bob, 0.21, 0.55, "...") -> Fit(bob, 0.21, 0.55, "...")
+         */
+        ScoredPaper.Fit toFit() {
+            return new ScoredPaper.Fit(profileName, score, relevance, rationale);
         }
     }
 
@@ -174,7 +201,8 @@ public final class ScoredQueueStore {
     /**
      * Adds newly scored papers. A paper already queued for the same student takes the new score, rationale
      * and recommendation but keeps its place and review status, so re-scoring never undoes a decision.
-     * Each PDF is copied into the student's folder and the entry points to the copy.
+     * Each PDF is copied into the student's folder and the entry points to the copy, unless the paper is
+     * {@link ReviewStatus#UNMATCHED}.
      * Input: scored papers.
      * Output: the whole queue after the change.
      * Used by: PipelineRunner (M9) after M6 (papers already sent filtered out first); {@link #addAll(Map)}.
@@ -184,10 +212,10 @@ public final class ScoredQueueStore {
         synchronized (lock) {
             Map<String, ScoredPaper> queue = byKey(read());
             for (ScoredPaper matched : scored) {
-                ScoredPaper paper = withPdfFiled(matched);
-                ScoredPaper existing = queue.get(paper.queueKey());
+                ScoredPaper existing = queue.get(matched.queueKey());
                 // Re-put keeps the LinkedHashMap position; carry over the professor's status.
-                queue.put(paper.queueKey(), existing == null ? paper : paper.withStatus(existing.status()));
+                ScoredPaper paper = existing == null ? matched : matched.withStatus(existing.status());
+                queue.put(paper.queueKey(), paper.status() == ReviewStatus.UNMATCHED ? paper : withPdfFiled(paper));
             }
             List<ScoredPaper> updated = new ArrayList<>(queue.values());
             write(updated);
@@ -266,7 +294,29 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * Records the professor's decision on one queued paper.
+     * Takes M6's unmatched entries for these papers out of the queue, so the next run scores them again. An entry
+     * the professor has acted on, or another paper's, stays. Unmatched entries have no PDF copy to delete.
+     * Input: paper keys ({@link ScoredPaper#paperKey}).
+     * Output: how many entries were removed; the file is rewritten only if any were.
+     * Used by: PriorityAuthors (M9), when an author is added to the list.
+     * Example: queue [alice/X UNMATCHED, bob/Y DROPPED], {@code removeUnmatched([X, Y])} -> 1; queue [bob/Y]
+     */
+    public int removeUnmatched(Collection<String> paperKeys) throws IOException {
+        Set<String> keys = Set.copyOf(paperKeys);
+        synchronized (lock) {
+            List<ScoredPaper> queue = read();
+            List<ScoredPaper> kept = queue.stream().filter(paper -> paper.status() != ReviewStatus.UNMATCHED
+                    || !keys.contains(ScoredPaper.paperKey(paper.candidate()))).toList();
+            if (kept.size() < queue.size()) {
+                write(kept);
+            }
+            return queue.size() - kept.size();
+        }
+    }
+
+    /**
+     * Records the professor's decision on one queued paper. A paper M6 matched to no one has its PDF copied into
+     * the student's folder once the professor decides on it.
      * Input: the paper (matched by queue key) and its new status.
      * Output: true if updated; false if that paper is not queued for that student.
      * Used by: ReviewPane (M8) Approve/Drop.
@@ -279,9 +329,50 @@ public final class ScoredQueueStore {
             if (existing == null) {
                 return false;
             }
-            queue.put(paper.queueKey(), existing.withStatus(status));
+            ScoredPaper decided = existing.withStatus(status);
+            queue.put(paper.queueKey(), status == ReviewStatus.UNMATCHED ? decided : withPdfFiled(decided));
             write(new ArrayList<>(queue.values()));
             return true;
+        }
+    }
+
+    /**
+     * Gives a queued paper to another student instead ({@link ScoredPaper#movedTo}): it keeps its place in the
+     * queue, takes M6's score for that student, and its PDF is copied into their folder; the old copy is deleted
+     * once no other entry points to it. The queue is written first, so a crash leaves a stray PDF, never an entry
+     * pointing to a deleted file.
+     * Input: the queued paper (by queue key) and the student to give it to.
+     * Output: the moved entry; empty if the paper is not queued for its student; throws if it is already queued
+     * for the new one, or can't be moved ({@link ScoredPaper#movedTo}).
+     * Used by: ReviewPane (M8) Move.
+     * Example: queue [alice/X DROPPED], {@code move(alice/X, "bob")} -> bob/X PENDING; matched/alice/x.pdf -> matched/bob/x.pdf
+     */
+    public Optional<ScoredPaper> move(ScoredPaper paper, String student) throws IOException {
+        synchronized (lock) {
+            List<ScoredPaper> queue = read();
+            int at = -1;
+            for (int i = 0; i < queue.size(); i++) {
+                if (queue.get(i).queueKey().equals(paper.queueKey())) {
+                    at = i;
+                }
+            }
+            if (at < 0) {
+                return Optional.empty();
+            }
+            ScoredPaper existing = queue.get(at);
+            ScoredPaper unfiled = existing.movedTo(student);
+            if (queue.stream().anyMatch(other -> other.queueKey().equals(unfiled.queueKey()))) {
+                throw new IllegalArgumentException("\"" + existing.candidate().title() + "\" is already queued for "
+                        + student);
+            }
+            ScoredPaper moved = withPdfFiled(unfiled);
+            queue.set(at, moved);
+            write(queue);
+            Optional<Path> oldCopy = pdfCopy(existing);
+            if (oldCopy.isPresent() && queue.stream().map(this::pdfCopy).noneMatch(oldCopy::equals)) {
+                deleteCopy(oldCopy.get());
+            }
+            return Optional.of(moved);
         }
     }
 
@@ -290,7 +381,7 @@ public final class ScoredQueueStore {
      * reused, other bytes under that name get {@code x-2.pdf}. A missing PDF is logged and the paper kept as is.
      * Input: a scored paper.
      * Output: the paper, pointing at the student's copy (unchanged if it has no PDF, or it is gone).
-     * Used by: {@link #addAll(Collection)}.
+     * Used by: {@link #addAll(Collection)}, {@link #setStatus}, {@link #move}.
      * Example: alice, pdfs/x.pdf -> pdfPath matched/alice/x.pdf (or matched/alice/x-2.pdf if another x.pdf is there)
      */
     private ScoredPaper withPdfFiled(ScoredPaper paper) throws IOException {
@@ -320,9 +411,7 @@ public final class ScoredQueueStore {
         if (!Files.exists(target)) {
             AtomicFiles.writeAtomically(target, Files.readAllBytes(source));
         }
-        PaperCandidate filed = paper.candidate().withPdfPath(Optional.of(target));
-        return new ScoredPaper(filed, paper.profileName(), paper.score(), paper.rationale(), paper.status(),
-                paper.recommended(), paper.relevance(), paper.listedAuthor());
+        return paper.withCandidatePdf(Optional.of(target));
     }
 
     /**
@@ -356,7 +445,7 @@ public final class ScoredQueueStore {
     /**
      * Input: the whole queue; the caller holds the lock.
      * Output: none; the file is atomically replaced.
-     * Used by: addAll, clear, remove, setStatus.
+     * Used by: addAll, clear, remove, removeUnmatched, setStatus, move.
      * Example: {@code write([])} -> file {@code []}
      */
     private void write(List<ScoredPaper> queue) throws IOException {

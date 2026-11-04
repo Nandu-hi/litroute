@@ -12,7 +12,7 @@ target/
 # Scratch
 temp.txt
 *.log
-
+install.md
 # Model export venv / output (model files belong in ~/.litroute/models, not git)
 scripts/model-export/.venv/
 scripts/model-export/out/

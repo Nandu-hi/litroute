@@ -18,14 +18,14 @@ PipelineRunner.run(credentials, progress)
    ├─ 2. M1 GmailEmailSource.fetchNewAlerts unread alerts not yet in M7a, at most maxUnread
    ├─ 3. M2–M4 AlertBatchProcessor.process  notes dropped, papers enriched, deduplicated → M7c, then M7a
    ├─ 4. M1 markRead                        only now, and only unless "keep emails unread" is on
-   └─ 5. M6 match the papers not scored yet → M7e queue, then ScoredPaperLog
-                  (papers close to no student are not queued, and neither is a paper already
+   └─ 5. M6 match the papers not scored yet → M7e queue: matches as pending, the rest as
+                  not matched, under Dropped (a paper already in the queue or sent is not scored
                    sent to that student; the log says how many of each)
 ```
 
 - **Crash safety.** Each step's stores are written in the order that makes a crash repeat work rather than skip it. Alerts are marked read only after M7a holds them, since M1 looks at unread mail only. A batch is recorded as scored only after its matches are queued.
 - **What M6 sees.** Every deduplicated paper not yet scored, not just this run's. So papers left unscored by a run that failed after saving M7c (no profiles yet, or the matcher failed) are scored by the next one. A run in Local AI mode whose model can't be reached fails before anything is saved for its emails, so the next run reads them.
-- **Listed authors.** The matcher reads the authors list ([PriorityAuthorStore](../store/PriorityAuthorStore.java)) afresh for each run and holds those authors' papers to a lower floor ([scoring readme](../scoring/readme.md)). [PriorityAuthors](PriorityAuthors.java) changes the list. M6 scores a paper once, so adding an author also forgets their held papers in `scored_papers.json`, and the next run scores those once more; a paper queued or sent keeps its place, since it has had its decision. Removing an author leaves queued papers queued.
+- **Listed authors.** The matcher reads the authors list ([PriorityAuthorStore](../store/PriorityAuthorStore.java)) afresh for each run and holds those authors' papers to a lower floor ([scoring readme](../scoring/readme.md)). [PriorityAuthors](PriorityAuthors.java) changes the list. M6 scores a paper once, so adding an author also takes their not-matched papers out of the queue, and the next run scores those once more; a paper the professor has acted on, or that was sent, keeps its place, since it has had its decision. Removing an author leaves queued papers queued.
 - **Keep emails unread** (for testing; [PipelineRunner](PipelineRunner.java)'s `markRead` flag, `--keep-unread` on the command line) skips step 4. M7a still keeps the alerts from being processed twice.
 
 ## Clear and re-run
@@ -49,15 +49,15 @@ M9 is the only module that drives every store; the order of its reads and writes
 | 2. fetch (M1) | **M7a** (IDs to skip) | — |
 | 3. extract/enrich/dedup (M2–M4, AlertBatchProcessor) | **M7c** (papers + lookup cache), **M7a** | **M7c**, then **M7a** last |
 | 4. mark read (M1) | — | Gmail only, and only for IDs now in M7a |
-| 5. match (M6) | **M7d** (profiles), **M7c** (via step 3's result), **M7e** + `scored_papers.json` (what is already scored), `sent_papers.json` (what each student already got) | **M7e** (`addAll`), then `scored_papers.json` |
-| reset | **M7a** (which emails to mark unread) | **M7e** `clear()`, `scored_papers.json` `clear()`, **M7c** then **M7a** emptied (`forgetAll`) — never `sent_papers.json` |
+| 5. match (M6) | **M7d** (profiles), **M7c** (via step 3's result), **M7e** + `sent_papers.json` (what is already scored) | **M7e** (`addAll`, matched and not matched) |
+| reset | **M7a** (which emails to mark unread) | **M7e** `clear()`, **M7c** then **M7a** emptied (`forgetAll`) — never `sent_papers.json` |
 
 The classes:
 
 | Class | Role |
 |---|---|
 | [PipelineRunner](PipelineRunner.java) | One run (`run`) and **Clear and re-run** (`reset`) over injected stages and stores; `atDefaultLocations` wires the real ones under `~/.litroute`. Also the `Report`, `ResetReport` and `MatcherFactory` types. |
-| [PriorityAuthors](PriorityAuthors.java) | Adds an author to the list and removes one, forgetting a new author's held papers in the scored log. |
+| [PriorityAuthors](PriorityAuthors.java) | Adds an author to the list and removes one, taking a new author's not-matched papers out of the queue to be scored again. |
 | [PipelineRunnerCli](PipelineRunnerCli.java) | The terminal / cron entry point: parses the flags, unlocks the credentials (terminal or `LITROUTE_PASSPHRASE`), runs once, optionally sends the approved papers (M10). |
 
 ## Running it without the UI
@@ -73,4 +73,4 @@ mvn -q compile exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCl
 | Test | What it checks |
 |---|---|
 | [PriorityAuthorsTest](../../../../../test/java/com/litroute/pipeline/PriorityAuthorsTest.java) | Adding an author forgets their held papers, past a middle name, and only theirs; a different first name is someone else; a queued or sent paper keeps its place in the log; the same spelling is listed once; removing an author leaves the rest. |
-| [PipelineRunnerTest](../../../../../test/java/com/litroute/pipeline/PipelineRunnerTest.java) | On the client's six real alerts, enriched offline from recorded replies and matched by the real model against the real profiles: a first run scores every paper and queues the close ones, each for one student; alerts are marked read only once M7a holds them; told to keep mail unread, it marks none and still skips processed alerts; a second run finds nothing new and keeps the professor's decisions; papers fetched before any profile existed are scored once there is one; papers are scored again when the matcher failed. **Reset:** the next run processes the same six emails afresh, with decisions discarded and the alerts read again; a reset that can't reach Gmail clears nothing; a paper already sent is not queued for its student again after a reset. |
+| [PipelineRunnerTest](../../../../../test/java/com/litroute/pipeline/PipelineRunnerTest.java) | On the client's six real alerts, enriched offline from recorded replies and matched by the real model against the real profiles: a first run scores every paper and queues each once, for one student: the close ones pending, the rest not matched, with every student's score kept; alerts are marked read only once M7a holds them; told to keep mail unread, it marks none and still skips processed alerts; a second run finds nothing new and keeps the professor's decisions; papers fetched before any profile existed are scored once there is one; papers are scored again when the matcher failed. **Reset:** the next run processes the same six emails afresh, with decisions discarded and the alerts read again; a reset that can't reach Gmail clears nothing; a paper already sent is neither scored nor queued again after a reset. |

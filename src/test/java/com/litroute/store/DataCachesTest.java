@@ -32,7 +32,6 @@ public class DataCachesTest {
     private DataCaches caches;
     private ScoredQueueStore queue;
     private SentPaperStore sent;
-    private ScoredPaperLog scored;
     private EnrichmentCacheStore extracted;
     private EmailCacheStore emails;
     private ProfileStore profiles;
@@ -40,14 +39,13 @@ public class DataCachesTest {
     private Path queuedCopy;
     private Path sentCopy;
 
-    /** A little of everything: one paper queued and one sent, each with a PDF copy, and what M9 records of them. */
+    /** A little of everything: one paper queued and one sent, each with a PDF copy, and what M9 keeps of them. */
     @Before
     public void setUp() throws IOException {
         data = Files.createTempDirectory("litroute-caches");
         caches = new DataCaches(data);
         queue = new ScoredQueueStore(data.resolve("scored_queue.json"), data.resolve("matched"));
         sent = new SentPaperStore(data.resolve("sent_papers.json"));
-        scored = new ScoredPaperLog(data.resolve("scored_papers.json"));
         extracted = new EnrichmentCacheStore(data.resolve("enrichment_cache.json"));
         emails = new EmailCacheStore(data.resolve("email_cache.json"));
         profiles = new ProfileStore(data.resolve("profiles.json"));
@@ -68,7 +66,6 @@ public class DataCachesTest {
         sent.addAll(List.of(filed), Instant.parse("2026-10-25T10:00:00Z"));
         queue.remove(List.of(filed));
 
-        scored.addAll(List.of(ScoredPaper.paperKey(facades)));
         extracted.save(new EnrichmentCacheStore.Contents(List.of(facades), Map.of("facades", facades)));
         emails.save(Set.of("<m1@mail.gmail.com>"));
         Files.writeString(data.resolve("profiles.json"), "{}");
@@ -94,11 +91,10 @@ public class DataCachesTest {
         Report report = caches.report();
 
         assertEquals(Files.size(data.resolve("scored_queue.json")) + QUEUED_PDF.length, usage(report, Cache.REVIEW_QUEUE).bytes());
-        assertEquals("1 paper(s): 1 pending, 0 approved, 0 dropped", usage(report, Cache.REVIEW_QUEUE).contents());
+        assertEquals("1 paper(s): 1 pending, 0 approved, 0 dropped, 0 not matched",
+                usage(report, Cache.REVIEW_QUEUE).contents());
         assertEquals(Files.size(data.resolve("sent_papers.json")) + SENT_PDF.length, usage(report, Cache.SENT_PAPERS).bytes());
         assertEquals("1 paper(s) sent to 1 student(s)", usage(report, Cache.SENT_PAPERS).contents());
-        assertEquals(Files.size(data.resolve("scored_papers.json")), usage(report, Cache.SCORED_PAPERS).bytes());
-        assertEquals("1 paper(s)", usage(report, Cache.SCORED_PAPERS).contents());
         assertEquals("1 paper(s), 1 lookup(s)", usage(report, Cache.EXTRACTED_PAPERS).contents());
         assertEquals("1 email(s)", usage(report, Cache.PROCESSED_EMAILS).contents());
         assertEquals(QUEUED_PDF.length + SENT_PDF.length, usage(report, Cache.DOWNLOADED_PDFS).bytes());
@@ -133,7 +129,6 @@ public class DataCachesTest {
         assertFalse(Files.exists(sentCopy));
         assertTrue("the queue's copy is the queue's", Files.exists(queuedCopy));
         assertEquals(1, queue.load().size());
-        assertEquals(1, scored.load().size());
         assertEquals(1, extracted.load().enriched().size());
         assertEquals(1, emails.load().size());
     }
@@ -176,7 +171,6 @@ public class DataCachesTest {
 
         assertTrue(queue.load().isEmpty());
         assertTrue(sent.load().isEmpty());
-        assertTrue(scored.load().isEmpty());
         assertTrue(extracted.load().enriched().isEmpty());
         assertTrue(extracted.load().lookups().isEmpty());
         assertTrue(emails.load().isEmpty());

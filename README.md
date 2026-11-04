@@ -300,6 +300,8 @@ A typical session:
    **Keep emails unread** is for testing. **Clear and re-run…** undoes every run so far: it marks the processed alerts unread again and empties the queue. The record of sent papers is kept.
 4. **Review tab:** students are listed on the left and their matched papers in the middle, best first. Hover a score to see its breakdown and the details pane to see the rationale.
    - Press **Approve** (A), **Drop** (D) or **Back to pending** (P) to decide on the selected papers.
+   - To give a paper to a different student, pick them in **Move to student** (or press M) and click **Move**. Students are listed closest first, and the paper takes that student's score.
+   - **Show: Dropped** also lists papers that matched no student ("not matched"), each under the student it came closest to, with the reason. Approve one, or move it to any student, where it becomes pending.
    - Press **Send approved** to email the approved papers to their students. Each student gets one digest with the PDFs attached, split into several emails if the attachments exceed Gmail's size limit.
    - Choose **Show: Sent** to see what has been sent and when.
 
@@ -372,7 +374,6 @@ Everything lives under `~/.litroute/`, outside the repository:
 | `data/profiles.json` | The built profiles (M7d) |
 | `data/scored_queue.json` | The review queue and the professor's decisions (M7e) |
 | `data/matched/<student>/` | Each student's copies of their matched PDFs |
-| `data/scored_papers.json` | Papers already scored, so they are not scored twice |
 | `data/sent_papers.json` | Papers sent to each student, so they are never sent twice |
 | `data/priority_authors.json` | The authors listed in the Authors tab |
 | `data/pdfs/` | PDFs downloaded during enrichment |
