@@ -1,49 +1,18 @@
-# The `ingestion` modules (M1–M4)
+# `ingestion` (M1–M4): inbox → deduplicated papers
 
-**In one sentence:** everything between the professor's Gmail inbox and the deduplicated list of papers M6 scores: fetch the alert emails (M1), read the papers out of them (M2), fill in what the emails don't say and download the PDFs (M3), and merge copies of the same paper (M4).
-
-This folder holds no classes of its own; each stage is a subpackage with its own readme:
-
-| Subpackage | Stage | Readme | Main classes |
-|---|---|---|---|
-| [email](email/) | **M1** fetch | [email/readme.md](email/readme.md) | [EmailSource](email/EmailSource.java), [GmailEmailSource](email/GmailEmailSource.java), [AlertClassifier](email/AlertClassifier.java) |
-| [extract](extract/) | **M2** find the papers, by pattern matching or the local model (+ the batch wrapper) | [extract/readme.md](extract/readme.md) | [PaperExtractor](extract/PaperExtractor.java), [AlertHtmlParser](extract/AlertHtmlParser.java), [AiTitleExtractor](extract/AiTitleExtractor.java), [AlertBatchProcessor](extract/AlertBatchProcessor.java) |
-| [enrich](enrich/) | **M3** enrich | [enrich/readme.md](enrich/readme.md) | [OnlinePaperEnricher](enrich/OnlinePaperEnricher.java), [CachingPaperEnricher](enrich/CachingPaperEnricher.java), [CrossrefSource](enrich/CrossrefSource.java), [OpenAlexSource](enrich/OpenAlexSource.java), [PdfDownloader](enrich/PdfDownloader.java) |
-| [dedup](dedup/) | **M4** deduplicate | [dedup/readme.md](dedup/readme.md) | [Deduplicator](dedup/Deduplicator.java) |
-
-## How data flows through ingestion
+| Stage | Package | Does |
+|---|---|---|
+| M1 | [email](email/readme.md) | Fetch the unread alerts not yet in M7a |
+| M2 | [extract](extract/readme.md) | Read the papers out of each alert; drop notes; run the batch |
+| M3 | [enrich](enrich/readme.md) | Fill in DOI, venue, year and abstract; download the PDF |
+| M4 | [dedup](dedup/readme.md) | Merge copies of one paper |
 
 ```
-Gmail INBOX (unread)
-   │  M1 GmailEmailSource.fetchNewAlerts(credentials, M7a IDs)   newest maxUnread, alerts only
-   ▼
-List<RawEmail>
-   │  AlertBatchProcessor.process(emails)
-   │     load M7c (papers + lookup cache) and M7a
-   │     for each email:
-   │        M2 PaperExtractor.extract
-   │             AlertLines ─▶ AlertHtmlParser (+ AuthorNames, LinkUnwrapper) ─▶ ParsedPaper(candidate, LinkKind)
-   │             notes (book reviews, errata, ...) dropped
-   │             in Local AI mode, AiTitleExtractor ─▶ prompts.txt + email ─▶ Ollama: the model picks which papers
-   │        M3 CachingPaperEnricher (M7c lookups) ─▶ OnlinePaperEnricher
-   │             ArticlePageReader (READABLE links only) + CompositeMetadataLookup(Crossref, OpenAlex)
-   │             PdfDownloader ─▶ ~/.litroute/data/pdfs/<doi>.pdf
-   │     M4 Deduplicator.deduplicate(held papers + this batch)
-   │     save M7c, then M7a
-   ▼
-List<PaperCandidate> (deduplicated, everything M7c holds) ──▶ M9 ──▶ M6
-   │
-   └─ M1 GmailEmailSource.markRead(this batch's IDs)   only after M7a holds them
+M1 fetchNewAlerts(M7a IDs) ─▶ AlertBatchProcessor.process(emails)
+      load M7c + M7a ─▶ per email: M2 extract ─▶ M3 enrich (M7c lookup cache first)
+      ─▶ M4 deduplicate(held papers + batch) ─▶ save M7c ─▶ save M7a ─▶ M1 markRead
 ```
 
-Every stage fails softly: an unreachable Gmail gives no emails, an unreadable email is skipped, an enrichment that throws keeps the paper as parsed, an offline API leaves fields empty. Only a store that can't be read or written stops a batch, and then nothing is marked processed.
-
-## Interaction with M7 (the stores)
-
-| Store | Ingestion's use |
-|---|---|
-| **M7a** `email_cache.json` | M1 skips the IDs in it; AlertBatchProcessor adds the batch's IDs **last**; M1 marks read (and, on reset, unread) only IDs it holds. |
-| **M7c** `enrichment_cache.json` | AlertBatchProcessor reads the held papers and the lookup cache, CachingPaperEnricher reads and fills the cache in memory, and the deduplicated papers and the cache are saved together in one write. |
-| **M7d**, **M7e** | Not used by ingestion. M7e later copies the PDFs M3 downloaded into the students' folders. |
-
-The order (load both → work in memory → save M7c → save M7a → mark read) means a crash anywhere repeats the batch on the next run instead of losing it, and a re-run replaces the batch's earlier papers instead of duplicating them.
+- **Fails softly:** if Gmail is unreachable there are no emails; a bad email is skipped; a failed lookup leaves the paper as parsed. Only a store error stops the batch, and then nothing is recorded as processed.
+- **Crash-safe order:** if the run dies anywhere before M7a is saved, the whole batch runs again next time, and its papers replace the earlier copies.
+- In **Local AI** mode, an unreachable Ollama fails the batch before anything is saved.

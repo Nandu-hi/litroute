@@ -28,6 +28,8 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 import java.util.stream.Collectors;
@@ -91,28 +93,32 @@ public final class RelevanceScorer implements PaperMatcher {
      */
     static final double SHARE_SHARPNESS = 2.0;
     /**
-     * A paper is matched only if its relevance reaches this: about 70% of the way from looking like
-     * other students' papers (relevance 0.1) to looking like the student's own (0.9). The midpoint, 0.5,
-     * matched 17 of the 31 papers in the professor's first reviewed batch (October 2026); the professor approved 11
-     * and dropped 6, all from generic hazard and disaster-management papers that every hazard profile
-     * half fits. At 0.7, 11 were matched: 9 the professor approved, plus one dropped and one (a rainstorm
-     * hazard-chain paper) a per-student quota of three had pushed out. Of the papers the professor filed by
-     * student (~/.litroute/match-test), 41 of 46 still reach their student from a full PDF or a title and
-     * abstract (43 at 0.5); from a title alone, 33 (35 at 0.5). The floor is the same for every kind of
-     * evidence: a title-only alert is less certain, not more forgiving.
+     * A paper is matched only if its relevance reaches this: about 89% of the way from looking like
+     * other students' papers (relevance 0.1) to looking like the student's own (0.9). Chosen in November 2026
+     * to keep papers away from students they don't belong to, at the cost of missing some that do (a missed
+     * paper is still listed under Dropped and can be moved to a student). The papers it turns away are general
+     * papers from a student's field on another question - soft-storey strengthening, masonry retrofit,
+     * FRP-confined columns, soil-structure interaction - which sit as close to two or three earthquake students
+     * as the papers that really belong do, so nothing but their relevance tells them apart. On the benchmark
+     * (benchmark/alert-papers-2026-11-05.json: 84 alert papers, 24 belonging to a student), from full PDFs:
+     * at 0.7, 36 matched, 12 of them wrongly, and 21 of the 24 found (precision 67%); at 0.85, 16 matched,
+     * 1 wrongly, and 15 found (94%). From title and abstract only: 69% -> 94%, 21 -> 14 found. Measured
+     * against it, judging relevance against the closest other student instead of a typical one, or also
+     * requiring a student's defining words, kept no more right papers at that precision. The floor is the same
+     * for a PDF and an abstract: a thinner kind of evidence is less certain, not more forgiving.
      */
-    public static final double RELEVANCE_FLOOR = 0.7;
+    public static final double RELEVANCE_FLOOR = 0.85;
     /**
      * The floor for a paper known by its title alone (no abstract, no readable PDF - Elsevier deposits no
-     * abstracts with Crossref or OpenAlex). A title is a dozen words, so its relevance stays near the
-     * middle of the scale even when it plainly belongs to a student: of the professor's October 2026
-     * batch, the flood fragility of bridge piers (RP1) reached 0.61 and the compound geohazards of the
-     * Greater Bay Area (RP4) 0.44, while the out-of-scope review of steels under impact reached 0.41
-     * (with {@link #TITLE_MEANING_WEIGHT}). 0.43 takes the first two and leaves the third. On the papers the professor
-     * filed by student, judged by their titles alone, 34 of 46 then reach their student (32 at 0.7) and 5
-     * reach another (3 at 0.7).
+     * abstracts with Crossref or OpenAlex). A title is a dozen words, so its relevance stays nearer the
+     * middle of the scale than an abstract's, even when it plainly belongs to a student; raised with
+     * {@link #RELEVANCE_FLOOR} in November 2026, from 0.43. On the benchmark's title-only papers, those belonging
+     * to a student reach 0.93, 0.79, 0.77 and 0.69 (kept) and risk-targeted design spectra (RP2) 0.54 (lost);
+     * the one that belongs to no one, soil-structure interaction in hybrid force-displacement design, 0.51.
+     * The benchmark has few title-only papers: 0.55 to 0.65 change nothing on it, nor on the 48 match-test papers
+     * judged by their titles (35 to their student, 3 to another).
      */
-    public static final double TITLE_FLOOR = 0.43;
+    public static final double TITLE_FLOOR = 0.6;
     /**
      * For a title, how much of its relevance comes from its meaning (SPECTER2) rather than its words:
      * a dozen words share few terms with anyone's papers, so the words count for less than in an abstract
@@ -124,10 +130,28 @@ public final class RelevanceScorer implements PaperMatcher {
      * How far a paper's title may lift the relevance of its abstract or PDF: by this fraction of the gap
      * when the title alone looks closer to the student, never lowering it. An abstract can bury what the
      * title says outright: the ground-motion orientation paper (RP8) reaches 0.59 from its abstract and
-     * 0.85 from its title, so 0.70 with the lift. 0.6 is the least that matches it; on the professor's
-     * filed papers known by title and abstract, it changes no match.
+     * 0.85 from its title, so 0.70 with the lift. 0.6 is the least that matched it at the floor of the time (0.7;
+     * now {@link #RELEVANCE_FLOOR}); on the match-test papers known by title and abstract, it changes no match.
      */
     static final double TITLE_LIFT = 0.6;
+    /**
+     * For a paper read from its PDF, how much of its relevance comes from the whole text; the rest comes from its
+     * title and abstract, compared as a title-and-abstract candidate would be. The body of any seismic paper
+     * shares hundreds of words (columns, concrete, drift, seismic) with every earthquake student's papers, so on
+     * the whole text alone a paper from the same field but on another question - FRP-confined columns, soft-storey
+     * strengthening - cleared the floor for RP1 or RP8. The abstract says what the paper is about. Measured on
+     * 5 November 2026 (84 papers from 17 alerts, the professor's filed papers and decisions): half and half
+     * matched 3 fewer of 50 papers judged out of scope (high-speed railway bridges 0.77 -> 0.66, rammed-earth
+     * retrofit 0.74 -> 0.67, tall timber design 0.72 -> 0.67), and lost none the professor filed or sent.
+     */
+    static final double FULL_TEXT_WEIGHT = 0.5;
+    /**
+     * An abstract shorter than this many words is no abstract: alerts put link text ("» Abstract » Full text
+     * HTML » Full text PDF"), subscription notices or a one-line search snippet where the abstract would be.
+     * Such a paper is judged by its title, held to {@link #TITLE_FLOOR}. Real abstracts have 40 words or more.
+     */
+    static final int MIN_ABSTRACT_WORDS = 25;
+    private static final Pattern WORD = Pattern.compile("\\p{L}{2,}");
     /**
      * The floor for a paper by a listed author, known from its abstract or PDF: the scale's midpoint, closer
      * to the student's work than to the others'. On the professor's held papers (November 2026) it takes
@@ -239,8 +263,19 @@ public final class RelevanceScorer implements PaperMatcher {
     private record Calibration(Anchors semantic, Anchors lexical) {
     }
 
-    /** What a candidate is compared from: its SPECTER2 vector and the text whose words are matched. */
-    private record Evidence(Basis basis, float[] vector, String text) {
+    /**
+     * What a candidate is compared from: its SPECTER2 vector and the text whose words are matched; for a PDF with
+     * an abstract, also its title and abstract alone (null otherwise).
+     */
+    private record Evidence(Basis basis, float[] vector, String text, float[] abstractVector, String abstractText) {
+
+        Evidence(Basis basis, float[] vector, String text) {
+            this(basis, vector, text, null, null);
+        }
+
+        boolean blendsAbstract() {
+            return abstractVector != null;
+        }
     }
 
     /** One student's view of one candidate; the explanation ends where a recommendation note may follow. */
@@ -263,7 +298,7 @@ public final class RelevanceScorer implements PaperMatcher {
          * Input: why the paper was not matched, how its author is on the authors list, if they are, and every student's fit.
          * Output: an UNMATCHED, unrecommended ScoredPaper for this (closest) student, its rationale led by the reason.
          * Used by: judge.
-         * Example: relevance 0.55 from an abstract -> rationale "Not matched: relevance 0.55 is below the floor of 0.70 ..."
+         * Example: relevance 0.55 from an abstract -> rationale "Not matched: relevance 0.55 is below the floor of 0.85 ..."
          */
         ScoredPaper toUnmatched(String reason, Optional<ListedAuthor> author, List<ScoredPaper.Fit> fits) {
             return new ScoredPaper(candidate, profileName, score, reason
@@ -446,7 +481,7 @@ public final class RelevanceScorer implements PaperMatcher {
      * Input: deduplicated papers and a strategy.
      * Output: every student (profile order) mapped to the research papers whose best student they are and whose relevance reaches the floor, recommended, listed authors' papers first, then best first.
      * Used by: {@link #match(List)}; RelevanceScorerCli and tests comparing strategies.
-     * Example: P1 relevance 0.81 for alice (best) -> alice=[P1]; P2 best for bob at 0.55 -> not returned, unless a listed author wrote it
+     * Example: P1 relevance 0.91 for alice (best) -> alice=[P1]; P2 best for bob at 0.55 -> not returned, unless a listed author wrote it
      */
     public Map<String, List<ScoredPaper>> match(List<PaperCandidate> batch, Strategy byStrategy) {
         Map<String, List<ScoredPaper>> byStudent = new LinkedHashMap<>();
@@ -483,7 +518,7 @@ public final class RelevanceScorer implements PaperMatcher {
      * Input: deduplicated papers and a strategy.
      * Output: one scored paper per paper, in batch order.
      * Used by: {@link #match(List, Strategy)}, {@link #matchAll}.
-     * Example: P1 relevance 0.81 for alice -> alice/P1 PENDING; P2 best for bob at 0.55 -> bob/P2 UNMATCHED "Not matched: relevance 0.55 is below ..."
+     * Example: P1 relevance 0.91 for alice -> alice/P1 PENDING; P2 best for bob at 0.55 -> bob/P2 UNMATCHED "Not matched: relevance 0.55 is below ..."
      */
     private List<ScoredPaper> judge(List<PaperCandidate> batch, Strategy byStrategy) {
         // Papers are independent and one with a PDF takes seconds to embed, so they are scored in parallel.
@@ -570,20 +605,29 @@ public final class RelevanceScorer implements PaperMatcher {
         double[] share = softmax(fit);
         double[] relevance = new double[n];
         double[] fromTitle = evidence.basis() == Basis.TITLE ? null : titleRelevance(candidate, byStrategy);
+        // With SPECTER2 on title + abstract only, a PDF's meaning already is its title + abstract: no second blend.
+        double[] fromAbstract = evidence.blendsAbstract() && !PaperEmbedder.SEMANTIC_ABSTRACT_ONLY
+                ? abstractPosition(evidence, byStrategy) : null;
         boolean[] lifted = new boolean[n];
         double[] score = new double[n];
         for (int i = 0; i < n; i++) {
-            relevance[i] = relevance(byStrategy, calibration, semanticSimilarity[i], lexicalSimilarity[i],
+            double position = position(byStrategy, calibration, semanticSimilarity[i], lexicalSimilarity[i],
                     evidence.basis() == Basis.TITLE ? TITLE_MEANING_WEIGHT : 0.5);
+            if (fromAbstract != null) {
+                position = FULL_TEXT_WEIGHT * position + (1 - FULL_TEXT_WEIGHT) * fromAbstract[i];
+            }
+            relevance[i] = Anchors.relevance(position);
             lifted[i] = fromTitle != null && fromTitle[i] > relevance[i];
             if (lifted[i]) {
                 relevance[i] += TITLE_LIFT * (fromTitle[i] - relevance[i]);
             }
             score[i] = relevance[i] * share[i];
         }
-        // Build each student's rationale, best-scoring student first.
+        // Build each student's rationale, most relevant student first (the one the paper goes to), ties by score.
         List<Integer> order = IntStream.range(0, n).boxed()
-                .sorted(Comparator.comparingDouble((Integer i) -> score[i]).reversed()).toList();
+                .sorted(Comparator.comparingDouble((Integer i) -> relevance[i]).reversed()
+                        .thenComparing(Comparator.comparingDouble((Integer i) -> score[i]).reversed()))
+                .toList();
         Map<String, String> surfaces = byStrategy.lexical ? Terms.surfaceForms(evidence.text()) : Map.of();
         List<Assessment> assessments = new ArrayList<>();
         for (int rank = 0; rank < n; rank++) {
@@ -622,7 +666,8 @@ public final class RelevanceScorer implements PaperMatcher {
                 explanation.append("Closest in ").append(names.get(i)).append(": ").append(String.join(", ", closest))
                         .append(". ");
             }
-            explanation.append("Scored from ").append(evidence.basis().description).append('.');
+            explanation.append("Scored from ").append(evidence.basis().description)
+                    .append(evidence.blendsAbstract() ? ", weighed equally with its title and abstract" : "").append('.');
             assessments.add(new Assessment(candidate, names.get(i), score[i], relevance[i], evidence.basis(),
                     explanation.toString()));
         }
@@ -701,7 +746,7 @@ public final class RelevanceScorer implements PaperMatcher {
      * Input: what a candidate was scored from.
      * Output: the least relevance it needs to be matched: {@value #TITLE_FLOOR} for a title alone, else {@value #RELEVANCE_FLOOR}.
      * Used by: {@link #match(List, Strategy)}, ListedAuthor.reason; tests.
-     * Example: floor(TITLE) -> 0.43; floor(ABSTRACT) -> 0.7
+     * Example: floor(TITLE) -> 0.6; floor(ABSTRACT) -> 0.85
      */
     public static double floor(Basis basis) {
         return basis == Basis.TITLE ? TITLE_FLOOR : RELEVANCE_FLOOR;
@@ -726,12 +771,61 @@ public final class RelevanceScorer implements PaperMatcher {
      */
     private static double relevance(Strategy byStrategy, Calibration calibration, double semantic, double lexical,
             double meaningWeight) {
+        return Anchors.relevance(position(byStrategy, calibration, semantic, lexical, meaningWeight));
+    }
+
+    /**
+     * Where the similarities sit between the anchors, before the logistic curve: 0 at a typical other student's
+     * paper, 1 at a typical own paper.
+     * Input: the strategy, the evidence's calibration, both similarities, and the meaning weight.
+     * Output: the (weighted) normalized similarity.
+     * Used by: assess, relevance, abstractPosition.
+     * Example: both signals at the own-paper anchor -> 1.0
+     */
+    private static double position(Strategy byStrategy, Calibration calibration, double semantic, double lexical,
+            double meaningWeight) {
         if (byStrategy.semantic && byStrategy.lexical) {
-            return Anchors.relevance(meaningWeight * calibration.semantic().normalized(semantic)
-                    + (1 - meaningWeight) * calibration.lexical().normalized(lexical));
+            return meaningWeight * calibration.semantic().normalized(semantic)
+                    + (1 - meaningWeight) * calibration.lexical().normalized(lexical);
         }
-        return Anchors.relevance(byStrategy.semantic ? calibration.semantic().normalized(semantic)
-                : calibration.lexical().normalized(lexical));
+        return byStrategy.semantic ? calibration.semantic().normalized(semantic)
+                : calibration.lexical().normalized(lexical);
+    }
+
+    /**
+     * Each student's position for a PDF's title and abstract alone, measured as a title-and-abstract candidate's
+     * would be (abstract views, abstract anchors).
+     * Input: a full-text evidence with an abstract, and the strategy.
+     * Output: one normalized position per student, in profile order.
+     * Used by: {@link #assess}, blended with the full text by {@link #FULL_TEXT_WEIGHT}.
+     * Example: rammed-earth shake-table retrofit study, RP1: relevance 0.74 from its whole text alone, 0.67 with its abstract
+     */
+    private double[] abstractPosition(Evidence evidence, Strategy byStrategy) {
+        Map<String, LexicalIndex.Closeness> wording = byStrategy.lexical
+                ? lexical.closeness(lexical.vector(evidence.abstractText()), paper -> false) : Map.of();
+        double[] position = new double[indexes.size()];
+        for (int i = 0; i < indexes.size(); i++) {
+            Index index = indexes.get(i);
+            double semantic = index.space(Basis.ABSTRACT).closeness(evidence.abstractVector()).similarity();
+            double lexicalSimilarity = byStrategy.lexical ? wording.get(index.profile().name()).similarity() : 0;
+            position[i] = position(byStrategy, abstractCalibration, semantic, lexicalSimilarity, 0.5);
+        }
+        return position;
+    }
+
+    /**
+     * Input: a text.
+     * Output: how many words of two or more letters it has (link arrows, numbers and initials don't count).
+     * Used by: {@link #read}, against {@link #MIN_ABSTRACT_WORDS}.
+     * Example: "» Abstract » Full text HTML » Full text PDF" -> 7
+     */
+    static int words(String text) {
+        Matcher matcher = WORD.matcher(text);
+        int count = 0;
+        while (matcher.find()) {
+            count++;
+        }
+        return count;
     }
 
     /**
@@ -811,9 +905,12 @@ public final class RelevanceScorer implements PaperMatcher {
 
     /**
      * Input: a candidate.
-     * Output: its full-PDF evidence if the PDF is readable, else title + abstract, else title alone.
+     * Output: its full-PDF evidence if the PDF is readable (with the PDF's own title and abstract, if it has one of
+     * {@value #MIN_ABSTRACT_WORDS}+ words), else title + abstract, else title alone (also when the alert's abstract is
+     * shorter than {@value #MIN_ABSTRACT_WORDS} words: link text or a one-line snippet).
      * Used by: {@link #evidence}.
-     * Example: no pdfPath, abstract "We study..." -> Evidence(ABSTRACT, embed(title, abstract), "title. abstract. ")
+     * Example: no pdfPath, abstract "We study..." (60 words) -> Evidence(ABSTRACT, embed(title, abstract), "title. abstract. ");
+     *          abstract "» Abstract » Full text HTML » Full text PDF" -> Evidence(TITLE, ...)
      */
     private Evidence read(PaperCandidate candidate) {
         Optional<Path> pdf = candidate.pdfPath().filter(Files::isRegularFile);
@@ -822,14 +919,18 @@ public final class RelevanceScorer implements PaperMatcher {
                 PaperText text = extractor.extract(pdf.get());
                 // The candidate's own title (from the alert or Crossref) is more reliable than one read off the PDF.
                 PaperText titled = new PaperText(candidate.title(), text.abstractText(), text.headings(), text.bodyChunks());
+                String pdfAbstract = text.abstractText() == null ? "" : text.abstractText().strip();
+                boolean hasAbstract = words(pdfAbstract) >= MIN_ABSTRACT_WORDS;
                 return new Evidence(Basis.FULL_TEXT, embedder.embed(titled).combined(),
-                        LexicalIndex.text(titled.title(), titled.abstractText(), titled.bodyText()));
+                        LexicalIndex.text(titled.title(), titled.abstractText(), titled.bodyText()),
+                        hasAbstract ? provider.embed(candidate.title(), pdfAbstract) : null,
+                        hasAbstract ? LexicalIndex.text(candidate.title(), pdfAbstract, "") : null);
             } catch (UnreadablePdfException e) {
                 LOG.log(Level.FINE, "Scoring \"{0}\" without its PDF: {1}", new Object[] {candidate.title(), e.getMessage()});
             }
         }
         String abstractText = candidate.abstractSnippet().map(String::strip).orElse("");
-        if (abstractText.isEmpty()) {
+        if (words(abstractText) < MIN_ABSTRACT_WORDS) {
             return new Evidence(Basis.TITLE, provider.embed(candidate.title(), ""), candidate.title());
         }
         return new Evidence(Basis.ABSTRACT, provider.embed(candidate.title(), abstractText),

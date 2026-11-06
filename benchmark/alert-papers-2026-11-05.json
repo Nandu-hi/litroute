@@ -1,0 +1,711 @@
+{
+ "_about": "Benchmark labels for the 84 alert papers of 2026-11-05 (17 saved alert emails). Written by Claude on 2026-11-05 from each paper's title and abstract alone, against the topics of each student's reference-paper folder; no LitRoute data (scores, sent/dropped records, match-test) was used. target: the student(s) the paper belongs to; [] means it should match no one. optional: a student a match to is acceptable but not required. The labels were written after seeing LitRoute's scores, so they are not blind.",
+ "students": {
+  "RP1-mh-risk": "structures under multiple, combined or sequential hazards; multi-hazard design and resilience",
+  "RP2-pbee-res-recov": "performance-based earthquake engineering: losses, downtime, recovery, resilience, post-earthquake usability, risk-targeted design",
+  "RP3-mf-sim": "surrogate, multi-fidelity and reduced-order models; efficient simulation for seismic risk",
+  "RP4-mh-char": "natural-hazard characterisation: interactions, compound events, climate non-stationarity, multi-hazard risk mapping",
+  "RP5-wf-risk": "wildfire risk to buildings",
+  "RP6-wf-emiss": "emissions from burning structures and materials",
+  "RP7-kem-rap": "rank aggregation (Kemeny)",
+  "RP8-doe-eq-unc-quant": "uncertainty quantification, design of experiments and machine learning in earthquake engineering"
+ },
+ "papers": [
+  {
+   "title": "Satellite evidence of unequal basin-scale recovery from severe droughts",
+   "doi_or_url": "10.1093/nsr/nwag624/8853765",
+   "target": [],
+   "optional": [
+    "RP4"
+   ],
+   "reason": "Hydrology of drought recovery; single hazard, no structural or multi-hazard angle. RP4 (hazard characterisation, satellite data) at most."
+  },
+  {
+   "title": "Special issue: On the seismic behavior of masonry structures: recent advances. Selection of expanded papers presented at the 18th International Brick and Block Masonry Conference IB2MaC held in Birmingham, UK (July 21–24, 2024)",
+   "doi_or_url": "10.1007/s10518-026-02451-7",
+   "target": [],
+   "optional": [],
+   "reason": "Special-issue preface, not a research paper."
+  },
+  {
+   "title": "Seismic site categorization and H800 map for Lisbon: the first and second generations of Eurocode 8",
+   "doi_or_url": "10.1007/s10518-026-02552-3",
+   "target": [],
+   "optional": [
+    "RP4"
+   ],
+   "reason": "Site categorisation and a VS30/H800 map for Eurocode 8: site effects, not any student's topic; close to RP4's microzonation work at most."
+  },
+  {
+   "title": "Numerical testing proxies of seismic codes relative to topographic amplification effects: the case study of the Siena urban area (Central Italy)",
+   "doi_or_url": "10.1007/s10518-026-02580-z",
+   "target": [],
+   "optional": [],
+   "reason": "Topographic amplification proxies in seismic codes; no student works on site response."
+  },
+  {
+   "title": "Region-specific ground-motion model for fourier amplitude spectra and its interfrequency correlation of epsilon for the Sichuan–Yunnan region, China",
+   "doi_or_url": "10.1007/s10518-026-02593-8",
+   "target": [],
+   "optional": [],
+   "reason": "Regional Fourier-spectrum ground-motion model; ground-motion modelling is no student's topic."
+  },
+  {
+   "title": "A new method to extract strong velocity pulse in a pulse-like ground motion",
+   "doi_or_url": "10.1007/s10518-026-02583-w",
+   "target": [],
+   "optional": [],
+   "reason": "Signal processing of near-fault velocity pulses."
+  },
+  {
+   "title": "Construction of relationships among acceleration, velocity and displacement response spectra using machine learning",
+   "doi_or_url": "10.1007/s10518-026-02590-x",
+   "target": [
+    "RP8"
+   ],
+   "optional": [],
+   "reason": "Machine learning for relations among response spectra: ML in earthquake engineering, RP8's core."
+  },
+  {
+   "title": "Evaluation of PSHA logic trees considering the Pólya distribution to model the spatial correlation between observation sites",
+   "doi_or_url": "10.1007/s10518-026-02577-8",
+   "target": [
+    "RP8"
+   ],
+   "optional": [
+    "RP3"
+   ],
+   "reason": "Bayesian updating of PSHA logic-tree weights: epistemic uncertainty quantification (RP8); updating hazard from observations echoes RP3's Iervolino papers."
+  },
+  {
+   "title": "An ambient-noise-based physics–data integrated framework for far-field basin ground motion simulation",
+   "doi_or_url": "10.1007/s10518-026-02559-w",
+   "target": [
+    "RP3"
+   ],
+   "optional": [
+    "RP8"
+   ],
+   "reason": "Hybrid physics-data ground-motion simulation that avoids expensive large-scale runs: efficient simulation, RP3."
+  },
+  {
+   "title": "Influence of bidirectional shaking on excess pore water pressure generation for liquefaction triggering evaluation",
+   "doi_or_url": "10.1007/s10518-026-02550-5",
+   "target": [],
+   "optional": [],
+   "reason": "Liquefaction site response; geotechnical."
+  },
+  {
+   "title": "Seismic response of an embankment slope reinforced with rubble mound: centrifuge model testing and analytical validation",
+   "doi_or_url": "10.1007/s10518-026-02546-1",
+   "target": [],
+   "optional": [],
+   "reason": "Centrifuge tests of a reinforced embankment slope; geotechnical."
+  },
+  {
+   "title": "Centrifuge model tests for distinguishing kinematic and inertial loads on single piles in liquefiable sloping ground",
+   "doi_or_url": "10.1007/s10518-026-02542-5",
+   "target": [],
+   "optional": [],
+   "reason": "Kinematic vs inertial pile loads in liquefiable ground; geotechnical."
+  },
+  {
+   "title": "Seismic performances of geogrid-wrapped tire-faced retaining walls: influence of geogrid wrapping structures and binding properties",
+   "doi_or_url": "10.1007/s10518-026-02572-z",
+   "target": [],
+   "optional": [],
+   "reason": "Tire-faced retaining walls on a shake table; geotechnical."
+  },
+  {
+   "title": "Prediction of Seismic Earth Pressure on Basement Walls of Buildings with Rigid Base Conditions",
+   "doi_or_url": "10.1007/s10518-026-02538-1",
+   "target": [],
+   "optional": [],
+   "reason": "Seismic earth pressure on basement walls."
+  },
+  {
+   "title": "Impact of the soil-structure interaction on the seismic vulnerability assessment of irregular masonry infilled RC buildings on soft soils",
+   "doi_or_url": "10.1007/s10518-026-02549-y",
+   "target": [],
+   "optional": [
+    "RP2"
+   ],
+   "reason": "Single-hazard seismic vulnerability of two buildings with SSI; general. RP2's regional fragility (site-city interaction) at most."
+  },
+  {
+   "title": "A new proposal for the estimation of the equivalent viscous damping ratio of RC framed structures",
+   "doi_or_url": "10.1007/s10518-026-02491-z",
+   "target": [],
+   "optional": [],
+   "reason": "Equivalent viscous damping for displacement-based design."
+  },
+  {
+   "title": "Seismic design approach for reinforced concrete frames infilled with sliding joint ductile infills",
+   "doi_or_url": "10.1007/s10518-026-02515-8",
+   "target": [],
+   "optional": [],
+   "reason": "Design of RC frames with sliding-joint infills; component design."
+  },
+  {
+   "title": "Probabilistic usability-based fragility curves for Italian reinforced concrete buildings using census and post-earthquake data",
+   "doi_or_url": "10.1007/s10518-026-02578-7",
+   "target": [
+    "RP2"
+   ],
+   "optional": [
+    "RP8"
+   ],
+   "reason": "Empirical post-earthquake usability fragility from inspection and census data: RP2 (post-earthquake occupancy/usability). Fragility fitting also touches RP8."
+  },
+  {
+   "title": "Fragility of irregular RC buildings under mainshock-aftershock sequences",
+   "doi_or_url": "10.1007/s10518-026-02537-2",
+   "target": [
+    "RP1"
+   ],
+   "optional": [],
+   "reason": "Fragility under mainshock-aftershock sequences: sequential hazards, RP1."
+  },
+  {
+   "title": "Seismic resilience assessment of high-rise RC frame office buildings considering mechanical performance of infill walls",
+   "doi_or_url": "10.1007/s10518-026-02532-7",
+   "target": [
+    "RP2"
+   ],
+   "optional": [],
+   "reason": "Seismic resilience assessment of buildings to a resilience standard: RP2."
+  },
+  {
+   "title": "Ductility and lateral load performance of substandard RC columns retrofitted with CFRP over plastered Surface",
+   "doi_or_url": "10.1007/s10518-026-02540-7",
+   "target": [],
+   "optional": [],
+   "reason": "CFRP jacketing over plaster; retrofit testing."
+  },
+  {
+   "title": "Seismic behavior of precast concrete beam-column joints with an innovative non-porous grouted sleeve connection",
+   "doi_or_url": "10.1007/s10518-026-02514-9",
+   "target": [],
+   "optional": [],
+   "reason": "Precast beam-column joint connection."
+  },
+  {
+   "title": "Static analysis of coupled shear walls with multiple stiffening beams incorporating local shear deformation: Double-Beam Systems Timoshenko",
+   "doi_or_url": "10.1007/s10518-026-02576-9",
+   "target": [],
+   "optional": [],
+   "reason": "Closed-form analysis of coupled shear walls."
+  },
+  {
+   "title": "Seismic performance of reinforced concrete structural systems under mainshock–aftershock sequences: insights from the 2023 Türkiye–Syria earthquakes",
+   "doi_or_url": "10.1007/s10518-026-02557-y",
+   "target": [
+    "RP1"
+   ],
+   "optional": [],
+   "reason": "RC buildings under real mainshock-aftershock sequences, cumulative damage: sequential hazards, RP1."
+  },
+  {
+   "title": "Assessment of repair/reconstruction costs to existing reinforced concrete and masonry buildings following the 2023 Kahramanmaraş earthquakes",
+   "doi_or_url": "10.1007/s10518-026-02556-z",
+   "target": [
+    "RP2"
+   ],
+   "optional": [],
+   "reason": "Repair and reconstruction costs after an earthquake: losses, RP2."
+  },
+  {
+   "title": "Strengthening strategies for mitigating damage induced by high ground stories: field data and analytical findings from RC buildings in the kahramanmaraş earthquakes",
+   "doi_or_url": "10.1007/s10518-026-02569-8",
+   "target": [],
+   "optional": [],
+   "reason": "Strengthening buildings with high ground storeys; general seismic retrofit."
+  },
+  {
+   "title": "Investigation of soft story effect in RC structures using different strengthening methods",
+   "doi_or_url": "10.1007/s10518-026-02573-y",
+   "target": [],
+   "optional": [],
+   "reason": "Soft-storey strengthening methods; general seismic retrofit."
+  },
+  {
+   "title": "Impact of soft-storey irregularity on the seismic safety of reinforced concrete buildings",
+   "doi_or_url": "10.1007/s10518-026-02588-5",
+   "target": [],
+   "optional": [],
+   "reason": "Soft-storey effect on fragility; general seismic assessment."
+  },
+  {
+   "title": "Study on the fragility assessment of existing reinforced concrete buildings considering ageing processes",
+   "doi_or_url": "10.1007/s10518-026-02591-w",
+   "target": [
+    "RP2",
+    "RP1"
+   ],
+   "optional": [
+    "RP8"
+   ],
+   "reason": "Ageing (corrosion, pre-damage) in seismic fragility: RP2 has ageing and seismic risk (Samanta 2026); deterioration plus earthquake is also a combined-hazard case for RP1."
+  },
+  {
+   "title": "Post-earthquake recovery of reinforced concrete buildings in India: hybrid framework and application",
+   "doi_or_url": "10.1007/s10518-026-02560-3",
+   "target": [
+    "RP2"
+   ],
+   "optional": [],
+   "reason": "Post-earthquake recovery: repair cost, downtime, recovery time. RP2's core."
+  },
+  {
+   "title": "Machine learning-based parameter adaptation approach for modeling hysteretic axial-shear-flexure interaction in RC columns",
+   "doi_or_url": "10.1007/s10518-026-02575-w",
+   "target": [
+    "RP8"
+   ],
+   "optional": [
+    "RP3"
+   ],
+   "reason": "ML surrogates for hysteretic RC column models: RP8 (data-driven component models); surrogate use touches RP3."
+  },
+  {
+   "title": "Cumulative fragility curves for seismic vulnerability assessment of damaged masonry buildings subjected to differential settlements",
+   "doi_or_url": "10.1007/s10518-026-02543-4",
+   "target": [
+    "RP1"
+   ],
+   "optional": [],
+   "reason": "Settlement damage followed by earthquake: explicitly multi-hazard, RP1."
+  },
+  {
+   "title": "Dynamic characterization of masonry minarets using regression models",
+   "doi_or_url": "10.1007/s10518-026-02554-1",
+   "target": [],
+   "optional": [
+    "RP8"
+   ],
+   "reason": "Regression of minaret periods on a database: empirical, not uncertainty quantification or ML; RP8 at most."
+  },
+  {
+   "title": "Blind-prediction of the dynamic behavior of 3D-printed masonry-like structures under shake-table loading via a high-fidelity numerical modeling approach",
+   "doi_or_url": "10.1007/s10518-026-02565-y",
+   "target": [],
+   "optional": [],
+   "reason": "One high-fidelity model in a blind-prediction contest; not surrogates or multi-fidelity."
+  },
+  {
+   "title": "Seismic retrofitting strategies for unreinforced masonry buildings in Europe: a review of techniques for improving seismic performance",
+   "doi_or_url": "10.1007/s10518-026-02585-8",
+   "target": [],
+   "optional": [],
+   "reason": "Review of retrofit techniques for masonry."
+  },
+  {
+   "title": "Shaking table study of seismic performance and retrofit effectiveness for rammed earth structures with precast concrete tie columns",
+   "doi_or_url": "10.1007/s10518-026-02553-2",
+   "target": [],
+   "optional": [],
+   "reason": "Shake-table test of rammed earth retrofit."
+  },
+  {
+   "title": "Post-earthquake seismic assessment of a heritage masonry school: comparative evaluation of field observation and nonlinear FE time-history analyses",
+   "doi_or_url": "10.1007/s10518-026-02587-6",
+   "target": [],
+   "optional": [],
+   "reason": "Post-earthquake assessment of one heritage building."
+  },
+  {
+   "title": "Mechanical and seismic performance analysis of the Tang Dynasty palace-style timber frame: multi-model comparative study and critical component identification",
+   "doi_or_url": "10.1007/s10518-026-02584-9",
+   "target": [],
+   "optional": [],
+   "reason": "Ancient timber frame mechanics."
+  },
+  {
+   "title": "Optimization-based seismic design for tall timber buildings with hybrid cross-laminated timber walls coupled with steel link beams and hold-down dampers",
+   "doi_or_url": "10.1007/s10518-026-02545-2",
+   "target": [],
+   "optional": [
+    "RP1"
+   ],
+   "reason": "Multi-objective seismic design optimisation of timber buildings; RP1 has design-optimisation papers, but in a multi-hazard/resilience setting."
+  },
+  {
+   "title": "Dynamic and energy-based control of glued-laminated timber structures using tuned mass dampers with soil-structure interaction",
+   "doi_or_url": "10.1007/s10518-026-02561-2",
+   "target": [],
+   "optional": [],
+   "reason": "Tuned mass dampers on timber structures with SSI."
+  },
+  {
+   "title": "Experimental and mechanical behavior investigation on self-centering braces with multi-stage yield energy dissipation",
+   "doi_or_url": "10.1007/s10518-026-02574-x",
+   "target": [],
+   "optional": [],
+   "reason": "Self-centering brace test."
+  },
+  {
+   "title": "Development of axial–moment interaction curves for flat and square-profiled cold-formed steel–concrete composite shear walls using experimental and numerical investigations",
+   "doi_or_url": "10.1007/s10518-026-02551-4",
+   "target": [],
+   "optional": [],
+   "reason": "Composite shear wall interaction curves."
+  },
+  {
+   "title": "Seismic performance and design method of novel InorgBam beam-column bolted connections utilizing glued-in rods in the column",
+   "doi_or_url": "10.1007/s10518-026-02603-9",
+   "target": [],
+   "optional": [],
+   "reason": "Bamboo composite connections."
+  },
+  {
+   "title": "Analysis of the bridge failure direction and the increased probability of collapse due to multi-hazard effects: scour and earthquakes",
+   "doi_or_url": "10.1007/s10518-026-02562-1",
+   "target": [
+    "RP1"
+   ],
+   "optional": [],
+   "reason": "Scour plus earthquake on bridges: multi-hazard, RP1."
+  },
+  {
+   "title": "Scale effects and seismic failure behavior of pile-group supported bridges subjected to liquefaction-induced lateral spreading",
+   "doi_or_url": "10.1007/s10518-026-02564-z",
+   "target": [],
+   "optional": [],
+   "reason": "Pile-group bridges in lateral spreading; scale effects."
+  },
+  {
+   "title": "Displacement response spectra based on 2DOF system for the isolated design of railway bridges",
+   "doi_or_url": "10.1007/s10518-026-02586-7",
+   "target": [],
+   "optional": [],
+   "reason": "Displacement spectra for isolated railway bridges."
+  },
+  {
+   "title": "Seismic performance assessment and design of high-speed railway bridges using quantitative catastrophe representation models",
+   "doi_or_url": "10.1007/s10518-026-02571-0",
+   "target": [],
+   "optional": [
+    "RP2",
+    "RP8"
+   ],
+   "reason": "Post-earthquake train running on bridges with seismic and structural uncertainty; functionality (RP2) and uncertainty (RP8) only in passing."
+  },
+  {
+   "title": "Running speed limits of railway vehicles on simply-supported bridge subjected to strike-slip faulting",
+   "doi_or_url": "10.1007/s10518-026-02563-0",
+   "target": [],
+   "optional": [],
+   "reason": "Train speed limits under faulting."
+  },
+  {
+   "title": "Effect of saddle–cable slippage on seismic performance of a multitower suspension bridge",
+   "doi_or_url": "10.1007/s10518-026-02597-4",
+   "target": [],
+   "optional": [],
+   "reason": "Cable slippage in a suspension bridge."
+  },
+  {
+   "title": "A model-driven method for predicting the global response of base-isolated structures based on local monitoring data from the isolation layer",
+   "doi_or_url": "10.1007/s10518-026-02570-1",
+   "target": [],
+   "optional": [],
+   "reason": "Reconstructing response of base-isolated buildings from monitoring data."
+  },
+  {
+   "title": "Machine learning-aided optimization framework for friction dampers in traditional Chinese timber structures and case study evaluation",
+   "doi_or_url": "10.1007/s10518-026-02601-x",
+   "target": [
+    "RP8"
+   ],
+   "optional": [
+    "RP3"
+   ],
+   "reason": "Sampling plus ML surrogate plus optimisation of dampers: design of experiments and ML, RP8; surrogate touches RP3."
+  },
+  {
+   "title": "From Demolition to Reuse: A Decision-Oriented Perspective on Reclaimed Structural Steel",
+   "doi_or_url": "10.1007/978-3-032-39505-4_9",
+   "target": [],
+   "optional": [],
+   "reason": "Steel reuse decisions; sustainability."
+  },
+  {
+   "title": "Seismic Risk Assessment of Critical Energy Facilities: The Effect of Operational Status",
+   "doi_or_url": "https://iconhic.com/2026/wp/wp-content/uploads/2026/09/ID_52.pdf",
+   "target": [
+    "RP2"
+   ],
+   "optional": [
+    "RP1",
+    "RP8"
+   ],
+   "reason": "Seismic risk of an industrial facility as its operating state varies: risk assessment, RP2."
+  },
+  {
+   "title": "Wavelet Packet‐Based Diffusion Model for Ground Motion Generation With Multi‐Conditional Energy and Spectral Matching",
+   "doi_or_url": "10.1002/eqe.70323",
+   "target": [
+    "RP8"
+   ],
+   "optional": [
+    "RP3"
+   ],
+   "reason": "Generative ML (diffusion) for ground-motion synthesis with spectral matching: ML and ground-motion selection, RP8."
+  },
+  {
+   "title": "Shake Table and Numerical Evaluation on the Seismic Performance of Elastic‐boundary Ceiling Systems",
+   "doi_or_url": "10.1002/eqe.70324",
+   "target": [],
+   "optional": [
+    "RP2"
+   ],
+   "reason": "Shake-table test of a ceiling system; motivated by downtime (RP2) but a component test."
+  },
+  {
+   "title": "A Practical Formulation for Seismic Damage Accumulation on Multiple Mainshock‐Aftershock Sequences Based on Disaggregation of the Mainshock Hazard",
+   "doi_or_url": "10.1002/eqe.70319",
+   "target": [
+    "RP1",
+    "RP8"
+   ],
+   "optional": [
+    "RP2"
+   ],
+   "reason": "Damage accumulation over mainshock-aftershock sequences with epistemic uncertainty: sequential hazards (RP1) and uncertainty (RP8); built on PBEE (RP2)."
+  },
+  {
+   "title": "Multivariate Seismic Fragility Analysis of Curved Rocking Bridges Using Active Learning‐Enhanced Surrogate Modeling",
+   "doi_or_url": "10.1002/eqe.70322",
+   "target": [
+    "RP3",
+    "RP8"
+   ],
+   "optional": [],
+   "reason": "Active-learning surrogate for multivariate fragility: surrogates, RP3's core; metamodel-based fragility also RP8."
+  },
+  {
+   "title": "The mental and social impacts of the 2021 Ahr Valley Flood on Older Adults in Germany: Assessing factors of vulnerability and resilience",
+   "doi_or_url": "10.1016/j.ijdrr.2026.106545",
+   "target": [],
+   "optional": [],
+   "reason": "Mental and social health of older flood survivors; social science, no student."
+  },
+  {
+   "title": "Combining SHAP and iBreakDown to Interpret XGBoost-Based Future Condition Predictions of Steel–Concrete Composite Box-Girder Bridges",
+   "doi_or_url": "10.1186/s40069-026-00966-6",
+   "target": [],
+   "optional": [
+    "RP8"
+   ],
+   "reason": "ML condition prediction for bridges (not seismic); RP8's ML is for earthquake engineering."
+  },
+  {
+   "title": "Tensile Ductility Evolution of Sustainable Engineered Cementitious Composites Incorporating Fly Ash Coarse Aggregate under Freeze-Thaw Cycling",
+   "doi_or_url": "10.1016/j.jobe.2026.117565",
+   "target": [],
+   "optional": [],
+   "reason": "Cementitious composite materials."
+  },
+  {
+   "title": "Sand morphology and size effects on fracture and tensile behaviors of engineered cementitious composites with a roughness-based size effect model",
+   "doi_or_url": "10.1016/j.conbuildmat.2026.148363",
+   "target": [],
+   "optional": [],
+   "reason": "Cementitious composite materials."
+  },
+  {
+   "title": "A proportioning framework for high-strength tensile strain-hardening cementitious composites: experimental validation based on water-to-binder ratio variation",
+   "doi_or_url": "10.1016/j.coco.2026.102957",
+   "target": [],
+   "optional": [],
+   "reason": "Cementitious composite materials."
+  },
+  {
+   "title": "Experimental Research on the Behavior and Crack-Sealing Capability of Masonry Mortars Reinforced with PVA Fibers",
+   "doi_or_url": "10.3390/buildings16183697",
+   "target": [],
+   "optional": [],
+   "reason": "Mortar self-healing."
+  },
+  {
+   "title": "Parametric analysis of the behavior of combined FRP-Steel confinement concrete columns under eccentricity of the load",
+   "doi_or_url": "https://ijnaa.semnan.ac.ir/article_11048_1010cedf85f6a7e24b087e63235dc12e.pdf",
+   "target": [],
+   "optional": [],
+   "reason": "FRP-steel confined columns under eccentric load; component mechanics."
+  },
+  {
+   "title": "Comparative assessment of image-derived mesh topologies for kinematic limit analysis of irregular masonry with rigid and dissipative elements",
+   "doi_or_url": "10.1007/s11012-026-02184-6",
+   "target": [],
+   "optional": [],
+   "reason": "Limit analysis of masonry meshes."
+  },
+  {
+   "title": "Carbonated steel slag in clinker-free cementitious materials: Effects of high-volume replacement on hydration, microstructure, and compressive strength",
+   "doi_or_url": "10.1016/j.conbuildmat.2026.148489",
+   "target": [],
+   "optional": [],
+   "reason": "Cement chemistry."
+  },
+  {
+   "title": "Study on mechanical properties, hydration mechanism and carbon emission of beta-hemihydrate phosphogypsum-based sustainable cementitious materials with rice …",
+   "doi_or_url": "10.1016/j.scp.2026.102563",
+   "target": [],
+   "optional": [],
+   "reason": "Cement chemistry and its carbon emission; not structure-fire emissions (RP6)."
+  },
+  {
+   "title": "The impact of soil-structure interaction on the hybrid force-displacement seismic design method for steel moment-resisting frames",
+   "doi_or_url": "10.1016/j.soildyn.2026.110708",
+   "target": [],
+   "optional": [],
+   "reason": "SSI in a seismic design method for steel frames; design method."
+  },
+  {
+   "title": "Resilience Assessment of Reinforced Concrete Bridges in a Multihazard Environment of Flood and Corrosion",
+   "doi_or_url": "10.1061/JBENF2.BEENG-8451",
+   "target": [
+    "RP1"
+   ],
+   "optional": [
+    "RP2"
+   ],
+   "reason": "Bridge resilience under flood plus corrosion: multi-hazard, RP1; resilience touches RP2."
+  },
+  {
+   "title": "Integrated High‐Fidelity Soil–Structure‐Interaction Analysis of a Tall Reinforced Concrete Core Wall Building",
+   "doi_or_url": "10.1002/esp4.70130",
+   "target": [],
+   "optional": [
+    "RP2"
+   ],
+   "reason": "High-fidelity SSI analysis of a tall building under PBSD; RP2 (tall-building performance) at most."
+  },
+  {
+   "title": "Machine Learning‐Based Prediction of Drift Limit States of Concrete‐Filled Steel Tube Columns",
+   "doi_or_url": "10.1002/esp4.70134",
+   "target": [
+    "RP8"
+   ],
+   "optional": [],
+   "reason": "ML prediction of drift limit states: data-driven component models, RP8."
+  },
+  {
+   "title": "Effects of steel slag aggregate and polycarboxylate superplasticizer on shotcrete",
+   "doi_or_url": "10.1186/s43065-026-00191-1",
+   "target": [],
+   "optional": [],
+   "reason": "Shotcrete materials."
+  },
+  {
+   "title": "Actionable condition information and resource priorities in flood-disrupted urban rail recovery",
+   "doi_or_url": "10.1186/s43065-026-00219-6",
+   "target": [],
+   "optional": [
+    "RP2",
+    "RP4"
+   ],
+   "reason": "Operations research for metro recovery after a flood; infrastructure recovery (RP2) and flood (RP4) only in passing."
+  },
+  {
+   "title": "An integrated framework for resilient urban mobility: coupling disruption taxonomy, equilibrium modelling and participatory validation",
+   "doi_or_url": "10.1186/s43065-026-00220-z",
+   "target": [],
+   "optional": [
+    "RP4"
+   ],
+   "reason": "Transport antifragility framework; cascading disruptions touch RP4."
+  },
+  {
+   "title": "Flood Risk Assessment and Mitigation for Urban Rail Transit Stations under Heterogeneous Information and Multisource Uncertainty",
+   "doi_or_url": "10.1061/ajrua6.rueng-2091",
+   "target": [
+    "RP4"
+   ],
+   "optional": [],
+   "reason": "Flood risk assessment under multisource uncertainty: hazard risk assessment, RP4."
+  },
+  {
+   "title": "An Enhanced Modular Frame-Shear Wall with Stiffening Frame: Thin-Walled Plate Critical Buckling Stress Calculation and Restraint Concrete Design",
+   "doi_or_url": "10.1061/jsendh.steng-16607",
+   "target": [],
+   "optional": [],
+   "reason": "Modular steel shear wall."
+  },
+  {
+   "title": "Experimental Study of the Unified Structural Behavior of Pull-Through and Pull-Out Failures in a Crest-Fixed Trapezoidal Roof–Purlin Connection",
+   "doi_or_url": "10.1061/jsendh.steng-16559",
+   "target": [],
+   "optional": [],
+   "reason": "Roof-purlin connection tests under wind uplift."
+  },
+  {
+   "title": "Seismic resilience of hollow core slab–beam connections with novel ductile detailing: experimental and numerical simulations",
+   "doi_or_url": "10.1007/s10518-026-02681-9",
+   "target": [],
+   "optional": [],
+   "reason": "Hollow-core slab connections."
+  },
+  {
+   "title": "Seismic design rules for ductile steel columns with European H cross-sections",
+   "doi_or_url": "10.1016/j.jcsr.2026.110706",
+   "target": [],
+   "optional": [],
+   "reason": "Steel column design rules."
+  },
+  {
+   "title": "Deterministic versus stochastic surrogates for offshore wind turbine reliability analysis: The role of seed-to-seed variability",
+   "doi_or_url": "10.1016/j.strusafe.2026.102785",
+   "target": [
+    "RP3",
+    "RP1"
+   ],
+   "optional": [
+    "RP8"
+   ],
+   "reason": "Surrogates for offshore wind turbine reliability: surrogates (RP3); RP1 holds offshore wind turbine multi-hazard papers."
+  },
+  {
+   "title": "Comparative Analysis of SPSHA and ETAS-based PSHA",
+   "doi_or_url": "https://www.researchgate.net/profile/Eugenio-Chioccarelli/publication/414897923_Comparative_Analysis_of_SPSHA_and_ETAS-based_PSHA/links/6aba9507b43d142169cfcfec/Comparative-Analysis-of-SPSHA-and-ETAS-based-PSHA.pdf",
+   "target": [],
+   "optional": [
+    "RP4",
+    "RP1"
+   ],
+   "reason": "Seismic hazard with space-time clustering; hazard modelling, RP4/RP1 only in passing."
+  },
+  {
+   "title": "Comparing Two Italian Hazard Models in Terms of Macroseismic Intensity: Preliminary Study",
+   "doi_or_url": "https://www.researchgate.net/profile/Pasquale-Cito/publication/414896756_Comparing_Two_Italian_Hazard_Models_in_Terms_of_Macroseismic_Intensity_Preliminary_Study/links/6aba8332db7d3b1c53a01eb2/Comparing-Two-Italian-Hazard-Models-in-Terms-of-Macroseismic-Intensity-Preliminary-Study.pdf",
+   "target": [],
+   "optional": [
+    "RP2",
+    "RP4"
+   ],
+   "reason": "Comparing seismic hazard models in macroseismic intensity; RP2 (intensity measures for urban risk) at most."
+  },
+  {
+   "title": "Investigating differences between uniform hazard and risk targeted design spectra",
+   "doi_or_url": "https://www.researchgate.net/profile/Georgios-Baltzopoulos/publication/414758135_Investigating_differences_between_uniform_hazard_and_risk_targeted_design_spectra/links/6ab647cb756a0b12f4f351c9/Investigating-differences-between-uniform-hazard-and-risk-targeted-design-spectra.pdf",
+   "target": [
+    "RP2"
+   ],
+   "optional": [],
+   "reason": "Uniform-hazard vs risk-targeted design spectra: RP2 holds the risk-targeted spectra papers."
+  },
+  {
+   "title": "Towards physics-based ground motion and damage scenarios from volcanic-induced earthquakes in Campi Flegrei, metropolitan area of Napoli, Southern Italy",
+   "doi_or_url": "https://www.researchgate.net/profile/Iunio-Iervolino/publication/415181313_Towards_physics-based_ground_motion_and_damage_scenarios_from_volcanic-induced_earthquakes_in_Campi_Flegrei_metropolitan_area_of_Napoli_Southern_Italy/links/6ac0ad5cb43d142169d04cff/Towards-physics-based-ground-motion-and-damage-scenarios-from-volcanic-induced-earthquakes-in-Campi-Flegrei-metropolitan-area-of-Napoli-Southern-Italy.pdf",
+   "target": [
+    "RP3"
+   ],
+   "optional": [
+    "RP2",
+    "RP4"
+   ],
+   "reason": "Physics-based ground-motion and damage scenarios: simulation-based hazard and damage, RP3."
+  }
+ ]
+}

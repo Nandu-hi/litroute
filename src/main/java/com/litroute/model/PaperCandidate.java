@@ -60,10 +60,10 @@ public record PaperCandidate(
     private static final Pattern NON_RESEARCH_TYPE = Pattern.compile("(?i)^(?:book reviews?|discussions?(?: and closures?)?"
             + "|closures?|errat(?:a|um)|corrections?|corrigend(?:a|um)|retractions?(?: notes?)?|editorials?"
             + "|obituar(?:y|ies)|letters? to the editor|comments?(?: and repl(?:y|ies))?|repl(?:y|ies))$");
-    /** The same notes recognized by their titles, for alerts that do not label their sections. */
+    /** The same notes recognized by their titles, for alerts that do not label their sections, and a special issue's introduction. */
     private static final Pattern NON_RESEARCH_TITLE = Pattern.compile("(?i)^\\s*(?:errat(?:a|um)\\b|corrigend(?:a|um)\\b"
             + "|correction(?:\\s+to\\b|\\s*:)|retraction\\b|discussion\\s+of\\b|closure\\s+to\\b|comment\\s+on\\b"
-            + "|reply\\s+to\\b)");
+            + "|reply\\s+to\\b|special\\s+issue\\b)");
 
     /**
      * Whether this is a research paper rather than a note about one (book review, discussion, erratum,

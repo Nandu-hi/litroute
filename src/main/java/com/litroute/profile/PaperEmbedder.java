@@ -22,6 +22,13 @@ public final class PaperEmbedder {
     static final double ABSTRACT_WEIGHT = 0.6;
     static final double STRUCTURE_WEIGHT = 0.2;
     static final double BODY_WEIGHT = 0.2;
+    /**
+     * Experimental, off by default ({@code -Dlitroute.semantic=abstract}): SPECTER2 represents a paper by its
+     * title + abstract alone, for reference papers and PDF candidates alike; no heading or body views are
+     * embedded. The body still reaches M6 through its words (TF-IDF). Profiles built one way must be rebuilt
+     * (a fresh store) before matching the other way: a stored vector is reused by its PDF's hash.
+     */
+    public static final boolean SEMANTIC_ABSTRACT_ONLY = "abstract".equals(System.getProperty("litroute.semantic"));
 
     /**
      * One paper's views, all unit length.
@@ -55,6 +62,9 @@ public final class PaperEmbedder {
      */
     public Embedding embed(PaperText text) {
         float[] abstractView = provider.embed(text.title(), text.abstractText());
+        if (SEMANTIC_ABSTRACT_ONLY) {
+            return new Embedding(abstractView, abstractView, Optional.empty(), Optional.empty());
+        }
         Optional<float[]> structureView = text.headings().isEmpty()
                 ? Optional.empty()
                 : Optional.of(provider.embed(text.title(), String.join("; ", text.headings())));

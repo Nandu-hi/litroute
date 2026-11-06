@@ -28,10 +28,16 @@ import java.util.stream.Stream;
  * ({@code ~/.litroute/data/profiles.json}) when there is one: only PDFs that are new or changed since
  * are embedded. Tests that change folders get a {@link Workspace}: a private tree of links to the real
  * files plus a copy of the built store, so nothing is copied until a test modifies a file.
+ *
+ * {@code -Dlitroute.testProfileCache=DIR} builds into {@code DIR/profiles.json} instead, from scratch (no head
+ * start from the live store): every PDF is embedded again, as needed when the embedding recipe changes
+ * ({@code -Dlitroute.semantic=abstract}).
  */
 public final class TestProfiles {
 
-    private static final Path CACHE_STORE = Path.of("target", "test-profile-cache", "profiles.json");
+    private static final String CACHE_PROPERTY = "litroute.testProfileCache";
+    private static final Path CACHE_STORE = Path.of(System.getProperty(CACHE_PROPERTY,
+            Path.of("target", "test-profile-cache").toString()), "profiles.json");
 
     /** A private profiles tree (links to the real PDFs) plus its own store. */
     public record Workspace(Path root, ProfileStore store) {
@@ -161,7 +167,7 @@ public final class TestProfiles {
             try {
                 Files.createDirectories(CACHE_STORE.getParent());
                 Path liveStore = Path.of(System.getProperty("user.home"), ".litroute", "data", "profiles.json");
-                if (!Files.exists(CACHE_STORE) && Files.isRegularFile(liveStore)) {
+                if (!Files.exists(CACHE_STORE) && Files.isRegularFile(liveStore) && System.getProperty(CACHE_PROPERTY) == null) {
                     // Only a head start: the sync still checks every PDF's hash and the model before reusing a vector.
                     Files.copy(liveStore, CACHE_STORE);
                 }

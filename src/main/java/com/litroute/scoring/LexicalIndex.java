@@ -40,10 +40,32 @@ final class LexicalIndex {
     private record Posting(int doc, double weight) {
     }
 
+    /**
+     * The vocabulary: each kept term (a stem or a "stem_stem" pair) mapped to its IDF. Only terms found in
+     * at least {@link #MIN_PAPERS} papers and at most {@link #MAX_PAPER_SHARE} of them are here; a term
+     * missing from this map is ignored everywhere.
+     */
     private final Map<String, Double> idf = new HashMap<>();
+    /**
+     * Every reference paper of every student, in one stable order; a paper's position here is its number
+     * everywhere else ({@code docsByProfile}, {@code postings}, {@code gram}). Each entry holds the
+     * student's name, the paper, and its unit-length TF-IDF vector (term to weight, kept terms only).
+     */
     private final List<Doc> docs = new ArrayList<>();
+    /**
+     * For each student (in profile order), the numbers in {@code docs} of that student's papers. Lets a
+     * comparison pick out one student's rows of {@code row(...)} and {@code gram}.
+     */
     private final Map<String, int[]> docsByProfile = new LinkedHashMap<>();
+    /**
+     * The inverted index: each kept term mapped to the papers that contain it, as (paper number, that
+     * paper's weight for the term). Scoring a text visits only the papers that share a term with it.
+     */
     private final Map<String, List<Posting>> postings = new HashMap<>();
+    /**
+     * Paper-to-paper similarity: {@code gram[i][j]} is the cosine of papers i and j (numbers as in
+     * {@code docs}). Computed once; gives a student's centroid similarity without building the centroid.
+     */
     private final double[][] gram;
     /** Per student, the sum of its papers' vectors: what the student's papers say, term by term. */
     private final Map<String, Map<String, Double>> profileTerms = new HashMap<>();

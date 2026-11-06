@@ -1,57 +1,19 @@
-# The `dedup` module (M4)
+# `dedup` (M4): one record per paper
 
-**In one sentence:** it merges candidates that are the same paper into one record, so the professor never reviews a paper twice.
+The same paper can arrive more than once: from two publishers, from Google Scholar repeating a publisher's alert, or from a re-run after a crash. [Deduplicator.deduplicate(list)](Deduplicator.java) merges the copies, so the professor never reviews a paper twice.
 
-The same paper often reaches the pipeline more than once: two publishers send alerts for it, a Google Scholar recommendation repeats a publisher's alert, a digest repeats last week's entry, or a batch is processed again after a crash.
+- **Input:** M7c's held papers first, then this batch. Earlier entries win.
+- **Output:** one entry per paper, in first-seen order. It replaces M7c's `enriched` list.
 
-## Input and output
+**Same paper?** ([samePaper](Deduplicator.java))
 
-| | Type | What it holds |
-|---|---|---|
-| **Input** | `List<`[PaperCandidate](../../model/PaperCandidate.java)`>` | The enriched candidates (M2 + M3) **in priority order**: the papers already held in M7c first, then this batch's new ones. Earlier entries win conflicting fields. |
-| **Output** | `List<PaperCandidate>` | One entry per distinct paper, in first-seen order, unmodifiable. |
+1. **Both have a DOI:** they are the same paper exactly when the DOIs are equal (ignoring case). Different DOIs are never merged.
+2. **Otherwise:** both of these must hold:
+   - title similarity ≥ **0.92** ([Titles.similarity](../../util/Titles.java), which ignores accents, case and punctuation);
+   - the authors agree: either list is empty, or the two lists share a surname.
 
-## How it works
+**Merge:** a union, never a replacement. The first copy keeps every field it has, including `title` and `sourceMessageId`, and the duplicate only fills the gaps.
 
-[AlertBatchProcessor](../extract/AlertBatchProcessor.java) calls it once per batch, after every email has been extracted and enriched:
+M7e identifies papers the same way (DOI, else compacted title), so a paper is never queued twice for one student.
 
-```
-M7c enriched papers (already held)  +  this batch's extracted papers
-   │      (papers from re-run emails are dropped first, so the fresh copy replaces them)
-   ▼
-Deduplicator.deduplicate(held)
-   │   for each candidate, in order:
-   │      same paper as one already kept? ──yes──▶ merge into it (kept one wins)
-   │                                       └─no──▶ keep as a new paper
-   ▼
-deduplicated list ──▶ EnrichmentCacheStore.save(...)   (M7c, the input to M6 scoring)
-```
-
-## Interaction with M7 (the stores)
-
-The Deduplicator reads and writes no store; it is what keeps **M7c** free of duplicates.
-
-- Its input is M7c's `enriched` list (already deduplicated by earlier runs) followed by the new batch, which [AlertBatchProcessor](../extract/AlertBatchProcessor.java) loaded from M7c.
-- Its output **replaces** M7c's `enriched` list in one write. Because held papers come first, a paper stored by an earlier run keeps its fields and only gains what a new copy adds.
-- M6 later reads that list, and M7e identifies a queued paper the same way M4 does (DOI, else compacted title: [ScoredPaper.paperKey](../../model/ScoredPaper.java)), so one paper is never queued twice for a student.
-
-### [Deduplicator](Deduplicator.java)
-
-**[deduplicate(candidates)](Deduplicator.java#L39)** goes through the list once. Each candidate is compared with the papers kept so far. If it matches one, the two are merged; otherwise it is added as a new paper.
-
-**[samePaper(a, b)](Deduplicator.java#L73)** decides whether two candidates are the same paper:
-
-1. **Both have a DOI:** they are the same paper exactly when the DOIs are equal, ignoring case. DOIs are the authoritative identity, so two papers with different DOIs are **never** merged, even if their titles match.
-2. **At most one has a DOI** (so the DOIs can't disagree): fall back to fuzzy matching. Both conditions must hold:
-   - **The titles are similar enough.** [Titles.similarity](../../util/Titles.java#L26) must be at least **0.92** ([SAME_TITLE_THRESHOLD](Deduplicator.java#L31)). Titles are compared with accents, case, spaces and punctuation removed, so "Wave Loads: A Review" and "wave loads - a review" match.
-   - **The authors agree** ([authorsAgree](Deduplicator.java#L90)). If either author list is empty, this check passes, because most alerts list no authors and requiring a match would stop fuzzy merging altogether. If both lists are non-empty, they must share at least one surname (the last word of a name, compacted). This stops two different groups' papers with nearly identical titles from being merged.
-
-**[merge(winner, duplicate)](Deduplicator.java#L116)** combines two records as a **union, never a replacement**. The paper seen first keeps every field it has, and the duplicate only fills fields the first one left empty (`winner.venue().or(duplicate::venue)` and so on). Enrichment data is therefore never lost when a sparser copy of the same paper arrives later. `sourceMessageId` and `title` always come from the first copy.
-
-## How it's tested
-
-The test papers are real ones from the client's sample alert emails, since the problem this module solves (the same paper arriving from a publisher alert and a Google Scholar recommendation, written differently) is a real one.
-
-| Test class | What it covers |
-|---|---|
-| [DeduplicatorTest](../../../../../../test/java/com/litroute/ingestion/dedup/DeduplicatorTest.java) | Empty input gives empty output. The same DOI from two alerts merges into one, and DOIs are compared ignoring case. Different DOIs are never merged, even with matching titles. Candidates without a DOI merge on title. A DOI-less candidate merges into the enriched copy that has a DOI. Different papers are both kept. Two papers sharing only a title, with no common author, are not merged. One shared surname is enough. The first candidate wins every field it has and the duplicate fills the rest. A third copy merges into the already merged record. First-seen order is preserved. |
+**Tests:** [DeduplicatorTest](../../../../../../test/java/com/litroute/ingestion/dedup/DeduplicatorTest.java) uses real papers from the alerts. It checks DOI merging (case-insensitive), that different DOIs are never merged, title merging, that a shared title without a shared author is not merged, that the first copy wins its fields, chains of three copies, and that order is preserved.

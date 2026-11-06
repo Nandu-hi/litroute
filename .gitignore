@@ -16,3 +16,7 @@ install.md
 # Model export venv / output (model files belong in ~/.litroute/models, not git)
 scripts/model-export/.venv/
 scripts/model-export/out/
+
+# Local reports and helper scripts
+eml-alerts-*.txt
+sync-install.sh

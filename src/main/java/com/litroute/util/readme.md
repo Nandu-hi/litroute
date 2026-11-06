@@ -1,83 +1,19 @@
-# The `util` module
+# `util`: small stateless helpers
 
-**In one sentence:** small, stateless helpers that several stages share: safe file writes, finding DOIs, comparing titles and authors' names, and vector arithmetic. None of them makes a decision for the pipeline; thresholds belong to the callers.
+These helpers make no pipeline decisions; the thresholds belong to their callers.
 
-## Who uses what
+| Class | What it does | Used by |
+|---|---|---|
+| [AtomicFiles](AtomicFiles.java) | `writeAtomically(target, bytes)`: writes a temp file in the same folder, then moves it over the target (`ATOMIC_MOVE`). A reader sees either the old file or the new one, never half of one. | every M7 store, CredentialStore, PdfDownloader |
+| [Dois](Dois.java) | `find(text)`: the first bare DOI in a text or URL. Percent-decodes, stops at query strings, and strips trailing punctuation, `.pdf` / `/full` / `/abstract` suffixes and an unmatched `)`. | M2 |
+| [Titles](Titles.java) | `compact(title)`: strips accents, lowercases, keeps only `a-z0-9`. `similarity(a, b)`: 1 − Levenshtein / longer length on the compacted titles (two empty titles → 0). | M3 hit matching (≥ 0.88), M4 (≥ 0.92), cache and queue keys |
+| [PersonNames](PersonNames.java) | `matches(first, last, printed)`, strict: the printed name starts with the first name and ends with the last name, with only middle names or initials between. Case, accents and in-word punctuation don't matter, and a hyphenated name stays one name. | AuthorName, PriorityAuthors, M6 |
+| [Vectors](Vectors.java) | `cosine`, `norm`, `normalize` (returns a new copy), `mean`, `weightedSum`. A zero vector has cosine 0 with everything (never NaN); vectors of different lengths are rejected. | embedding, M5, M6 |
 
-```
-            ┌──────────────────────── AtomicFiles.writeAtomically ─────────────────────────┐
-            │  M7a EmailCacheStore · M7c EnrichmentCacheStore · M7d ProfileStore ·          │
-            │  M7e ScoredQueueStore · CredentialStore · PdfDownloader (PDF files)           │
-            └───────────────────────────────────────────────────────────────────────────────┘
-
-alert HTML link / text ──▶ Dois.find ──▶ PaperCandidate.doi                  (M2 AlertHtmlParser)
-
-two titles ──▶ Titles.similarity ──▶ 0..1 ──▶ "same paper?"   M3 Crossref/OpenAlex hit matching,
-                                                             M4 Deduplicator (≥ 0.92)
-one title  ──▶ Titles.compact    ──▶ key   ──▶ M3 lookup cache key, M7e queueKey,
-                                              M5 PdfTextExtractor title checks
-
-SPECTER2 output ──▶ Vectors.normalize ──▶ unit vector                (embedding)
-view vectors    ──▶ Vectors.weightedSum / mean ──▶ combined vector   (M5 PaperEmbedder; M6 profile mean)
-two vectors     ──▶ Vectors.cosine ──▶ similarity                    (M6 scoring)
-```
-
-## The classes
-
-### [AtomicFiles](AtomicFiles.java): crash-safe file writes
-
-`writeAtomically(target, bytes)` creates the parent folder if needed, writes the bytes to a temporary file **in the same folder**, then moves it over the target with `ATOMIC_MOVE`. A `finally` block deletes the temporary file if anything failed.
-
-Anyone reading the target sees either the complete old version or the complete new version, never a half-written file. The temporary file is in the same folder because an atomic rename only works within one file system.
-
-It is used by every JSON store (M7a, c, d, e), the credential file, and [PdfDownloader](../ingestion/enrich/PdfDownloader.java).
-
-### [Dois](Dois.java): find a bare DOI anywhere
-
-`find(text)` returns the first DOI (`10.<4–9 digits>/…`) in any text or URL, as a bare DOI:
-- if the text contains `%`, it is percent-decoded first, keeping a literal `+`;
-- the match stops at whitespace, quotes, `< > ? # & \`, so query strings are excluded;
-- [clean](Dois.java#L51) repeatedly removes trailing punctuation (`.,;:`), publisher suffixes (`.pdf`, `/pdf`, `/epdf`, `/full`, `/fulltext`, `/abstract`, `/abs`, `/meta`, `/references`), and an unmatched closing `)` or `]` that belongs to the surrounding sentence, as in `(doi:10.1/x)`;
-- a match with nothing after the `/` is ignored.
-
-Example: `https://link.springer.com/content/pdf/10.1186/s43065-024-00115-x.pdf?utm_source=alert` → `10.1186/s43065-024-00115-x`.
-
-### [Titles](Titles.java): compare titles written differently
-
-- **[compact(title)](Titles.java#L42):** removes accents (NFD + delete combining marks), lowercases with `Locale.ROOT`, and keeps only `a-z0-9`. "Wave Loads: A Review" → `waveloadsareview`. Publisher quirks such as missing spaces, en-dash vs hyphen or curly quotes therefore don't matter. This is the form titles are compared and cached in.
-- **[similarity(a, b)](Titles.java#L26):** `1 − editDistance / longerLength` on the compacted titles, from 0 to 1 (1 means identical after compacting). The Levenshtein distance uses two rolling rows. Two empty titles score 0, not 1.
-- What counts as "similar enough" is decided by the caller, because M3 matching an API result and M4 merging two alerts need different thresholds.
-
-### [PersonNames](PersonNames.java): tell whether a printed name is a first and last name
-
-[matches(firstName, lastName, printed)](PersonNames.java) is strict: the printed name must start with the first name and end with the last name, spelled out, with at most middle names or initials between. For first name Alice and last name Carter:
+How strict `PersonNames` is, for Alice Carter:
 
 | Matches | Doesn't match |
 |---|---|
-| Alice Carter, Alice K. Carter, Alice K.Carter, Alice Kate Carter, ALICE CARTER, Carter, Alice K. | Alice, Carter, A. Carter, AK Carter, A. K. Carter, Alicia Carter, Carter Alice, Dr. Alice Carter |
+| Alice Carter, Alice K. Carter, Alice Kate Carter, ALICE CARTER, "Carter, Alice K." | Alice, Carter, A. Carter, AK Carter, Alicia Carter, Dr. Alice Carter |
 
-Only case, accents and punctuation inside a word don't matter: Beyaztunç is Beyaztunc, Zhan-Peng is Zhanpeng, and O'Brien is OBrien. A hyphenated name stays one name, so Jean-Pierre is not Jean, and Londono-Lopez is not Lopez. A comma puts the last name first, as publishers' pages print it.
-
-### [Vectors](Vectors.java): embedding arithmetic
-
-- `cosine(a, b)`: −1 to 1, accumulated in `double` for precision.
-- `norm(v)`, `normalize(v)` (returns a **new** unit-length copy).
-- `mean(vectors)` and `weightedSum(vectors, weights)` (Σ wᵢ·vᵢ).
-- **A zero vector is treated as similar to nothing.** Its cosine with anything is 0, and normalizing it returns it unchanged. This avoids producing NaN, which would otherwise spread silently into every score computed from it.
-- Vectors of different lengths are rejected with `IllegalArgumentException`.
-
-## Interaction with M7 (the stores)
-
-- **AtomicFiles** is the write path of every M7 store (M7a, M7c, M7d, M7e, the scored-paper log and the sent papers) and of M7e's PDF copies in `matched/<student>/`. It is what makes the stores' crash-safety rule hold: a store file is always either its old or its new version.
-- **Titles.compact** produces two of the stores' keys: the M7c lookup-cache key ([CachingPaperEnricher](../ingestion/enrich/CachingPaperEnricher.java)) and, for papers without a DOI, the `title:` part of [ScoredPaper.queueKey / paperKey](../model/ScoredPaper.java) that M7e, the sent papers and the scored-paper log use. So the same paper written differently in two alerts is found under the same key.
-- **Dois, Titles.similarity, Vectors** compute values that end up in M7c (a candidate's DOI) and M7e (scores), but read or write no store themselves.
-
-## How it's tested
-
-| Test class | What it covers |
-|---|---|
-| [DoisTest](../../../../../test/java/com/litroute/util/DoisTest.java) | Finds the DOI in common publisher URL shapes, removing query strings and PDF suffixes. Finds a DOI in plain text and drops trailing punctuation. Handles a percent-encoded DOI. Ignores text that only looks numeric. |
-| [PersonNamesTest](../../../../../test/java/com/litroute/util/PersonNamesTest.java) | The forms in the table above match or don't; case, accents and punctuation inside a word don't matter; a hyphenated name stays one name; a last name of several words must be whole; the first and last name can't overlap. |
-| [VectorsTest](../../../../../test/java/com/litroute/util/VectorsTest.java) | Cosine of parallel, orthogonal and opposite vectors. A zero vector is similar to nothing instead of NaN. Normalizing gives unit length without changing the input. Mean and weighted sum. Different lengths are rejected. |
-
-`AtomicFiles` and `Titles` have no test class of their own. They are tested through the stores (atomic overwrite) and through the dedup and enrichment tests (title matching).
+**Tests:** [DoisTest](../../../../../test/java/com/litroute/util/DoisTest.java), [PersonNamesTest](../../../../../test/java/com/litroute/util/PersonNamesTest.java) and [VectorsTest](../../../../../test/java/com/litroute/util/VectorsTest.java). `AtomicFiles` and `Titles` are tested through the store, dedup and enrichment tests.

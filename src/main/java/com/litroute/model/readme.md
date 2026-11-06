@@ -1,115 +1,21 @@
-# The `model` module
+# `model`: the records passed between stages
 
-**In one sentence:** the shared, immutable data records that pass between pipeline stages. Each record is the output of one stage and the input of the next, so this package contains no logic, only data and the rules that keep it valid.
-
-## Where each record sits in the pipeline
+These are immutable records and contain no pipeline logic. Each one validates its fields in a compact constructor and copies its lists with `List.copyOf`, so invalid data is rejected where it is created. `with...` methods return changed copies.
 
 ```
-Gmail INBOX
-   │  M1 GmailEmailSource
-   ▼
-RawEmail ─────────────────┐   one alert email, unparsed
-   │  M2 PaperExtractor   │
-   │  M3 enrichment       │
-   ▼                      │
-PaperCandidate            │   one paper from an email (filled in from Crossref/OpenAlex)
-   │  M4 Deduplicator     │
-   ▼                      │
-PaperCandidate (deduplicated, in M7c)
-   │
-   │            student folders of PDFs
-   │               │  M5 ProfileBuilder
-   │               ▼
-   │            Profile (ProfilePaper)                    in M7d
-   │               │
-   ▼  M6 RelevanceScorer
-ScoredPaper  (status = ReviewStatus.PENDING)              in M7e review queue
-   │  M8 professor approves / drops
-   ▼
-ScoredPaper  (status = APPROVED ─▶ M10 sends to the student ─▶ SENT, or DROPPED)
-ScoredPaper  (status = UNMATCHED: M6 matched it to no one; listed with the dropped papers)
+RawEmail ─M2/M3─▶ PaperCandidate ─M4─▶ (M7c) ─M6─▶ ScoredPaper (M7e) ─M8/M10─▶ status
+student PDFs ─M5─▶ Profile / ProfilePaper (M7d)
 ```
 
-## The records
+| Record | Made by | Key points |
+|---|---|---|
+| [RawEmail](RawEmail.java) | M1 | One alert as received: `messageId` (required; M7a's key), subject, sender, UTC time, HTML and/or plain-text body (at least one). |
+| [PaperCandidate](PaperCandidate.java) | M2, M3 | One paper. Only `title` is required; every other field is `Optional` and never guessed. The email's values win: a lookup only fills gaps, except that it can complete an abstract the alert cut short. `isResearch()` is false for notes (book reviews, discussions, errata, editorials, special-issue introductions), recognized by section label or title. |
+| [Profile](Profile.java) | M5 | A student: `name` (the folder), `emails`, `papers` (never empty), up to 10 `keywords`, `modelId`, `updatedAt`. Each `ProfilePaper` holds its path, SHA-256, title, combined vector, the three view vectors, its abstract and body text, and its keywords. The vector arrays are shared, so treat them as read-only. |
+| [ScoredPaper](ScoredPaper.java) | M6 | One paper for one student: `score` (relevance × share, 0–1), `rationale`, `status`, `recommended`, optional `relevance` and `listedAuthor`, and `fits` (every student's score, used by `movedTo`). `queueKey()` = student + `doi:<doi>` or `title:<compacted>`. |
+| [ReviewStatus](ReviewStatus.java) | — | `PENDING`, `APPROVED`, `DROPPED`, `SENT` (moved to SentPaperStore, never queued again), `UNMATCHED` (matched to no one; shown under Dropped). |
+| [AuthorName](AuthorName.java) | Authors tab | First and last name, both spelled out (an initial is refused). `matches(printed)` is strict ([PersonNames](../util/PersonNames.java)). |
 
-Every record checks its inputs in a compact constructor and copies its lists with `List.copyOf`. This rejects invalid data when the object is created and makes the lists unmodifiable, so nothing downstream can change them.
+**Storage:** the stores never serialize these records directly. Each store has its own JSON shape with nullable fields ([StoredCandidate](../store/StoredCandidate.java), and the private records in ProfileStore and ScoredQueueStore), so a corrupt or hand-edited entry fails the constructor and is reported as an `IOException`.
 
-### [RawEmail](RawEmail.java): output of M1
-
-One Gmail message that looked like a publication alert, **before** any HTML parsing.
-
-| Field | Meaning |
-|---|---|
-| `messageId` | The RFC 822 `Message-ID` header. M7a records it so the same email is never processed twice. Must not be blank. |
-| `subject`, `fromAddress` | As received. |
-| `receivedAt` | UTC timestamp. |
-| `htmlBody`, `plainTextBody` | Either may be empty, but **not both**. |
-
-### [PaperCandidate](PaperCandidate.java): output of M2/M3, input of M4 and M6
-
-One paper mentioned in an alert email.
-
-- **`title` is the only required field.** Everything else is `Optional` and stays empty when it can't be found. Nothing is guessed.
-- **The email's text takes priority.** Values taken from the email are never overwritten. Data looked up from Crossref, OpenAlex or the publisher's page only fills fields the email left empty. The one exception is an abstract the alert cut short: a looked-up abstract that begins with the same text completes it.
-- **[isResearch()](PaperCandidate.java)** is false for notes about papers rather than papers: book reviews, discussions and closures, errata and corrections, editorials, letters, comments and replies. They are recognized by the alert's section label or, for alerts without labels, by the title ("Erratum for …", "Discussion of …"). M2 drops them, so they never reach enrichment or matching.
-- Fields: `sourceMessageId`, `title`, `authors` (placeholders like "others" or "…" removed), `venue`, `year` (the paper's year, never the email's date), `articleType` (the alert's own section label, e.g. "Research article"), `doi` (bare, no URL prefix), `url` (redirect wrappers removed), `abstractSnippet`, and `pdfPath` (where the PDF was saved locally, if one could be downloaded).
-
-### [Profile](Profile.java): output of M5, input of M6 and M10
-
-What one student works on, built from the PDFs in their profile folder. A profile is **uniform**: one body of work. M6 compares a paper with all of the student's papers together and with the closest few.
-
-| Field | Meaning |
-|---|---|
-| `name` | The folder's name. Must not be blank. |
-| `emails` | Addresses from the folder's `email.txt`, where M10 will send approved papers. |
-| `papers` | One [ProfilePaper](Profile.java#L80) per readable PDF. **Never empty.** |
-| `keywords` | Up to 10 of the author keywords of the student's papers, those running through the most of them first ([ProfileKeywords](../profile/ProfileKeywords.java)). Shown in the Profiles tab and the CLI report. Empty if no paper lists keywords. |
-| `modelId` | The embedding model that produced every vector. Vectors from different models can't be compared. |
-| `updatedAt` | When the profile last actually changed. |
-
-- **`ProfilePaper`** holds one reference paper: its relative path, SHA-256 (so an unchanged file is never embedded twice), title, the **combined** `embedding` used for scoring, the three view vectors (`abstractView`, optional `structureView` and `bodyView`), the extracted `abstractText` and `bodyText`, and the author `keywords` the PDF lists (possibly none). M6 matches words in that text without opening the PDF again. `hasText()` and `hasKeywords()` are false for papers saved before text or keywords were stored. The vector arrays are shared, not copied, so treat them as read-only.
-
-### [ScoredPaper](ScoredPaper.java): output of M6, held in M7e, used by M8 and M10
-
-How relevant one candidate is to one student, and why.
-
-| Field | Meaning |
-|---|---|
-| `candidate` | The deduplicated paper. |
-| `profileName` | The student it was matched to. |
-| `score` | 0.0–1.0: *relevance* times *share*. The constructor rejects values outside this range. |
-| `rationale` | Readable evidence: the share, the relevance, shared words, the closest of the student's papers, and what the paper was scored from. |
-| `status` | The professor's decision so far ([ReviewStatus](ReviewStatus.java)). |
-| `fits` | How M6 scored the paper for every student (score, relevance, reasoning), best first; empty for entries queued before they were kept. [movedTo(student)](ScoredPaper.java) uses them when the professor gives the paper to another student. |
-| `recommended` | Whether M6 recommends it to the professor (★ in the review screen). The matcher only returns papers it recommends. The professor still decides. |
-| `relevance` | 0.0–1.0, optional: how close the paper is to the student's own work whoever else it suits (0.9 as close as their own papers, 0.1 as close as another student's). Empty on older queue entries that did not record it. |
-| `listedAuthor` | Optional: the paper's author, as printed on it, who is on the professor's authors list. Such a paper is held to a lower cutoff and listed first. Empty for any other paper, and on older queue entries. |
-
-- `withStatus(...)` and `withRecommended(...)` return changed copies; the record itself never changes.
-- **[queueKey()](ScoredPaper.java#L113)** identifies an entry in the review queue: the student plus the paper, identified by `doi:<lowercased DOI>` or, without a DOI, `title:<compacted title>` (the same way M4 identifies papers). M7e uses it to update a re-scored paper instead of adding it twice.
-
-### [AuthorName](AuthorName.java): one entry on the authors list
-
-A first and a last name, spelled out: the constructor refuses a blank part or an initial. [matches(printed)](AuthorName.java) says whether a name printed on a paper is this author, strictly ([PersonNames](../util/PersonNames.java)); `sameAs(other)` keeps one author from being listed twice.
-
-### [ReviewStatus](ReviewStatus.java)
-
-An enum for where a scored paper stands in the professor's queue: `PENDING` (scored, waiting for review), `APPROVED` (to be sent to the student by M10), `DROPPED` (not to be sent), `SENT` (emailed to the student by M10: such a paper leaves the queue for [SentPaperStore](../store/SentPaperStore.java) and is never queued again) or `UNMATCHED` (M6 matched it to no one, below the floor or not a research paper: queued under its closest student and shown with the dropped papers, until the professor approves, drops, returns it to pending or moves it).
-
-## Interaction with M7 (the stores)
-
-The records are what the stores hold, but the stores never serialize them directly: each store has its own plain JSON shape with nullable fields, so Jackson needs no `Optional`/`Path`/`Instant` modules, and converting back runs the record's constructor, so a hand-edited or corrupt entry is rejected as an `IOException` instead of loading invalid data.
-
-| Record | Stored in | As | Key |
-|---|---|---|---|
-| `RawEmail` | **M7a** `email_cache.json` (only its `messageId`) | a JSON array of IDs | `messageId` |
-| `PaperCandidate` | **M7c** `enrichment_cache.json` (`enriched` and `lookups`), and inside every M7e / sent entry | [StoredCandidate](../store/StoredCandidate.java) | M7c lookups: `Titles.compact(title)` |
-| `Profile` / `ProfilePaper` | **M7d** `profiles.json` | `StoredProfile` / `StoredPaper` in [ProfileStore](../store/ProfileStore.java) | profile `name` |
-| `ScoredPaper` | **M7e** `scored_queue.json`; `sent_papers.json` once sent | `StoredScoredPaper` in [ScoredQueueStore](../store/ScoredQueueStore.java) | `queueKey()` |
-| `ReviewStatus` | inside each M7e / sent entry | its name | — |
-
-The `with...` copies are how a store changes a record: M7e's `setStatus` stores `withStatus(...)`, and filing a matched PDF into a student's folder stores `candidate.withPdfPath(copy)`.
-
-## How it's tested
-
-This package has no test class of its own. Its validation rules are tested through the stages that create and store the records: [store](../../../../../test/java/com/litroute/store/) (records survive saving and loading, and corrupt entries are rejected), [scoring](../../../../../test/java/com/litroute/scoring/) (scores stay within 0–1 and come with a rationale), and the ingestion tests.
+**Tests:** [PaperCandidateTest](../../../../../test/java/com/litroute/model/PaperCandidateTest.java) checks `isResearch()` on real titles from the alerts. The other rules are tested through the stages and stores that create and store these records.
