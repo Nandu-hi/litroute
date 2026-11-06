@@ -4,26 +4,30 @@ import java.util.List;
 import java.util.Optional;
 
 /**
- * What is known about a paper going into a lookup: its title always, its DOI when the email revealed one,
- * and the journal when the email named it (to tell a journal article from its preprint).
+ * What is known about a paper going into a lookup.
+ *
+ * @param title   the title; always known
+ * @param authors the authors, if the email listed them
+ * @param doi     the DOI, when the email revealed one
+ * @param venue   the journal, when the email named it (tells a journal article from its preprint)
  */
 public record PaperQuery(String title, List<String> authors, Optional<String> doi, Optional<String> venue) {
 
     /**
-     * Input: title, authors and DOI (if known).
-     * Output: a query with no journal.
-     * Used by: tests and sources that don't need the venue.
-     * Example: {@code new PaperQuery("Wave loads", List.of(), Optional.empty()).venue()} -> empty
+     * A query with no journal.
+     *
+     * @param title   the title
+     * @param authors the authors
+     * @param doi     the DOI, if known
      */
     public PaperQuery(String title, List<String> authors, Optional<String> doi) {
         this(title, authors, doi, Optional.empty());
     }
 
     /**
-     * Input: a DOI found by an earlier source.
-     * Output: the same query, now with that DOI.
-     * Used by: CompositeMetadataLookup.find, so later sources look up by exact DOI.
-     * Example: {@code q.withDoi("10.1/x").doi()} -> {@code Optional["10.1/x"]}
+     * {@return the same query with this DOI}, so later sources look up by exact DOI.
+     *
+     * @param newDoi a DOI found by an earlier source
      */
     public PaperQuery withDoi(String newDoi) {
         return new PaperQuery(title, authors, Optional.of(newDoi), venue);

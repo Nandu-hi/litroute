@@ -39,15 +39,9 @@ public final class OpenAlexSource implements MetadataSource {
     private final String baseUrl;
 
     /**
-     * Creates a source that queries the public OpenAlex API at {@code https://api.openalex.org}.
-     * Input: fetcher - the HTTP client used for every request
-     * Output: a source querying https://api.openalex.org.
-     * Used by: OnlinePaperEnricher.create (M3).
-     * Example:
-     * <pre>{@code
-     * Input:  new OpenAlexSource(new JdkHttpFetcher("LitRoute/1.0 ..."))
-     * Output: a source whose lookups go to https://api.openalex.org/works...
-     * }</pre>
+     * A source querying https://api.openalex.org.
+     *
+     * @param fetcher the HTTP client used for every request
      */
     public OpenAlexSource(HttpFetcher fetcher) {
         this(fetcher, DEFAULT_BASE_URL);

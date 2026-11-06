@@ -127,7 +127,7 @@ final class AlertLines {
      * Input: the email's lines.
      * Output: one XML line per line: {@code <hr/>} for a rule, else {@code <h>} or {@code <p>} with links as {@code <a>}.
      * Used by: AiTitleExtractor, which fills prompts.txt's {body} with them.
-     * Example: heading link "Wave loads" -> "<h><a>Wave loads</a></h>"; "Nature, 2026" -> "<p>Nature, 2026</p>"
+     * Example: heading link "Wave loads" -> {@code "<h><a>Wave loads</a></h>"}; "Nature, 2026" -> {@code "<p>Nature, 2026</p>"}
      */
     static List<String> toXml(List<Line> lines) {
         List<String> xml = new ArrayList<>();

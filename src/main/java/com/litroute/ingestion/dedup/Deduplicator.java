@@ -30,11 +30,16 @@ public final class Deduplicator {
     /** Minimum title similarity (0-1) for two DOI-less candidates to be considered the same paper. */
     static final double SAME_TITLE_THRESHOLD = 0.92;
 
+    /** Creates a deduplicator; it holds no state between calls. */
+    public Deduplicator() {
+    }
+
     /**
-     * Input: candidates in priority order (earlier entries win conflicting fields).
-     * Output: one entry per distinct paper, in first-seen order, duplicates merged in.
-     * Used by: AlertBatchProcessor.process (M4), on M7c's papers plus the new batch, before saving M7c.
+     * {@return one entry per distinct paper, in first-seen order, with duplicates merged in}
+     * Used by: AlertBatchProcessor.process (M4), on M7c's papers plus the new batch.
      * Example: [A(doi 10.1/X, no abstract), B(doi 10.1/x, abstract "..")] -> [A with abstract ".."]
+     *
+     * @param candidates candidates in priority order; earlier entries win conflicting fields
      */
     public List<PaperCandidate> deduplicate(List<PaperCandidate> candidates) {
         List<PaperCandidate> merged = new ArrayList<>();

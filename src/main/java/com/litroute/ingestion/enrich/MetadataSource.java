@@ -9,19 +9,15 @@ public interface MetadataSource {
     /** Minimum title similarity (0-1) for an API hit to be accepted as the paper the alert named. */
     double ACCEPT_THRESHOLD = 0.88;
 
-    /**
-     * Input: none.
-     * Output: the source's name, for logs and failure counting.
-     * Used by: CompositeMetadataLookup.
-     * Example: -> {@code "Crossref"}
-     */
+    /** {@return the source's name, for logs and failure counting} */
     String name();
 
     /**
-     * Input: what is known about the paper (title, authors, maybe DOI and venue).
-     * Output: its metadata; empty if reachable but no confident match; IOException if unreachable/failing (offline, 5xx, 429).
-     * Used by: CompositeMetadataLookup.find (M3).
-     * Example: title "Wave loads on piles" -> {@code Optional[PaperMetadata(doi 10.1/x, ...)]}; nonsense title -> empty
+     * Looks the paper up.
+     *
+     * @param query what is known about the paper (title, authors, maybe DOI and venue)
+     * @return its metadata; empty if the source answered but has no confident match
+     * @throws IOException if the source is unreachable or failing (offline, 5xx, 429)
      */
     Optional<PaperMetadata> lookup(PaperQuery query) throws IOException;
 }

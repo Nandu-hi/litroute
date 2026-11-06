@@ -55,11 +55,11 @@ public final class GmailSmtpSender {
     }
 
     /**
-     * Logs in to send as the credentials' address.
-     * Input: the professor's credentials (not cleared; the password copy is wiped).
-     * Output: a logged-in connection; IOException if unreachable or the login is refused.
-     * Used by: ApprovedPaperSender.send.
-     * Example: wrong App Password -> IOException "Gmail refused the login for prof@gmail.com: check the App Password"
+     * Logs in to send as the credentials' address. The password copy is wiped after use.
+     *
+     * @param credentials the professor's credentials (not cleared)
+     * @return a logged-in connection
+     * @throws IOException if the server is unreachable or refuses the login
      */
     public Connection connect(GmailCredentials credentials) throws IOException {
         Session session = Session.getInstance(smtpProperties());
@@ -97,34 +97,21 @@ public final class GmailSmtpSender {
             this.fromAddress = fromAddress;
         }
 
-        /**
-         * The address the emails are sent from.
-         * Input: none.
-         * Output: the address the emails are sent from.
-         * Used by: {@link #send}.
-         * Example: -> "prof@gmail.com"
-         */
+        /** {@return the address the emails are sent from} */
         public String fromAddress() {
             return fromAddress;
         }
 
-        /**
-         * Whether the server is still connected; false after a failure that ended the session.
-         * Input: none.
-         * Output: whether the server is still connected.
-         * Used by: ApprovedPaperSender.send, to decide whether later emails can still go.
-         * Example: after the server dropped the session -> false
-         */
+        /** {@return whether the server is still connected}; false after a failure that ended the session. */
         public boolean isOpen() {
             return transport.isConnected();
         }
 
         /**
-         * Sends one email from {@link #fromAddress()}, replies going back to it.
-         * Input: one digest.
-         * Output: none; the email (text + PDF attachments) is sent, Reply-To the professor; IOException on a bad address, unreadable PDF or server failure.
-         * Used by: ApprovedPaperSender.send.
-         * Example: DigestEmail(alice, [a@x.edu], "LitRoute: 2 new papers for alice", ...) -> delivered, copy in Gmail's Sent
+         * Sends one email (text + PDF attachments) from {@link #fromAddress()}, with replies going back to it.
+         *
+         * @param email one digest
+         * @throws IOException on a refused address, an unreadable PDF or a server failure
          */
         public void send(DigestEmail email) throws IOException {
             try {

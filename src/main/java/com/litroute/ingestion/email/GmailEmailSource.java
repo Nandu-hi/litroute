@@ -72,20 +72,18 @@ public final class GmailEmailSource implements EmailSource {
     }
 
     /**
-     * Input: how many unread, not yet processed messages one run examines (at least 1).
-     * Output: a source for imap.gmail.com:993 with the default classifier.
-     * Used by: PipelineRunner.atDefaultLocations (M9), from the Pipeline tab's / CLI's max-unread setting.
-     * Example: {@code new GmailEmailSource(100)} -> examines the 100 newest unprocessed unread messages
+     * A source for imap.gmail.com:993 with the default classifier.
+     *
+     * @param maxUnread how many unread, unprocessed messages one run examines (at least 1)
      */
     public GmailEmailSource(int maxUnread) {
         this(new AlertClassifier(), GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, false, maxUnread);
     }
 
     /**
-     * Input: the classifier that decides whether an email is a publication alert.
-     * Output: a source for imap.gmail.com:993 with full certificate checking.
-     * Used by: {@link #GmailEmailSource()}.
-     * Example: {@code new GmailEmailSource(new AlertClassifier(Set.of("mdpi.com")))} -> also trusts mdpi.com alerts
+     * A source for imap.gmail.com:993 with full certificate checking.
+     *
+     * @param alertClassifier decides whether an email is a publication alert
      */
     public GmailEmailSource(AlertClassifier alertClassifier) {
         this(alertClassifier, GMAIL_IMAP_HOST, GMAIL_IMAP_PORT, false);

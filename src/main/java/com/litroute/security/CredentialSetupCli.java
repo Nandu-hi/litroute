@@ -19,10 +19,11 @@ public final class CredentialSetupCli {
     }
 
     /**
-     * Input: none on the command line; prompts for Gmail address, App Password and passphrase (twice).
-     * Output: the encrypted credential file, overwritten; exits 1 without a terminal or on mismatched passphrases.
-     * Used by: the user, once at setup or to rotate the App Password ({@code exec:java -Dexec.mainClass=...CredentialSetupCli}).
-     * Example: prof@gmail.com, "abcd efgh ijkl mnop", "secret" x2 -> "Saved. Existing credentials (if any) were overwritten."
+     * Prompts for the Gmail address, App Password and passphrase (twice) and saves them, overwriting any
+     * existing file. Exits 1 without a real terminal or on mismatched passphrases.
+     *
+     * @param args none
+     * @throws Exception if the file can't be encrypted or written
      */
     public static void main(String[] args) throws Exception {
         Console console = System.console();

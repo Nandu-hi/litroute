@@ -136,20 +136,21 @@ public final class AlertClassifier {
     }
 
     /**
-     * Input: additional publisher domains to trust, beyond KNOWN_ALERT_SENDER_DOMAINS.
-     * Output: a classifier that also accepts any sender on those domains.
-     * Used by: {@link #AlertClassifier()}; AlertClassifierTest.
+     * A classifier that also trusts any sender on these domains.
      * Example: {@code new AlertClassifier(Set.of("mdpi.com")).isPublicationAlert("news@mdpi.com", "Hi")} -> true
+     *
+     * @param extraAllowedSenderDomains publisher domains to trust beyond KNOWN_ALERT_SENDER_DOMAINS
      */
     public AlertClassifier(Set<String> extraAllowedSenderDomains) {
         this.extraAllowedSenderDomains = extraAllowedSenderDomains;
     }
 
     /**
-     * Input: the sender address and subject (either may be null).
-     * Output: true if the address, its domain, or a subject keyword marks an alert.
-     * Used by: the three-argument overload, for the direct and each quoted header block.
+     * {@return whether the address, its domain or a subject keyword marks an alert}
      * Example: ("bob@gmail.com", "New citations to my articles") -> true; ("security@google.com", "Sign-in alert") -> false
+     *
+     * @param fromAddress the sender address; may be null
+     * @param subject     the subject; may be null
      */
     public boolean isPublicationAlert(String fromAddress, String subject) {
         if (fromAddress != null && KNOWN_ALERT_SENDER_ADDRESSES.contains(fromAddress.toLowerCase(Locale.ROOT))) {
@@ -169,12 +170,14 @@ public final class AlertClassifier {
     }
 
     /**
-     * As {@link #isPublicationAlert(String, String)}, then re-checks every quoted From/Subject block in the body,
-     * so an alert forwarded by anyone, any number of times, is still recognized.
-     * Input: sender, subject and the plain-text body (if any).
-     * Output: true if the message or any message it quotes is an alert.
-     * Used by: GmailEmailSource.toRawEmailIfNewAlert (M1).
+     * {@return whether the message, or any message it quotes, is an alert}: checks as
+     * {@link #isPublicationAlert(String, String)}, then every quoted From/Subject block in the body, so an alert
+     * forwarded any number of times is still recognized.
      * Example: from me@uni.edu, "Fwd: FYI", body quotes "From: alerts@asce.org" -> true
+     *
+     * @param fromAddress   the sender address
+     * @param subject       the subject
+     * @param plainTextBody the plain-text body, if any
      */
     public boolean isPublicationAlert(String fromAddress, String subject, Optional<String> plainTextBody) {
         if (isPublicationAlert(fromAddress, subject)) {

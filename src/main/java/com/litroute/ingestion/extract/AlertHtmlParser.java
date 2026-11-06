@@ -441,7 +441,7 @@ final class AlertHtmlParser {
     }
 
     /**
-     * Journal/year stated once in the header ("VOLUME: 27 | NUMBER: 4 | November 2026", "New articles for <journal>").
+     * Journal/year stated once in the header ("VOLUME: 27 | NUMBER: 4 | November 2026", "New articles for &lt;journal&gt;").
      * Input: all lines of the email.
      * Output: the journal above a "VOLUME: n" header (with its year), else the link after "New articles for"-style wording; else both empty.
      * Used by: {@link #parse}, as the fallback venue/year for every paper.

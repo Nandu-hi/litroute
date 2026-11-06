@@ -40,10 +40,9 @@ public final class PaperExtractor {
     private final Optional<AiTitleExtractor> aiTitles;
 
     /**
-     * Input: the enricher for the last stage (M3).
-     * Output: an extractor in {@link ExtractionMode#PATTERN}, enriching each paper with it.
-     * Used by: PipelineRunner.atDefaultLocations (M9), wrapping a CachingPaperEnricher over M7c's lookups; {@link #offline}.
-     * Example: {@code new PaperExtractor(new CachingPaperEnricher(online, lookups))}
+     * A {@link ExtractionMode#PATTERN} extractor.
+     *
+     * @param enricher the M3 enricher applied to each paper
      */
     public PaperExtractor(PaperEnricher enricher) {
         this.enricher = enricher;
@@ -51,32 +50,28 @@ public final class PaperExtractor {
     }
 
     /**
-     * Input: the enricher for the last stage (M3) and the local model's title reader.
-     * Output: an extractor in {@link ExtractionMode#LLM}.
-     * Used by: PipelineRunner.atDefaultLocations (M9), wrapping a CachingPaperEnricher over M7c's lookups.
-     * Example: {@code new PaperExtractor(new CachingPaperEnricher(online, lookups), AiTitleExtractor.fromEnvironment())}
+     * A {@link ExtractionMode#LLM} extractor.
+     *
+     * @param enricher the M3 enricher applied to each paper
+     * @param aiTitles the local model's title reader
      */
     public PaperExtractor(PaperEnricher enricher, AiTitleExtractor aiTitles) {
         this.enricher = enricher;
         this.aiTitles = Optional.of(aiTitles);
     }
 
-    /**
-     * Input: none.
-     * Output: a parse-only extractor: no network access and no downloads.
-     * Used by: tests and offline runs.
-     * Example: {@code offline().extract(email)} -> candidates with only what the email states
-     */
+    /** {@return a parse-only extractor: no network access and no downloads} */
     public static PaperExtractor offline() {
         return new PaperExtractor(PaperEnricher.NONE);
     }
 
     /**
-     * Input: one alert email.
-     * Output: its papers, enriched where possible (a paper whose enrichment threw is kept as parsed); [] if none;
-     * UncheckedIOException if the model can't be reached, so the email is not recorded as read when it wasn't.
-     * Used by: AlertBatchProcessor.process (M2-M4) for each email in the batch.
+     * {@return the email's papers, enriched where possible; [] if none}. A paper whose enrichment throws is kept
+     * as parsed.
      * Example: SpringerOpen alert listing 3 papers -> 3 candidates with DOI, abstract and pdfPath filled
+     *
+     * @param email one alert email
+     * @throws java.io.UncheckedIOException if the local model can't be reached, so the email is not recorded
      */
     public List<PaperCandidate> extract(RawEmail email) {
         List<ParsedPaper> blocks = parser.blocks(email);

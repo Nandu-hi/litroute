@@ -83,10 +83,16 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Input: every field except fits.
-     * Output: a scored paper with no per-student fits recorded.
-     * Used by: the shorter constructors; tests.
-     * Example: {@code new ScoredPaper(c, "alice", 0.7, "why", PENDING, true, Optional.of(0.8), Optional.empty()).fits()} -> []
+     * A scored paper with no per-student fits recorded.
+     *
+     * @param candidate    the paper
+     * @param profileName  the student
+     * @param score        relevance times share, 0-1
+     * @param rationale    why
+     * @param status       the professor's decision
+     * @param recommended  whether M6 recommends it
+     * @param relevance    0-1, if recorded
+     * @param listedAuthor the listed author it is by, if any
      */
     public ScoredPaper(PaperCandidate candidate, String profileName, double score, String rationale,
             ReviewStatus status, boolean recommended, Optional<Double> relevance, Optional<String> listedAuthor) {
@@ -94,10 +100,15 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Input: every field except listedAuthor.
-     * Output: a scored paper by no listed author.
-     * Used by: the shorter constructor below; tests.
-     * Example: {@code new ScoredPaper(c, "alice", 0.7, "why", PENDING, true, Optional.of(0.8)).listedAuthor()} -> {@code Optional.empty()}
+     * A scored paper by no listed author and with no fits.
+     *
+     * @param candidate   the paper
+     * @param profileName the student
+     * @param score       relevance times share, 0-1
+     * @param rationale   why
+     * @param status      the professor's decision
+     * @param recommended whether M6 recommends it
+     * @param relevance   0-1, if recorded
      */
     public ScoredPaper(PaperCandidate candidate, String profileName, double score, String rationale,
             ReviewStatus status, boolean recommended, Optional<Double> relevance) {
@@ -105,10 +116,14 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Input: every field except relevance and listedAuthor.
-     * Output: a scored paper with no relevance.
-     * Used by: the shorter constructor below.
-     * Example: {@code new ScoredPaper(c, "alice", 0.7, "why", PENDING, true).relevance()} -> {@code Optional.empty()}
+     * A scored paper with no relevance recorded.
+     *
+     * @param candidate   the paper
+     * @param profileName the student
+     * @param score       relevance times share, 0-1
+     * @param rationale   why
+     * @param status      the professor's decision
+     * @param recommended whether M6 recommends it
      */
     public ScoredPaper(PaperCandidate candidate, String profileName, double score, String rationale,
             ReviewStatus status, boolean recommended) {
@@ -116,10 +131,13 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Input: candidate, profile, score, rationale, status.
-     * Output: a scored paper that is not recommended and has no relevance.
-     * Used by: tests and older call sites.
-     * Example: {@code new ScoredPaper(c, "alice", 0.4, "why", PENDING).recommended()} -> false
+     * A scored paper that is not recommended and has no relevance.
+     *
+     * @param candidate   the paper
+     * @param profileName the student
+     * @param score       relevance times share, 0-1
+     * @param rationale   why
+     * @param status      the professor's decision
      */
     public ScoredPaper(PaperCandidate candidate, String profileName, double score, String rationale,
             ReviewStatus status) {
@@ -127,10 +145,10 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Input: the professor's new decision.
-     * Output: a copy with only the status changed.
+     * {@return a copy with only the status changed}
      * Used by: ScoredQueueStore.setStatus (M7e), SentPaperStore (status SENT), ReviewPane (M8).
-     * Example: {@code p.withStatus(APPROVED).status()} -> {@code APPROVED}
+     *
+     * @param newStatus the professor's new decision
      */
     public ScoredPaper withStatus(ReviewStatus newStatus) {
         return new ScoredPaper(candidate, profileName, score, rationale, newStatus, recommended, relevance, listedAuthor,
@@ -138,10 +156,9 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Input: whether M6 recommends the paper.
-     * Output: a copy with only the recommendation changed.
-     * Used by: tests (the matchers construct the flag directly).
-     * Example: {@code p.withRecommended(true).recommended()} -> true
+     * {@return a copy with only the recommendation changed}
+     *
+     * @param isRecommended whether M6 recommends the paper
      */
     public ScoredPaper withRecommended(boolean isRecommended) {
         return new ScoredPaper(candidate, profileName, score, rationale, status, isRecommended, relevance, listedAuthor,
@@ -149,10 +166,10 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Input: the new PDF location.
-     * Output: a copy whose candidate points at that PDF, nothing else changed.
+     * {@return a copy whose candidate points at that PDF, nothing else changed}
      * Used by: ScoredQueueStore (M7e), filing the PDF in the student's folder.
-     * Example: {@code p.withCandidatePdf(Optional.of(matched/alice/x.pdf)).candidate().pdfPath()} -> that path
+     *
+     * @param pdfPath the new PDF location
      */
     public ScoredPaper withCandidatePdf(Optional<Path> pdfPath) {
         return new ScoredPaper(candidate.withPdfPath(pdfPath), profileName, score, rationale, status, recommended,
@@ -160,23 +177,25 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Input: a student's profile name.
-     * Output: how M6 scored this paper for them; empty if it wasn't recorded.
-     * Used by: {@link #movedTo}, ReviewPane (M8) to show each student's relevance when moving a paper.
-     * Example: fits [alice 0.62, bob 0.21] -> {@code fitFor("bob")} -> Fit(bob, 0.21, ...)
+     * {@return how M6 scored this paper for {@code student}; empty if not recorded}
+     * Used by: {@link #movedTo}, ReviewPane (M8) when moving a paper.
+     *
+     * @param student a student's profile name
      */
     public Optional<Fit> fitFor(String student) {
         return fits.stream().filter(fit -> fit.profileName().equals(student)).findFirst();
     }
 
     /**
-     * The professor gives the paper to another student instead: it takes M6's score, relevance and reasoning for
-     * that student, when recorded, and is no longer M6's recommendation. A dropped or unmatched paper becomes
-     * pending for its new student; a pending or approved one keeps its status.
-     * Input: another student's profile name.
-     * Output: the paper as that student's; throws if it is sent, or the student is blank or already its student.
+     * {@return this paper given to another student}: it takes M6's score, relevance and reasoning for that
+     * student, when recorded, and is no longer M6's recommendation. A dropped or unmatched paper becomes
+     * pending; a pending or approved one keeps its status.
      * Used by: ScoredQueueStore.move (M7e), from the Review tab's Move (M8).
      * Example: alice/X DROPPED with fit bob 0.21 / 0.55 -> {@code movedTo("bob")} -> bob/X PENDING, score 0.21, relevance 0.55
+     *
+     * @param student another student's profile name
+     * @throws IllegalStateException if the paper has been sent
+     * @throws IllegalArgumentException if {@code student} is blank or already its student
      */
     public ScoredPaper movedTo(String student) {
         if (status == ReviewStatus.SENT) {
@@ -199,10 +218,8 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Identity in the review queue: the same paper for the same student.
-     * Input: none.
-     * Output: {@code profileName + "\n" + paperKey(candidate)}.
-     * Used by: ScoredQueueStore/SentPaperStore (M7e), ApprovedPaperSender (M10), PipelineRunner (M9), ReviewPane (M8).
+     * {@return the identity in the review queue: {@code profileName + "\n" + paperKey(candidate)}}
+     * Used by: the M7e stores, ApprovedPaperSender (M10), PipelineRunner (M9), ReviewPane (M8).
      * Example: alice + DOI "10.1/ABC" -> {@code "alice\ndoi:10.1/abc"}
      */
     public String queueKey() {
@@ -210,10 +227,12 @@ public record ScoredPaper(PaperCandidate candidate, String profileName, double s
     }
 
     /**
-     * Input: a candidate.
-     * Output: its identity regardless of student: {@code doi:<lowercased DOI>}, else {@code title:<compacted title>}.
+     * {@return the paper's identity regardless of student: {@code doi:<lowercased DOI>}, else
+     * {@code title:<compacted title>}}
      * Used by: {@link #queueKey}, PipelineRunner (M9) to skip papers already scored, PriorityAuthors, ReviewPane.
      * Example: no DOI, title "Wave Loads: A Review" -> {@code "title:waveloadsareview"}
+     *
+     * @param candidate a candidate
      */
     public static String paperKey(PaperCandidate candidate) {
         return candidate.doi()

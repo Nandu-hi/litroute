@@ -45,20 +45,19 @@ public final class PaperEmbedder {
     private final EmbeddingProvider provider;
 
     /**
-     * Input: the embedding model.
-     * Output: an embedder using it.
-     * Used by: ProfileBuilder (M5), RelevanceScorer (M6).
-     * Example: {@code new PaperEmbedder(specter2)}
+     * An embedder using {@code provider} for every view.
+     *
+     * @param provider the embedding model
      */
     public PaperEmbedder(EmbeddingProvider provider) {
         this.provider = provider;
     }
 
     /**
-     * Input: a paper's text.
-     * Output: its abstract, structure and body views plus their weighted blend, all unit length.
-     * Used by: {@link #embed(PaperText, String, String)}; RelevanceScorer (M6) for candidates with a PDF.
-     * Example: text with no headings -> structureView empty, combined = 0.75 abstract + 0.25 body (renormalized)
+     * {@return the paper's abstract, structure and body views plus their weighted blend, all unit length}
+     * A missing view drops out and the other weights rescale.
+     *
+     * @param text a paper's text
      */
     public Embedding embed(PaperText text) {
         float[] abstractView = provider.embed(text.title(), text.abstractText());
@@ -81,11 +80,12 @@ public final class PaperEmbedder {
     }
 
     /**
-     * A profile's reference paper: its views, text and author keywords, plus where it came from.
-     * Input: a reference paper's text, its path in the profile folder and the PDF's hash.
-     * Output: a ProfilePaper with every view, its text and its author keywords.
+     * {@return a profile's reference paper: every view, its text and author keywords, and where it came from}
      * Used by: ProfileBuilder.syncAll (M5) for each new or changed PDF.
-     * Example: {@code embed(text, "rao2024.pdf", "ab12..")} -> ProfilePaper(rao2024.pdf, ab12.., "Wave loads..", ...)
+     *
+     * @param text         the paper's text
+     * @param relativePath its path in the profile folder
+     * @param sha256       the PDF's hash
      */
     public ProfilePaper embed(PaperText text, String relativePath, String sha256) {
         Embedding embedding = embed(text);

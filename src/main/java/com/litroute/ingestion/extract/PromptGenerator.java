@@ -38,10 +38,9 @@ public final class PromptGenerator {
     }
 
     /**
-     * Input: none.
-     * Output: a generator for the template in prompts.txt; throws if the file is missing or has no {@value #BODY}.
-     * Used by: AiTitleExtractor.fromEnvironment.
-     * Example: {@code fromResource().generate("<p>...</p>")} -> the whole prompt, ending in the email's lines
+     * {@return a generator for the template in prompts.txt}
+     *
+     * @throws IllegalStateException if the file is missing or lacks exactly one {@value #BODY}
      */
     public static PromptGenerator fromResource() {
         try (InputStream in = PromptGenerator.class.getResourceAsStream(RESOURCE)) {
@@ -55,10 +54,10 @@ public final class PromptGenerator {
     }
 
     /**
-     * Input: the email body as the model should read it.
-     * Output: the prompt; the body goes in literally, so a "{body}" written inside an email stays plain text.
-     * Used by: AiTitleExtractor, for each slice of an email.
-     * Example: "Titles in: {body}" + "<p>x</p>" -> "Titles in: <p>x</p>"
+     * {@return the prompt with {@code body} in place of {@value #BODY}}. The body goes in literally, so a
+     * "{body}" inside an email stays plain text.
+     *
+     * @param body the email body as the model should read it
      */
     public String generate(String body) {
         return template.replace(BODY, body);

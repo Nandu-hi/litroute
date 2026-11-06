@@ -63,10 +63,12 @@ public final class ApprovedPaperSender {
     private final long attachmentBudget;
 
     /**
-     * Input: the M7e queue, the sent-papers store, the M7d profiles and the SMTP sender.
-     * Output: a sender with Gmail's attachment budget.
-     * Used by: ReviewPane (M8) Send approved, {@link #atDefaultLocations}.
-     * Example: {@code new ApprovedPaperSender(queue, sent, ProfileStore.atDefaultLocation(), new GmailSmtpSender())}
+     * A sender with Gmail's attachment budget.
+     *
+     * @param queue    M7e, the review queue
+     * @param sent     the sent-paper record
+     * @param profiles M7d, for the students' addresses
+     * @param smtp     the SMTP sender
      */
     public ApprovedPaperSender(ScoredQueueStore queue, SentPaperStore sent, ProfileStore profiles, GmailSmtpSender smtp) {
         this(queue, sent, profiles, smtp, DigestComposer.GMAIL_ATTACHMENT_BUDGET);
@@ -88,24 +90,20 @@ public final class ApprovedPaperSender {
         this.attachmentBudget = attachmentBudget;
     }
 
-    /**
-     * The review queue and profiles under {@code ~/.litroute/data}, sent through Gmail.
-     * Input: none.
-     * Output: a sender over the default stores in ~/.litroute/data, sending through Gmail.
-     * Used by: PipelineRunnerCli --send-approved.
-     * Example: {@code atDefaultLocations().send(creds, System.out::println)}
-     */
+    /** {@return a sender over the stores in {@code ~/.litroute/data}, sending through Gmail} */
     public static ApprovedPaperSender atDefaultLocations() {
         return new ApprovedPaperSender(ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation(),
                 ProfileStore.atDefaultLocation(), new GmailSmtpSender());
     }
 
     /**
-     * Sends every approved paper in the queue.
-     * Input: the professor's Gmail credentials (not cleared) and a progress sink.
-     * Output: what was sent; each sent paper recorded in SentPaperStore then removed from M7e; IOException if a store or Gmail fails.
-     * Used by: ReviewPane (M8), PipelineRunnerCli.
-     * Example: alice 2 approved (has email), bob 1 approved (no email) -> Report(1 email, 2 papers, ..., unaddressed [bob (1 paper(s))])
+     * Sends every approved paper in the queue: each sent paper is recorded in SentPaperStore, then removed from M7e.
+     * Example: alice 2 approved (has email), bob 1 approved (no email) -> Report(1 email, 2 papers, ..., unaddressed [bob])
+     *
+     * @param credentials the professor's Gmail credentials (not cleared)
+     * @param progress    receives progress lines
+     * @return what was sent, refused and left unaddressed
+     * @throws IOException if a store or Gmail fails
      */
     public Report send(GmailCredentials credentials, Consumer<String> progress) throws IOException {
         settle();

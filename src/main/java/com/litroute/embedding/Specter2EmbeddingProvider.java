@@ -26,6 +26,7 @@ import java.util.Map;
  */
 public final class Specter2EmbeddingProvider implements EmbeddingProvider {
 
+    /** {@link #modelId()}: SPECTER2 proximity, ONNX, [CLS] pooling, 512 tokens. */
     public static final String MODEL_ID = "specter2-proximity-onnx/cls/512";
 
     static final int MAX_TOKENS = 512;
@@ -49,31 +50,25 @@ public final class Specter2EmbeddingProvider implements EmbeddingProvider {
         this.session = session;
     }
 
-    /**
-     * Input: none.
-     * Output: {@code ~/.litroute/models}, where setup_model.sh exports the model.
-     * Used by: {@link #atDefaultLocation}.
-     * Example: -> /home/u/.litroute/models
-     */
+    /** {@return {@code ~/.litroute/models}, where setup_model.sh exports the model} */
     public static Path defaultModelDirectory() {
         return Path.of(System.getProperty("user.home"), ".litroute", "models");
     }
 
     /**
-     * Input: none.
-     * Output: the model opened from {@link #defaultModelDirectory}; IOException if not exported yet.
-     * Used by: Session (M8), PipelineRunnerCli, ProfileBuilderCli, RelevanceScorerCli.
-     * Example: -> a ready provider (takes a few seconds to load)
+     * {@return the model opened from {@link #defaultModelDirectory}}; takes a few seconds.
+     *
+     * @throws IOException if the model has not been exported yet
      */
     public static Specter2EmbeddingProvider atDefaultLocation() throws IOException {
         return open(defaultModelDirectory());
     }
 
     /**
-     * Input: a folder holding specter2.onnx (+ .data) and tokenizer.json.
-     * Output: the provider; IOException if the files are missing or cannot be loaded.
-     * Used by: {@link #atDefaultLocation}; tests.
-     * Example: {@code open(Path.of("/tmp/empty"))} -> throws "SPECTER2 model not found in /tmp/empty; run scripts/..."
+     * {@return the model opened from {@code modelDirectory}}
+     *
+     * @param modelDirectory a folder holding specter2.onnx (+ .data) and tokenizer.json
+     * @throws IOException if the files are missing (the message names setup_model.sh) or can't be loaded
      */
     public static Specter2EmbeddingProvider open(Path modelDirectory) throws IOException {
         Path model = modelDirectory.resolve(MODEL_FILE);

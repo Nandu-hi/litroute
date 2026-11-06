@@ -10,20 +10,18 @@ package com.litroute.embedding;
 public interface EmbeddingProvider extends AutoCloseable {
 
     /**
-     * Identifies the model (and its input convention). Stored with every embedding, so vectors from
-     * a different model are recognized as incomparable and recomputed instead of mixed.
-     * Input: none.
-     * Output: an id for the model and its input convention, stored with every vector.
-     * Used by: ProfileBuilder (M5) to stamp profiles; RelevanceScorer (M6) to refuse profiles from another model.
+     * {@return an id for the model and its input convention}. Stored with every vector, so vectors from another
+     * model are recognized as incomparable and recomputed instead of mixed.
      * Example: Specter2 -> {@code "specter2-proximity-onnx/cls/512"}
      */
     String modelId();
 
     /**
-     * Input: the paper's title, and its abstract, headings or a body passage (may be empty; over-long input is truncated).
-     * Output: a unit-length vector.
-     * Used by: PaperEmbedder (M5 and M6 full text), RelevanceScorer (M6 title/abstract-only candidates).
+     * {@return a unit-length vector for the paper}
      * Example: {@code embed("Wave loads on piles", "We study...")} -> float[768] with norm 1
+     *
+     * @param title the paper's title
+     * @param text  its abstract, headings or a body passage; may be empty, and over-long input is truncated
      */
     float[] embed(String title, String text);
 

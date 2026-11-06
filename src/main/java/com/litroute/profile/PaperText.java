@@ -39,20 +39,19 @@ public record PaperText(String title, String abstractText, List<String> headings
 
     /**
      * A paper's text without author keywords.
-     * Input: title, abstract, headings and body chunks.
-     * Output: a PaperText with no keywords.
-     * Used by: tests.
-     * Example: {@code new PaperText(t, a, h, b).keywords()} -> []
+     *
+     * @param title        the title
+     * @param abstractText the abstract
+     * @param headings     the section headings
+     * @param bodyChunks   the sampled body passages
      */
     public PaperText(String title, String abstractText, List<String> headings, List<String> bodyChunks) {
         this(title, abstractText, headings, bodyChunks, List.of());
     }
 
     /**
-     * The headings and body passages as one text: what the paper says beyond its title and abstract.
-     * Input: none.
-     * Output: the headings joined by "; ", then ". ", then the body passages joined by spaces.
-     * Used by: PaperEmbedder (kept on ProfilePaper), ProfileBuilder, RelevanceScorer for lexical matching.
+     * {@return the headings joined by "; ", then ". ", then the body passages}: what the paper says beyond its
+     * title and abstract.
      * Example: headings [1 Intro, 2 Method], chunks [a, b] -> "1 Intro; 2 Method. a b"
      */
     public String bodyText() {

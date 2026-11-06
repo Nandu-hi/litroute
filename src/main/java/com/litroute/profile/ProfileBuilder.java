@@ -56,19 +56,30 @@ public final class ProfileBuilder {
 
     private static final Logger LOG = Logger.getLogger(ProfileBuilder.class.getName());
 
+    /** The file in a profile folder listing the student's addresses. */
     public static final String EMAIL_FILE = "email.txt";
     private static final Pattern EMAIL = Pattern.compile("[^@\\s]+@[^@\\s]+\\.[^@\\s]+");
     private static final Pattern EMAIL_SEPARATORS = Pattern.compile("[,;\\s]+");
 
-    /** A PDF left out of a profile, and why. */
+    /**
+     * A PDF left out of a profile, and why.
+     *
+     * @param relativePath the PDF's path inside the profile folder
+     * @param reason       why it was skipped
+     */
     public record SkippedPdf(String relativePath, String reason) {
     }
 
     /**
      * What one sync did to one profile folder.
      *
+     * @param name      the profile (folder) name
+     * @param embedded  PDFs embedded this sync
+     * @param reused    papers kept from the store unchanged
      * @param textAdded reused papers whose PDF was read again because the store predates keeping their
      *                  text or keywords (their vectors were kept, nothing was re-embedded)
+     * @param skipped   PDFs left out, and why
+     * @param emails    the addresses read from {@value #EMAIL_FILE}
      * @param stored    false if the folder had no usable PDF, so no profile exists for it
      */
     public record ProfileReport(
@@ -76,7 +87,12 @@ public final class ProfileBuilder {
             boolean stored) {
     }
 
-    /** @param removed profiles deleted from the store because their folder no longer exists */
+    /**
+     * What one {@link #syncAll()} did.
+     *
+     * @param profiles one report per folder
+     * @param removed  profiles deleted from the store because their folder no longer exists
+     */
     public record BuildReport(List<ProfileReport> profiles, List<String> removed) {
     }
 
@@ -87,10 +103,11 @@ public final class ProfileBuilder {
     private final PaperEmbedder embedder;
 
     /**
-     * Input: the folder holding one subfolder per student, the M7d store and the embedding model.
-     * Output: a builder (nothing is read yet).
-     * Used by: PipelineRunner.atDefaultLocations (M9), ProfilesPane (M8), ProfileBuilderCli.
-     * Example: {@code new ProfileBuilder(defaultProfilesRoot(), ProfileStore.atDefaultLocation(), specter2)}
+     * Nothing is read until {@link #syncAll()}.
+     *
+     * @param profilesRoot the folder holding one subfolder per student
+     * @param store        M7d
+     * @param provider     the embedding model
      */
     public ProfileBuilder(Path profilesRoot, ProfileStore store, EmbeddingProvider provider) {
         this.profilesRoot = profilesRoot;
@@ -99,24 +116,19 @@ public final class ProfileBuilder {
         this.embedder = new PaperEmbedder(provider);
     }
 
-    /**
-     * Input: none.
-     * Output: {@code ~/.litroute/profiles}.
-     * Used by: PipelineRunner (M9), ProfilesPane (M8), ProfileBuilderCli.
-     * Example: -> /home/u/.litroute/profiles
-     */
+    /** {@return {@code ~/.litroute/profiles}} */
     public static Path defaultProfilesRoot() {
         return Path.of(System.getProperty("user.home"), ".litroute", "profiles");
     }
 
     /**
-     * Brings every profile up to date with its folder; creates the profiles root if it is missing.
-     * A changed profile is saved as soon as it is rebuilt, so an interrupted run keeps the finished
-     * ones; an unchanged one is left untouched, keeping its {@code updatedAt}.
-     * Input: none (reads every folder under the profiles root, and M7d).
-     * Output: a report per folder, plus the profiles removed because their folder is gone; IOException if the root or store fails.
-     * Used by: PipelineRunner.run (M9) step 1, ProfilesPane (M8) Rebuild, ProfileBuilderCli.
+     * Brings every profile up to date with its folder; creates the profiles root if it is missing. A changed
+     * profile is saved as soon as it is rebuilt, so an interrupted run keeps the finished ones; an unchanged one
+     * keeps its {@code updatedAt}.
      * Example: folders alice/ (2 PDFs, 1 new) and bob/ deleted -> [alice: embedded 1, reused 1], removed [bob]
+     *
+     * @return a report per folder, plus the profiles removed because their folder is gone
+     * @throws IOException if the profiles root or the store fails
      */
     public BuildReport syncAll() throws IOException {
         Files.createDirectories(profilesRoot);

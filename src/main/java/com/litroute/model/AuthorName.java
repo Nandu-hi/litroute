@@ -33,20 +33,22 @@ public record AuthorName(String firstName, String lastName) {
     }
 
     /**
-     * Input: a name printed on a paper.
-     * Output: true if it is this author, strictly: see {@link PersonNames#matches}.
+     * {@return whether {@code printed} names this author, strictly (see {@link PersonNames#matches})}
      * Used by: RelevanceScorer (M6), PriorityAuthors (M9).
      * Example: Alice Carter: "Alice K.Carter" -> true; "A. Carter" -> false
+     *
+     * @param printed a name as printed on a paper
      */
     public boolean matches(String printed) {
         return PersonNames.matches(firstName, lastName, printed);
     }
 
     /**
-     * Input: another entry.
-     * Output: true if the two are the same first and last name, whatever the case or accents.
+     * {@return whether both are the same first and last name, ignoring case and accents}
      * Used by: PriorityAuthors, AuthorsPane, to list a name once.
      * Example: Alice Carter vs alice CARTER -> true
+     *
+     * @param other another entry
      */
     public boolean sameAs(AuthorName other) {
         return PersonNames.compact(firstName).equals(PersonNames.compact(other.firstName))

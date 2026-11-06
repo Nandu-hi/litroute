@@ -31,10 +31,11 @@ public final class ProfileBuilderCli {
     }
 
     /**
-     * Input: optional PROFILES_DIR (default ~/.litroute/profiles).
-     * Output: prints per profile what was embedded/reused/skipped, its keywords and how well each paper fits; M7d updated.
-     * Used by: the user, from the terminal ({@code exec:java -Dexec.mainClass=com.litroute.profile.ProfileBuilderCli}).
-     * Example: no args, alice/ with 3 PDFs -> "alice: 3 embedded, 0 unchanged ..." then keywords and similarities
+     * Syncs the profiles, then prints per profile what was embedded, reused or skipped, its keywords and how
+     * well each paper fits.
+     *
+     * @param args an optional PROFILES_DIR (default {@code ~/.litroute/profiles})
+     * @throws Exception if the model or the store fails
      */
     public static void main(String[] args) throws Exception {
         Path root = args.length > 0 ? Path.of(args[0]) : ProfileBuilder.defaultProfilesRoot();

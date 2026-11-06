@@ -106,30 +106,24 @@ public final class ProfileStore {
     private final Path storeFile;
 
     /**
-     * Input: the JSON file to keep this store in.
-     * Output: a store for that file (nothing is read yet).
-     * Used by: {@link #atDefaultLocation}; tests with a temp folder.
-     * Example: {@code new ProfileStore(tmp.resolve("profiles.json")).loadAll()} -> empty
+     * Nothing is read until a load.
+     *
+     * @param storeFile the JSON file to keep this store in
      */
     public ProfileStore(Path storeFile) {
         this.storeFile = storeFile;
     }
 
-    /**
-     * Input: none.
-     * Output: a store for {@code ~/.litroute/data/profiles.json}.
-     * Used by: PipelineRunner.atDefaultLocations (M9), ProfilesPane/ReviewPane (M8), ApprovedPaperSender (M10), ProfileBuilderCli, RelevanceScorerCli.
-     * Example: {@code atDefaultLocation()} -> store for /home/u/.litroute/data/profiles.json
-     */
+    /** {@return a store for {@code ~/.litroute/data/profiles.json}} */
     public static ProfileStore atDefaultLocation() {
         return new ProfileStore(Path.of(System.getProperty("user.home"), ".litroute", "data", "profiles.json"));
     }
 
     /**
-     * Input: none.
-     * Output: every saved profile by name, in first-saved order; empty if none yet; IOException if corrupt.
-     * Used by: ProfileBuilder.syncAll (M5), PipelineRunner (M9) for M6, ApprovedPaperSender (M10) for addresses, ProfilesPane (M8).
-     * Example: file {@code {"alice":{...},"bob":{...}}} -> {@code {alice=Profile, bob=Profile}}
+     * {@return every saved profile by name, in first-saved order; empty if there are none yet}
+     * Used by: ProfileBuilder.syncAll (M5), PipelineRunner (M9), ApprovedPaperSender (M10), ProfilesPane (M8).
+     *
+     * @throws IOException if the file can't be read or is corrupt
      */
     public Map<String, Profile> loadAll() throws IOException {
         Map<String, Profile> profiles = new LinkedHashMap<>();
@@ -143,21 +137,21 @@ public final class ProfileStore {
     }
 
     /**
-     * Input: a profile name.
-     * Output: that profile, or empty if it has not been built yet.
-     * Used by: tests (callers in main use {@link #loadAll}).
-     * Example: {@code load("alice")} -> {@code Optional[alice]}; {@code load("zoe")} -> empty
+     * {@return the named profile, or empty if it has not been built}
+     *
+     * @param name a profile name
+     * @throws IOException if the file can't be read or is corrupt
      */
     public Optional<Profile> load(String name) throws IOException {
         return Optional.ofNullable(loadAll().get(name));
     }
 
     /**
-     * Adds the profile, or replaces the saved one with the same name.
-     * Input: a profile.
-     * Output: none; the file is rewritten with it.
+     * Adds the profile, or replaces the saved one with the same name in place.
      * Used by: ProfileBuilder (M5) after (re)embedding a folder.
-     * Example: {@code save(alice')} where alice exists -> alice replaced, still first in order
+     *
+     * @param profile a profile
+     * @throws IOException if the file can't be read or written
      */
     public void save(Profile profile) throws IOException {
         Map<String, Profile> profiles = loadAll();
@@ -166,10 +160,11 @@ public final class ProfileStore {
     }
 
     /**
-     * Input: a profile name.
-     * Output: whether it existed; if so, the file is rewritten without it.
-     * Used by: ProfileBuilder (M5) when a folder is deleted or has no readable PDFs.
-     * Example: {@code remove("bob")} -> true; again -> false
+     * Removes a profile whose folder is gone or has no readable PDF.
+     *
+     * @param name a profile name
+     * @return whether it existed; the file is rewritten only if it did
+     * @throws IOException if the file can't be read or written
      */
     public boolean remove(String name) throws IOException {
         Map<String, Profile> profiles = loadAll();
@@ -181,11 +176,9 @@ public final class ProfileStore {
     }
 
     /**
-     * Forgets every profile; the next sync embeds all the students' PDFs again.
-     * Input: none.
-     * Output: none; the file is deleted.
-     * Used by: DataCaches (the Caches tab).
-     * Example: {@code clear(); loadAll()} -> empty
+     * Forgets every profile by deleting the file; the next sync embeds all the students' PDFs again.
+     *
+     * @throws IOException if the file can't be deleted
      */
     public void clear() throws IOException {
         Files.deleteIfExists(storeFile);

@@ -107,10 +107,10 @@ public final class AiTitleExtractor {
     }
 
     /**
-     * Input: none (reads prompts.txt and the environment).
-     * Output: the extractor over Ollama on this machine; throws if prompts.txt is unusable or the address isn't local.
-     * Used by: PipelineRunner.atDefaultLocations (M9).
-     * Example: {@code new PaperExtractor(enricher, AiTitleExtractor.fromEnvironment())}
+     * {@return the extractor over Ollama on this machine, with the prompt from prompts.txt}
+     *
+     * @throws IllegalStateException    if prompts.txt is missing or unusable
+     * @throws IllegalArgumentException if {@value OllamaClient#URL_VARIABLE} is not a local address
      */
     public static AiTitleExtractor fromEnvironment() {
         return new AiTitleExtractor(PromptGenerator.fromResource(), OllamaClient.fromEnvironment());
@@ -320,7 +320,7 @@ public final class AiTitleExtractor {
      * Input: a title as the model wrote it.
      * Output: it without the XML the email was sent in: the tags dropped, the escaped angle brackets restored.
      * Used by: {@link #verifiedTitles}.
-     * Example: "<a>Soil creep at p&lt;0.05</a>" -> "Soil creep at p<0.05"
+     * Example: {@code "<a>Soil creep at p&lt;0.05</a>"} -> {@code "Soil creep at p<0.05"}
      */
     private static String cleaned(String answered) {
         return MARKUP.matcher(answered).replaceAll("").replace("&lt;", "<").replace("&gt;", ">");

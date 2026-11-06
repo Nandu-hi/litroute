@@ -53,15 +53,9 @@ public final class ArticlePageReader {
     private final HttpFetcher fetcher;
 
     /**
-     * Creates a reader that fetches pages through the given client.
-     * Input: fetcher - the HTTP client used for every page fetch
-     * Output: a reader fetching pages through that client.
-     * Used by: OnlinePaperEnricher.create (M3).
-     * Example:
-     * <pre>{@code
-     * Input:  new ArticlePageReader(new JdkHttpFetcher("LitRoute/1.0 (personal research-paper alert reader)"))
-     * Output: a reader that does real network GETs (tests pass a RecordedHttp fetcher instead)
-     * }</pre>
+     * Tests pass a recorded-reply fetcher instead of a real one.
+     *
+     * @param fetcher the HTTP client used for every page fetch
      */
     public ArticlePageReader(HttpFetcher fetcher) {
         this.fetcher = fetcher;
@@ -69,32 +63,18 @@ public final class ArticlePageReader {
 
     /**
      * Fetches a paper's page (body capped at 3 MB) and reads what it says about the paper:
-     *
      * <ul>
-     *   <li>an HTML page -> DOI, title, authors, venue and year from its {@code citation_*} / Dublin Core / PRISM
-     *       meta tags, the page's final URL (after redirects) as the landing URL, and PDF links from
-     *       {@code citation_pdf_url} and {@code <link rel="alternate" type="application/pdf">};
-     *   <li>a PDF (by its {@code %PDF-} header or content type) -> only {@code pdfUrls}, holding the final URL;
-     *   <li>a non-2xx reply, network failure or malformed URL -> empty.
+     * <li>an HTML page: DOI, title, authors, venue and year from its {@code citation_*} / Dublin Core / PRISM
+     * meta tags, the final URL as the landing URL, and PDF links from {@code citation_pdf_url} and
+     * {@code <link rel="alternate" type="application/pdf">};
+     * <li>a PDF (by its {@code %PDF-} header or content type): only {@code pdfUrls}, holding the final URL;
+     * <li>a non-2xx reply, network failure or malformed URL: empty.
      * </ul>
+     * The abstract is never read from the page.
+     * Example: "https://ascelibrary.org/doi/10.1061/..." answering 403 -> empty
      *
-     * A page that answers 200 but carries no meta tags (e.g. a challenge page) gives metadata with only the
-     * landing URL set. Fields the page doesn't state are left empty; the abstract is never read from the page.
-     * Input: url - the paper's readable link from the email
-     * Output: what the page says about the paper, or empty if it couldn't be read
-     * Used by: OnlinePaperEnricher.enrich (M3), for READABLE links only.
-     * Example:
-     * <pre>{@code
-     * Input:  "https://www.mdpi.com/2077-1312/12/3/400"   -> HTTP 200 HTML with citation_* tags
-     * Output: Optional[PaperMetadata[doi=Optional[10.3390/jmse12030400], title=Optional[Wave Loads on ...], ...,
-     *         landingUrl=Optional[https://www.mdpi.com/2077-1312/12/3/400], pdfUrls=[https://www.mdpi.com/.../400/pdf]]]
-     *
-     * Input:  "https://arxiv.org/pdf/2403.01234"           -> HTTP 200, body starts "%PDF-1.5"
-     * Output: Optional[PaperMetadata[all fields empty except pdfUrls=[https://arxiv.org/pdf/2403.01234]]]
-     *
-     * Input:  "https://ascelibrary.org/doi/10.1061/JWPED5.WWENG-2001"   -> HTTP 403
-     * Output: Optional.empty
-     * }</pre>
+     * @param url the paper's readable link from the email
+     * @return what the page says about the paper, or empty if it couldn't be read
      */
     public Optional<PaperMetadata> read(String url) {
         HttpReply reply;

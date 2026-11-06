@@ -31,10 +31,12 @@ public final class PriorityAuthors {
     private final SentPaperStore sent;
 
     /**
-     * Input: the authors list, M7c, M7e and the sent papers.
-     * Output: the list's editor.
-     * Used by: {@link #atDefaultLocations}; PriorityAuthorsTest with a temp folder.
-     * Example: {@code new PriorityAuthors(authors, m7c, queue, sent)}
+     * Edits the authors list over these stores.
+     *
+     * @param authors the authors list
+     * @param held    M7c, searched for the added author's papers
+     * @param queue   M7e, whose unmatched entries for them are released
+     * @param sent    the sent-paper record
      */
     public PriorityAuthors(PriorityAuthorStore authors, EnrichmentCacheStore held, ScoredQueueStore queue,
             SentPaperStore sent) {
@@ -44,33 +46,28 @@ public final class PriorityAuthors {
         this.sent = sent;
     }
 
-    /**
-     * Input: none.
-     * Output: the editor over the stores in ~/.litroute/data.
-     * Used by: AuthorsPane (M8).
-     * Example: {@code atDefaultLocations().add(new AuthorName("Alice", "Carter"))}
-     */
+    /** {@return the editor over the stores in {@code ~/.litroute/data}} */
     public static PriorityAuthors atDefaultLocations() {
         return new PriorityAuthors(PriorityAuthorStore.atDefaultLocation(), EnrichmentCacheStore.atDefaultLocation(),
                 ScoredQueueStore.atDefaultLocation(), SentPaperStore.atDefaultLocation());
     }
 
     /**
-     * Input: none.
-     * Output: the names on the list, in the order they were added.
-     * Used by: AuthorsPane (M8).
-     * Example: -> [Alice Carter, John van de Lindt]
+     * {@return the names on the list, in the order they were added}
+     *
+     * @throws IOException if the list can't be read
      */
     public List<AuthorName> list() throws IOException {
         return authors.load();
     }
 
     /**
-     * Adds an author, unless they are listed, and takes their not-matched papers out of the queue.
-     * Input: a first and a last name.
-     * Output: how many held papers the next run will score again; the list is saved first, then the queue.
-     * Used by: AuthorsPane (M8) Add.
-     * Example: M7c holds a paper by "Alice K. Carter", queued as not matched -> add(Alice Carter) returns 1
+     * Adds an author, unless listed, and takes their unmatched papers out of the queue so the next run scores
+     * them again. The list is saved first, then the queue.
+     *
+     * @param name a first and a last name
+     * @return how many held papers the next run will score again
+     * @throws IOException if a store can't be read or written
      */
     public int add(AuthorName name) throws IOException {
         List<AuthorName> names = authors.load();
@@ -94,10 +91,9 @@ public final class PriorityAuthors {
 
     /**
      * Takes an author off the list. Papers already queued for their sake stay queued.
-     * Input: a name on the list.
-     * Output: none; the list is saved without it.
-     * Used by: AuthorsPane (M8) Remove.
-     * Example: remove(Alice Carter) -> the next run's matcher no longer favours their papers
+     *
+     * @param name a name on the list
+     * @throws IOException if the list can't be read or written
      */
     public void remove(AuthorName name) throws IOException {
         List<AuthorName> names = authors.load();

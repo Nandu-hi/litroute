@@ -5,11 +5,14 @@ import java.util.Objects;
 import java.util.Optional;
 
 /**
- * Standardized output of M1 EmailSource: a single Gmail message that looked
- * like a publication alert, before any HTML parsing (that's M2's job).
+ * Output of M1 EmailSource: one Gmail message that looked like a publication alert, before any parsing.
  *
- * messageId is the RFC 822 "Message-ID" header value, used by M7a to avoid
- * re-processing the same email on later pipeline runs.
+ * @param messageId     the RFC 822 Message-ID header; M7a's key against re-processing. Required.
+ * @param subject       the Subject header
+ * @param fromAddress   the sender's address
+ * @param receivedAt    when Gmail received it, UTC
+ * @param htmlBody      the first HTML part, if any
+ * @param plainTextBody the first plain-text part, if any; at least one of the two bodies is present
  */
 public record RawEmail(
         String messageId,

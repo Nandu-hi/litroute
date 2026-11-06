@@ -25,10 +25,9 @@ public final class CrossrefSource implements MetadataSource {
     private final String baseUrl;
 
     /**
-     * Input: the HTTP client used for every request.
-     * Output: a source querying https://api.crossref.org.
-     * Used by: OnlinePaperEnricher.create (M3).
-     * Example: {@code new CrossrefSource(pacedFetcher)}
+     * A source querying https://api.crossref.org.
+     *
+     * @param fetcher the HTTP client used for every request
      */
     public CrossrefSource(HttpFetcher fetcher) {
         this(fetcher, DEFAULT_BASE_URL);

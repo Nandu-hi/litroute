@@ -22,10 +22,10 @@ public final class Dois {
     }
 
     /**
-     * Input: any text or URL (null or blank allowed), possibly percent-encoded.
-     * Output: the first DOI in it, without query string or publisher suffix; empty if there is none.
-     * Used by: AlertHtmlParser (M2) to read a DOI off each alert link.
+     * {@return the first DOI in {@code text}, without query string or publisher suffix; empty if none}
      * Example: {@code find("https://x.org/counter/pdf/10.1186/s43065-024-00115-x.pdf?utm=a")} -> {@code Optional["10.1186/s43065-024-00115-x"]}
+     *
+     * @param text any text or URL, possibly percent-encoded; null or blank allowed
      */
     public static Optional<String> find(String text) {
         if (text == null || text.isBlank()) {

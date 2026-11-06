@@ -15,10 +15,10 @@ public final class Launcher {
     }
 
     /**
-     * Input: command-line arguments, passed on to JavaFX.
-     * Output: the LitRoute window, as {@link LitRouteApp#main}.
-     * Used by: an IDE's Run, or {@code exec:java -Dexec.mainClass=com.litroute.ui.Launcher}.
-     * Example: no args -> the main window opens on the Gmail tab
+     * Opens the LitRoute window, as {@link LitRouteApp#main}, from a plain classpath (an IDE's Run, or
+     * {@code exec:java -Dexec.mainClass=com.litroute.ui.Launcher}).
+     *
+     * @param args passed on to JavaFX
      */
     public static void main(String[] args) {
         LitRouteApp.main(args);

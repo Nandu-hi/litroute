@@ -40,10 +40,11 @@ public final class RelevanceScorerCli {
     }
 
     /**
-     * Input: optional PDF or folder of PDFs; none to match M7c's papers.
-     * Output: with a path: each PDF's score per student (and, for a folder filed by student, accuracy per strategy); without: M7c matched and added to M7e.
-     * Used by: the user, from the terminal ({@code exec:java -Dexec.mainClass=com.litroute.scoring.RelevanceScorerCli}).
-     * Example: ~/.litroute/match-test -> "alice/rao.pdf  ok ..." then "HYBRID 46 of 48 matched ..."
+     * With a PDF or folder: prints each PDF's score per student (and, for a folder filed by student, accuracy per
+     * strategy). Without: matches M7c's papers and adds them to M7e.
+     *
+     * @param args an optional PDF or folder of PDFs
+     * @throws Exception if a store or the model fails
      */
     public static void main(String[] args) throws Exception {
         Path pdfOrFolder = args.length > 0 ? Path.of(args[0]) : null;

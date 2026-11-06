@@ -66,10 +66,11 @@ public final class PipelineRunner {
     @FunctionalInterface
     public interface MatcherFactory {
         /**
-         * Input: the profiles as they stand after this run's sync.
-         * Output: the M6 matcher for them; IOException if it can't be built.
+         * {@return the M6 matcher for the profiles as they stand after this run's sync}
          * Used by: {@link PipelineRunner#run}, step 5.
-         * Example: {@code students -> new RelevanceScorer(provider, students, authors.load())}
+         *
+         * @param profiles the synced profiles
+         * @throws IOException if the matcher can't be built
          */
         PaperMatcher create(Collection<Profile> profiles) throws IOException;
     }
@@ -134,10 +135,18 @@ public final class PipelineRunner {
     }
 
     /**
-     * Input: as above, plus whether processed alerts are marked read in Gmail (false: left unread, for testing).
-     * Output: the runner.
+     * A runner over these stages and stores.
      * Used by: {@link #atDefaultLocations}, the other constructor, PipelineRunnerTest.
-     * Example: markRead false -> step 4 is skipped; M7a still prevents reprocessing
+     *
+     * @param profileBuilder  M5, synced at the start of each run
+     * @param profiles        M7d
+     * @param emails          M1, the inbox
+     * @param processedEmails M7a
+     * @param batches         M2-M4 for a batch of emails
+     * @param matchers        builds the M6 matcher for the synced profiles
+     * @param queue           M7e
+     * @param sent            the sent-paper record; sent papers are never queued again
+     * @param markRead        whether processed alerts are marked read in Gmail (false leaves them unread, for testing)
      */
     public PipelineRunner(ProfileBuilder profileBuilder, ProfileStore profiles, EmailSource emails,
             EmailCacheStore processedEmails, AlertBatchProcessor batches, MatcherFactory matchers,
@@ -154,12 +163,13 @@ public final class PipelineRunner {
     }
 
     /**
-     * The real pipeline over the default locations under {@code ~/.litroute}: Gmail, the live enrichment
-     * services, and the stores in {@code ~/.litroute/data}.
-     * Input: the SPECTER2 model (caller closes it), how to find the papers in an email, the max unread messages per run, and whether to mark alerts read.
-     * Output: the real pipeline over Gmail, the chosen extraction, the live enrichment services and the stores in ~/.litroute/data.
+     * {@return the real pipeline: Gmail, the live enrichment services and the stores in {@code ~/.litroute/data}}
      * Used by: PipelinePane (M8) Run / Clear and re-run, PipelineRunnerCli.
-     * Example: {@code atDefaultLocations(specter2, ExtractionMode.PATTERN, 50, true).run(creds, log::line)}
+     *
+     * @param provider  the SPECTER2 model; the caller closes it
+     * @param mode      how to find the papers in an email
+     * @param maxUnread the most unread messages to examine per run
+     * @param markRead  whether to mark processed alerts read
      */
     public static PipelineRunner atDefaultLocations(EmbeddingProvider provider, ExtractionMode mode, int maxUnread,
             boolean markRead) {
@@ -182,17 +192,16 @@ public final class PipelineRunner {
     }
 
     /**
-     * Undoes every run so far, so the next run processes the same alert emails from scratch: extracted,
-     * enriched, matched and queued again. First the emails M7a has recorded are marked unread in Gmail;
-     * only if that worked are the review queue (with the professor's decisions and the students' PDF
-     * copies), M7c and finally M7a cleared. So a Gmail failure changes
-     * nothing, and a crash part-way leaves M7a for last: its emails are skipped, never lost. Downloaded
-     * PDFs stay where M2 saved them, and the record of papers already sent is kept, so the re-run never
-     * scores or queues a paper that was sent.
-     * Input: the Gmail account (not cleared) and a progress sink.
-     * Output: how many emails were processed / marked unread and queue entries discarded; IOException if Gmail failed (then nothing is cleared).
+     * Undoes every run so far, so the next run processes the same alerts from scratch. First the emails M7a holds
+     * are marked unread in Gmail; only if that worked are the review queue (decisions and PDF copies), M7c and
+     * finally M7a cleared. A Gmail failure changes nothing; a crash part-way leaves M7a for last, so its emails
+     * are skipped, never lost. Downloaded PDFs and the sent-paper record are kept.
      * Used by: PipelinePane (M8) Clear and re-run, before run().
-     * Example: M7a holds 6 IDs, 6 in inbox, queue of 9 -> ResetReport(6, 6, 9); M7a/M7c/M7e empty
+     *
+     * @param credentials the Gmail account (not cleared)
+     * @param progress    receives progress lines
+     * @return how many emails were processed and marked unread, and how many queue entries were discarded
+     * @throws IOException if Gmail or a store failed; if Gmail failed, nothing is cleared
      */
     public ResetReport reset(GmailCredentials credentials, Consumer<String> progress) throws IOException {
         Set<String> processed = processedEmails.load();
@@ -210,11 +219,13 @@ public final class PipelineRunner {
     }
 
     /**
-     * Runs the pipeline once.
-     * Input: the Gmail account (not cleared) and a progress sink.
-     * Output: what the run did; M7d, M7a, M7c and M7e updated; IOException if a store, the local model or the matcher failed.
+     * Runs the pipeline once, updating M7d, M7a, M7c and M7e.
      * Used by: PipelinePane (M8) Run, PipelineRunnerCli.
-     * Example: 6 new alerts, 31 papers, 8 profiles -> Report(newAlerts 6, papersHeld 31, papersScored 31, matches 11, ..., unmatched 20)
+     *
+     * @param credentials the Gmail account (not cleared)
+     * @param progress    receives progress lines
+     * @return what the run did
+     * @throws IOException if a store, the local model or the matcher failed
      */
     public Report run(GmailCredentials credentials, Consumer<String> progress) throws IOException {
         // 1. M5: embed new or changed profile PDFs into M7d.

@@ -20,3 +20,6 @@ scripts/model-export/out/
 # Local reports and helper scripts
 eml-alerts-*.txt
 sync-install.sh
+
+# Course report (LaTeX)
+report/

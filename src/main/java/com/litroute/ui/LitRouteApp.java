@@ -37,11 +37,14 @@ public final class LitRouteApp extends Application {
 
     private final Session session = new Session();
 
+    /** Created by JavaFX at launch. */
+    public LitRouteApp() {
+    }
+
     /**
-     * Input: command-line arguments, passed on to JavaFX.
-     * Output: none; JavaFX starts and calls {@link #start}.
-     * Used by: {@code mvn javafx:run} (the pom's mainClass), {@link Launcher}.
-     * Example: {@code mvn -q compile javafx:run} -> the window opens
+     * Starts JavaFX, which calls {@link #start}. The pom's {@code javafx:run} main class.
+     *
+     * @param args passed on to JavaFX
      */
     public static void main(String[] args) {
         launch(args);

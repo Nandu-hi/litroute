@@ -20,11 +20,13 @@ public final class PersonNames {
     }
 
     /**
-     * A comma puts the last name first, as publishers' pages do ("Carter, Alice K.").
-     * Input: a first name, a last name and a printed name.
-     * Output: true if the printed name starts with the first name and ends with the last name, without overlap.
-     * Used by: AuthorName.matches, for M6 and PriorityAuthors checking a paper's authors against the authors list.
+     * {@return whether {@code printed} starts with the first name and ends with the last name, without
+     * overlap}. A comma puts the last name first, as publishers' pages do ("Carter, Alice K.").
      * Example: {@code matches("Alice", "Carter", "Alice K.Carter")} -> true; {@code matches("Alice", "Carter", "AK Carter")} -> false
+     *
+     * @param firstName a first name
+     * @param lastName  a last name
+     * @param printed   a name as printed on a paper
      */
     public static boolean matches(String firstName, String lastName, String printed) {
         String first = compact(firstName);
@@ -44,10 +46,10 @@ public final class PersonNames {
     }
 
     /**
-     * Input: a name part as typed or printed.
-     * Output: its letters and digits in lowercase, without accents.
-     * Used by: {@link #matches}, {@link #words}; AuthorName, to refuse an initial and to tell two entries apart.
+     * {@return the name's letters and digits in lowercase, without accents}
      * Example: "Beyaztunç" -> "beyaztunc"; "Zhan-Peng" -> "zhanpeng"; "K." -> "k"
+     *
+     * @param name a name part as typed or printed
      */
     public static String compact(String name) {
         return Normalizer.normalize(name, Normalizer.Form.NFD).replaceAll("\\p{M}", "")

@@ -37,10 +37,12 @@ public final class PipelineRunnerCli {
     }
 
     /**
-     * Input: --extraction=pattern|llm, --max-unread=N, --keep-unread, --send-approved (all optional).
-     * Output: one pipeline run printed to the terminal, then (with --send-approved) the approved papers emailed; exit 1/2 on missing credentials, wrong passphrase or a bad argument.
-     * Used by: the user or cron ({@code exec:java -Dexec.mainClass=com.litroute.pipeline.PipelineRunnerCli}).
-     * Example: --send-approved -> "Done: 3 new alert(s), 17 paper(s) scored, ..." then "Sent 4 paper(s) in 2 email(s) ..."
+     * Runs the pipeline once from the terminal, then, with {@code --send-approved}, emails the approved papers.
+     * Exits 1 or 2 on missing credentials, a wrong passphrase or a bad argument.
+     *
+     * @param args {@code --extraction=pattern|llm}, {@code --max-unread=N}, {@code --keep-unread},
+     *             {@code --send-approved}, all optional
+     * @throws Exception if the run or the send fails
      */
     public static void main(String[] args) throws Exception {
         ExtractionMode mode = ExtractionMode.PATTERN;

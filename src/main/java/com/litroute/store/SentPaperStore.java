@@ -31,7 +31,12 @@ import java.util.stream.Collectors;
  */
 public final class SentPaperStore {
 
-    /** One paper as it was sent: its queue entry, with status {@link ReviewStatus#SENT}, and when. */
+    /**
+     * One paper as it was sent.
+     *
+     * @param paper  its queue entry, with status {@link ReviewStatus#SENT}
+     * @param sentAt when it was sent
+     */
     public record Sent(ScoredPaper paper, Instant sentAt) {
     }
 
@@ -48,31 +53,24 @@ public final class SentPaperStore {
     private final Object lock;
 
     /**
-     * Input: the JSON file to keep this store in.
-     * Output: a store for that file (nothing is read yet), sharing the lock of every store on the same file.
-     * Used by: {@link #atDefaultLocation}; tests with a temp folder.
-     * Example: {@code new SentPaperStore(tmp.resolve("sent_papers.json")).load()} -> empty
+     * Shares the lock of every store on the same file. Nothing is read until {@link #load}.
+     *
+     * @param storeFile the JSON file to keep this store in
      */
     public SentPaperStore(Path storeFile) {
         this.storeFile = storeFile;
         this.lock = LOCKS.computeIfAbsent(storeFile.toAbsolutePath().normalize(), path -> new Object());
     }
 
-    /**
-     * Input: none.
-     * Output: a store for {@code ~/.litroute/data/sent_papers.json}.
-     * Used by: PipelineRunner.atDefaultLocations (M9), LitRouteApp/ReviewPane (M8), ApprovedPaperSender.atDefaultLocations (M10).
-     * Example: {@code atDefaultLocation()} -> store for /home/u/.litroute/data/sent_papers.json
-     */
+    /** {@return a store for {@code ~/.litroute/data/sent_papers.json}} */
     public static SentPaperStore atDefaultLocation() {
         return new SentPaperStore(Path.of(System.getProperty("user.home"), ".litroute", "data", "sent_papers.json"));
     }
 
     /**
-     * Input: none.
-     * Output: every sent paper with its time, oldest first; empty if nothing sent yet.
-     * Used by: ReviewPane (M8) "Sent" view; {@link #sentKeys}.
-     * Example: -> {@code [Sent(alice/"Wave loads", 2026-10-20T10:00Z)]}
+     * {@return every sent paper with its time, oldest first; empty if nothing has been sent}
+     *
+     * @throws IOException if the file can't be read or is corrupt
      */
     public List<Sent> load() throws IOException {
         synchronized (lock) {
@@ -81,21 +79,23 @@ public final class SentPaperStore {
     }
 
     /**
-     * Input: none.
-     * Output: the {@link ScoredPaper#queueKey()} of every paper sent.
-     * Used by: PipelineRunner (M9) to not re-queue them; ApprovedPaperSender (M10) to take them out of the queue.
-     * Example: -> {@code {"alice\ndoi:10.1/x"}}
+     * {@return the {@link ScoredPaper#queueKey()} of every paper sent}
+     * Used by: PipelineRunner (M9) to not re-queue them; ApprovedPaperSender (M10) to settle the queue.
+     *
+     * @throws IOException if the file can't be read or is corrupt
      */
     public Set<String> sentKeys() throws IOException {
         return load().stream().map(sent -> sent.paper().queueKey()).collect(Collectors.toSet());
     }
 
     /**
-     * Records papers as sent; one already recorded for the same student keeps one entry, with the new time.
-     * Input: the papers just emailed and when.
-     * Output: none; the file holds them with status SENT, re-sent ones moved to the end.
+     * Records papers as sent. One already recorded for the same student keeps a single entry, with the new time,
+     * moved to the end.
      * Used by: ApprovedPaperSender (M10) right after each email goes out.
-     * Example: {@code addAll([alice/X], t2)} with alice/X sent at t1 -> one entry alice/X at t2
+     *
+     * @param papers the papers just emailed
+     * @param sentAt when
+     * @throws IOException if the file can't be read or written
      */
     public void addAll(Collection<ScoredPaper> papers, Instant sentAt) throws IOException {
         synchronized (lock) {
@@ -114,10 +114,8 @@ public final class SentPaperStore {
 
     /**
      * Forgets every paper sent. Nothing else does: it is what keeps a student from getting a paper twice.
-     * Input: none.
-     * Output: none; the file is deleted.
-     * Used by: DataCaches (the Caches tab), once the professor has agreed to the consequences.
-     * Example: {@code clear(); load()} -> empty
+     *
+     * @throws IOException if the file can't be deleted
      */
     public void clear() throws IOException {
         synchronized (lock) {

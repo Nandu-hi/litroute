@@ -23,30 +23,23 @@ public final class PriorityAuthorStore {
     private final Path storeFile;
 
     /**
-     * Input: the JSON file to keep this store in.
-     * Output: a store for that file (nothing is read yet).
-     * Used by: {@link #atDefaultLocation}; tests with a temp folder.
-     * Example: {@code new PriorityAuthorStore(tmp.resolve("priority_authors.json")).load()} -> empty
+     * Nothing is read until {@link #load}.
+     *
+     * @param storeFile the JSON file to keep this store in
      */
     public PriorityAuthorStore(Path storeFile) {
         this.storeFile = storeFile;
     }
 
-    /**
-     * Input: none.
-     * Output: a store for {@code ~/.litroute/data/priority_authors.json}.
-     * Used by: PipelineRunner.atDefaultLocations (M9), PriorityAuthors.atDefaultLocations, RelevanceScorerCli.
-     * Example: {@code atDefaultLocation()} -> store for /home/u/.litroute/data/priority_authors.json
-     */
+    /** {@return a store for {@code ~/.litroute/data/priority_authors.json}} */
     public static PriorityAuthorStore atDefaultLocation() {
         return new PriorityAuthorStore(Path.of(System.getProperty("user.home"), ".litroute", "data", "priority_authors.json"));
     }
 
     /**
-     * Input: none.
-     * Output: a modifiable list of the names; empty if no file yet; IOException if corrupt.
-     * Used by: PriorityAuthors (M9), PipelineRunner.atDefaultLocations, RelevanceScorerCli.
-     * Example: file {@code [{"firstName":"Alice","lastName":"Carter"}]} -> {@code [Alice Carter]}
+     * {@return a modifiable list of the names; empty if there is no file yet}
+     *
+     * @throws IOException if the file can't be read or is corrupt
      */
     public List<AuthorName> load() throws IOException {
         if (!Files.exists(storeFile)) {
@@ -56,10 +49,10 @@ public final class PriorityAuthorStore {
     }
 
     /**
-     * Input: the whole list.
-     * Output: none; the file is atomically replaced with it.
-     * Used by: PriorityAuthors (M9).
-     * Example: {@code save([Alice Carter])} -> file {@code [{"firstName":"Alice","lastName":"Carter"}]}
+     * Atomically replaces the file with the whole list.
+     *
+     * @param names the whole list
+     * @throws IOException if the file can't be written
      */
     public void save(List<AuthorName> names) throws IOException {
         AtomicFiles.writeAtomically(storeFile, JSON.writeValueAsBytes(names));

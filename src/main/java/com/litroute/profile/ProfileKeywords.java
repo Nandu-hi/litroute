@@ -65,10 +65,10 @@ public final class ProfileKeywords {
     }
 
     /**
-     * Input: a profile's papers (duplicate titles counted once).
-     * Output: at most {@value #MAX_KEYWORDS} keywords, most listed first, then most mentioned; [] if no paper lists any.
-     * Used by: ProfileBuilder.sync (M5), stored on the Profile for the Profiles tab and ProfileBuilderCli.
-     * Example: see the class example: 4 multi-hazard papers -> [Multi-hazard, wind load, Fragility, ...]
+     * {@return at most {@value #MAX_KEYWORDS} keywords, most listed first, then most mentioned; [] if no paper
+     * lists any}
+     *
+     * @param allPapers a profile's papers; duplicate titles count once
      */
     public static List<String> of(List<ProfilePaper> allPapers) {
         Set<String> titles = new HashSet<>();

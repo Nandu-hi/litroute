@@ -30,8 +30,10 @@ public final class EnrichmentCacheStore {
     private static final ObjectMapper JSON = new ObjectMapper();
 
     /**
-     * Both collections are modifiable copies, so the pipeline can add to them and save() them back.
-     * The lookups map is the live cache a CachingPaperEnricher reads and writes.
+     * M7c's two sections, as modifiable copies the pipeline adds to and saves back.
+     *
+     * @param enriched the deduplicated papers
+     * @param lookups  the M3 lookup cache, keyed by compacted title; the live map a CachingPaperEnricher uses
      */
     public record Contents(List<PaperCandidate> enriched, Map<String, PaperCandidate> lookups) {
 
@@ -46,12 +48,7 @@ public final class EnrichmentCacheStore {
             lookups = new LinkedHashMap<>(lookups);
         }
 
-        /**
-         * Input: none.
-         * Output: contents with no candidates and no lookups.
-         * Used by: {@link #load} when there is no file; AlertBatchProcessor.forgetAll (reset).
-         * Example: {@code empty().enriched()} -> {@code []}
-         */
+        /** {@return contents with no candidates and no lookups} */
         public static Contents empty() {
             return new Contents(List.of(), Map.of());
         }
@@ -64,31 +61,25 @@ public final class EnrichmentCacheStore {
     private final Path storeFile;
 
     /**
-     * Input: the JSON file to keep this store in.
-     * Output: a store for that file (nothing is read yet).
-     * Used by: {@link #atDefaultLocation}; tests with a temp folder.
-     * Example: {@code new EnrichmentCacheStore(tmp.resolve("enrichment_cache.json")).load()} -> empty
+     * Nothing is read until {@link #load}.
+     *
+     * @param storeFile the JSON file to keep this store in
      */
     public EnrichmentCacheStore(Path storeFile) {
         this.storeFile = storeFile;
     }
 
-    /**
-     * Input: none.
-     * Output: a store for {@code ~/.litroute/data/enrichment_cache.json}.
-     * Used by: PipelineRunner.atDefaultLocations (M9), RelevanceScorerCli.
-     * Example: {@code atDefaultLocation()} -> store for /home/u/.litroute/data/enrichment_cache.json
-     */
+    /** {@return a store for {@code ~/.litroute/data/enrichment_cache.json}} */
     public static EnrichmentCacheStore atDefaultLocation() {
         return new EnrichmentCacheStore(
                 Path.of(System.getProperty("user.home"), ".litroute", "data", "enrichment_cache.json"));
     }
 
     /**
-     * Input: none.
-     * Output: the saved candidates and lookups; empty contents if no file; IOException if corrupt.
-     * Used by: AlertBatchProcessor (M2-M4) at the start of a batch; PipelineRunner (M9) for M6 input; RelevanceScorerCli.
-     * Example: file {@code {"enriched":[{"title":"X",...}],"lookups":{}}} -> Contents([X], {})
+     * {@return the saved candidates and lookups; empty contents if there is no file}
+     * Used by: AlertBatchProcessor (M2-M4), PipelineRunner (M9) for M6 input, RelevanceScorerCli.
+     *
+     * @throws IOException if the file can't be read or is corrupt
      */
     public Contents load() throws IOException {
         if (!Files.exists(storeFile)) {
@@ -108,10 +99,10 @@ public final class EnrichmentCacheStore {
     }
 
     /**
-     * Input: the candidates and lookups to keep.
-     * Output: none; the file is atomically replaced with both sections.
-     * Used by: AlertBatchProcessor (M2-M4) after dedup, before M7a; and with empty contents on reset.
-     * Example: {@code save(new Contents([X], {"x": X}))} -> {@code {"enriched":[X],"lookups":{"x":X}}}
+     * Atomically replaces the file with both sections. Called after dedup, before M7a.
+     *
+     * @param contents the candidates and lookups to keep
+     * @throws IOException if the file can't be written
      */
     public void save(Contents contents) throws IOException {
         Map<String, StoredCandidate> lookups = new LinkedHashMap<>();

@@ -6,6 +6,7 @@ import java.util.Optional;
 /**
  * One HTTP response, as an {@code HttpFetcher} or {@code OllamaClient.Poster} returns it.
  *
+ * @param status      the HTTP status code
  * @param contentType the Content-Type header, or "" if absent
  * @param body        at most the requested number of bytes
  * @param finalUri    the URI after redirects
@@ -16,21 +17,19 @@ public record HttpReply(int status, String contentType, byte[] body, URI finalUr
         Optional<String> retryAfter) {
 
     /**
-     * Input: status, content type, body, final URI, truncated flag.
-     * Output: a reply without a Retry-After header.
-     * Used by: JdkHttpFetcher, OllamaClient (M2), recorded-reply test fetchers.
-     * Example: {@code new HttpReply(200, "application/json", bytes, uri, false).retryAfter()} -> empty
+     * A reply without a Retry-After header.
+     *
+     * @param status      the HTTP status code
+     * @param contentType the Content-Type header, or ""
+     * @param body        the body read
+     * @param finalUri    the URI after redirects
+     * @param truncated   whether the body was cut off
      */
     public HttpReply(int status, String contentType, byte[] body, URI finalUri, boolean truncated) {
         this(status, contentType, body, finalUri, truncated, Optional.empty());
     }
 
-    /**
-     * Input: none.
-     * Output: true for a 2xx status.
-     * Used by: ApiJson, ArticlePageReader, PdfDownloader (M3); OllamaClient (M2).
-     * Example: 200 -> true; 302 -> false; 429 -> false
-     */
+    /** {@return true for a 2xx status} */
     public boolean ok() {
         return status >= 200 && status < 300;
     }

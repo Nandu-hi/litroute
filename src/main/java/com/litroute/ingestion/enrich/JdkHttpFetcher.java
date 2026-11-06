@@ -26,10 +26,9 @@ public final class JdkHttpFetcher implements HttpFetcher {
     private final String userAgent;
 
     /**
-     * Input: the User-Agent to send (APIs ask for a contact address in it).
-     * Output: a fetcher with 8 s connect and 30 s request timeouts.
-     * Used by: OnlinePaperEnricher.create (M3), wrapped in a PacedFetcher.
-     * Example: {@code new JdkHttpFetcher("LitRoute/1.0 (mailto:x@y.org)")}
+     * A fetcher with 8 s connect and 30 s request timeouts.
+     *
+     * @param userAgent the User-Agent to send
      */
     public JdkHttpFetcher(String userAgent) {
         this.userAgent = userAgent;

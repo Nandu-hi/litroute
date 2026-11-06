@@ -7,20 +7,19 @@ package com.litroute.profile;
 public final class UnreadablePdfException extends Exception {
 
     /**
-     * Input: why the PDF can't be used.
-     * Output: the exception.
-     * Used by: PdfTextExtractor.extract (no text, not words).
-     * Example: {@code new UnreadablePdfException("no extractable text (a scan without OCR?)")}
+     * An unreadable PDF.
+     *
+     * @param message why the PDF can't be used; shown as the skip reason
      */
     public UnreadablePdfException(String message) {
         super(message);
     }
 
     /**
-     * Input: why, and the underlying error.
-     * Output: the exception.
-     * Used by: PdfTextExtractor.extract (password, corrupt file).
-     * Example: {@code new UnreadablePdfException("password-protected", e)}
+     * An unreadable PDF, with the error that showed it.
+     *
+     * @param message why the PDF can't be used; shown as the skip reason
+     * @param cause   the underlying error (password, corrupt file)
      */
     public UnreadablePdfException(String message, Throwable cause) {
         super(message, cause);

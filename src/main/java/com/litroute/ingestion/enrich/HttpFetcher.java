@@ -10,11 +10,12 @@ import java.net.URI;
 public interface HttpFetcher {
 
     /**
-     * GETs the URI, following redirects. An HTTP error status (404, 500...) is NOT an exception: it comes back as a reply.
-     * Input: the URI and the most body bytes to read.
-     * Output: the reply; IOException if the host can't be reached or the request times out.
-     * Used by: ApiJson (Crossref/OpenAlex), ArticlePageReader, PdfDownloader (M3); PacedFetcher wraps another.
-     * Example: {@code get(https://api.crossref.org/works/10.1/x, 2_000_000)} -> HttpReply(200, "application/json", ...)
+     * GETs the URI, following redirects. An HTTP error status (404, 500...) is returned as a reply, not thrown.
+     *
+     * @param uri      the URI
+     * @param maxBytes the most body bytes to read
+     * @return the reply
+     * @throws IOException if the host can't be reached or the request times out
      */
     HttpReply get(URI uri, long maxBytes) throws IOException;
 }

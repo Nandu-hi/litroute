@@ -42,10 +42,11 @@ public final class OnlinePaperEnricher implements PaperEnricher {
     private final PdfDownloader pdfs;
 
     /**
-     * Input: the publisher-page reader, the API lookup and the PDF downloader.
-     * Output: an enricher using them.
-     * Used by: {@link #create}; tests with recorded replies.
-     * Example: {@code new OnlinePaperEnricher(pages, lookup, pdfs)}
+     * An enricher over these parts.
+     *
+     * @param pages  the publisher-page reader
+     * @param lookup the API lookup
+     * @param pdfs   the PDF downloader
      */
     public OnlinePaperEnricher(ArticlePageReader pages, CompositeMetadataLookup lookup, PdfDownloader pdfs) {
         this.pages = pages;
@@ -54,11 +55,9 @@ public final class OnlinePaperEnricher implements PaperEnricher {
     }
 
     /**
-     * Real network: Crossref + OpenAlex + the publisher site, PDFs saved under {@code pdfDirectory}.
-     * Input: the folder to save PDFs in.
-     * Output: an enricher on the real network: paced Crossref + OpenAlex + publisher pages.
-     * Used by: PipelineRunner.atDefaultLocations (M9), wrapped in a CachingPaperEnricher.
-     * Example: {@code create(PdfDownloader.defaultDirectory())}
+     * {@return an enricher on the real network: paced Crossref + OpenAlex + publisher pages}
+     *
+     * @param pdfDirectory the folder to save PDFs in
      */
     public static OnlinePaperEnricher create(Path pdfDirectory) {
         HttpFetcher fetcher = new PacedFetcher(new JdkHttpFetcher(USER_AGENT), API_PACE);

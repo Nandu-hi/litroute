@@ -18,10 +18,11 @@ public final class Titles {
     }
 
     /**
-     * Input: two titles, in any spacing, case or punctuation.
-     * Output: 0-1, where 1 means both compact to the same string (0 if both compact to nothing).
-     * Used by: Deduplicator (M4) to merge alerts; CrossrefSource/OpenAlexSource (M3) to accept an API hit.
+     * {@return 0-1, where 1 means both titles compact to the same string (0 if both compact to nothing)}
      * Example: {@code similarity("Deep  Learning–Based Model", "deep learning-based model")} -> {@code 1.0}
+     *
+     * @param a a title
+     * @param b another title
      */
     public static double similarity(String a, String b) {
         String x = compact(a);
@@ -34,10 +35,10 @@ public final class Titles {
     }
 
     /**
-     * Input: a title.
-     * Output: the title as lowercase ASCII letters and digits only (accents dropped): the form titles are compared and cached in.
-     * Used by: M3 lookup cache keys, M4 dedup, ScoredPaper.paperKey (M7e), M5 PdfTextExtractor/ProfileKeywords.
+     * {@return the title as lowercase ASCII letters and digits only}: the form titles are compared and cached in.
      * Example: {@code compact("Café: A Study (2024)")} -> {@code "cafeastudy2024"}
+     *
+     * @param title a title
      */
     public static String compact(String title) {
         return Normalizer.normalize(title, Normalizer.Form.NFD)

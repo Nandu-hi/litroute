@@ -119,20 +119,19 @@ public final class ScoredQueueStore {
     private final Object lock;
 
     /**
-     * Input: the queue's JSON file.
-     * Output: a queue keeping matched PDFs in a {@code matched} folder next to that file.
-     * Used by: tests with a temp folder.
-     * Example: {@code new ScoredQueueStore(tmp/q.json).pdfRoot()} -> {@code tmp/matched}
+     * A queue keeping matched PDFs in a {@code matched} folder next to {@code storeFile}.
+     *
+     * @param storeFile the queue's JSON file
      */
     public ScoredQueueStore(Path storeFile) {
         this(storeFile, storeFile.resolveSibling("matched"));
     }
 
     /**
-     * Input: the queue's JSON file and the folder holding one subfolder of matched PDFs per student.
-     * Output: a queue sharing the lock of every other store object on the same file.
-     * Used by: {@link #atDefaultLocation}, the one-argument constructor, tests.
-     * Example: {@code new ScoredQueueStore(d/scored_queue.json, d/matched)}
+     * A queue sharing the lock of every other store object on the same file.
+     *
+     * @param storeFile the queue's JSON file
+     * @param pdfRoot   the folder holding one subfolder of matched PDFs per student
      */
     public ScoredQueueStore(Path storeFile, Path pdfRoot) {
         this.storeFile = storeFile;
@@ -140,32 +139,22 @@ public final class ScoredQueueStore {
         this.lock = LOCKS.computeIfAbsent(storeFile.toAbsolutePath().normalize(), path -> new Object());
     }
 
-    /**
-     * Input: none.
-     * Output: a queue at {@code ~/.litroute/data/scored_queue.json} with PDFs under {@code ~/.litroute/data/matched/}.
-     * Used by: PipelineRunner.atDefaultLocations (M9), LitRouteApp (M8), ApprovedPaperSender.atDefaultLocations (M10), RelevanceScorerCli.
-     * Example: {@code atDefaultLocation().pdfRoot()} -> /home/u/.litroute/data/matched
-     */
+    /** {@return a queue at {@code ~/.litroute/data/scored_queue.json} with PDFs under {@code matched/}} */
     public static ScoredQueueStore atDefaultLocation() {
         Path data = Path.of(System.getProperty("user.home"), ".litroute", "data");
         return new ScoredQueueStore(data.resolve("scored_queue.json"), data.resolve("matched"));
     }
 
-    /**
-     * Input: none.
-     * Output: the folder holding one subfolder of matched PDFs per student.
-     * Used by: RelevanceScorerCli to print where the PDFs went; {@link #clear}.
-     * Example: -> {@code ~/.litroute/data/matched}
-     */
+    /** {@return the folder holding one subfolder of matched PDFs per student} */
     public Path pdfRoot() {
         return pdfRoot;
     }
 
     /**
-     * Input: a profile name.
-     * Output: {@code pdfRoot/<name>}; throws if the name would lead outside pdfRoot.
-     * Used by: {@link #withPdfFiled}.
-     * Example: {@code pdfFolder("alice")} -> {@code matched/alice}; {@code pdfFolder("../x")} -> throws
+     * {@return {@code pdfRoot/<name>}, the student's PDF folder}
+     *
+     * @param profileName a profile name
+     * @throws IllegalArgumentException if the name leads outside pdfRoot, as {@code "../x"} does
      */
     public Path pdfFolder(String profileName) {
         Path folder = pdfRoot.resolve(profileName).normalize();
@@ -176,10 +165,9 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * Input: none.
-     * Output: the queue in first-added order; empty if nothing queued yet; IOException if corrupt.
-     * Used by: ReviewPane (M8) to show it, PipelineRunner (M9) for counts and scored keys, ApprovedPaperSender (M10).
-     * Example: -> {@code [alice/"Wave loads" PENDING, bob/"Soil creep" APPROVED]}
+     * {@return the queue in first-added order; empty if nothing is queued yet}
+     *
+     * @throws IOException if the file can't be read or is corrupt
      */
     public List<ScoredPaper> load() throws IOException {
         synchronized (lock) {
@@ -188,11 +176,11 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * Adds what a {@code PaperMatcher} matched: each student's papers, as {@link #addAll(Collection)}.
-     * Input: M6 output, student -> their scored papers.
-     * Output: the whole queue after the change.
-     * Used by: RelevanceScorerCli; tests.
-     * Example: {@code addAll({alice=[X], bob=[Y]})} -> queue [..., alice/X, bob/Y]
+     * Adds what a {@code PaperMatcher} matched, as {@link #addAll(Collection)}.
+     *
+     * @param matches M6 output: student to their scored papers
+     * @return the whole queue after the change
+     * @throws IOException if the file or a PDF copy can't be read or written
      */
     public List<ScoredPaper> addAll(Map<String, List<ScoredPaper>> matches) throws IOException {
         return addAll(matches.values().stream().flatMap(List::stream).toList());
@@ -203,10 +191,11 @@ public final class ScoredQueueStore {
      * and recommendation but keeps its place and review status, so re-scoring never undoes a decision.
      * Each PDF is copied into the student's folder and the entry points to the copy, unless the paper is
      * {@link ReviewStatus#UNMATCHED}.
-     * Input: scored papers.
-     * Output: the whole queue after the change.
-     * Used by: PipelineRunner (M9) after M6 (papers already sent filtered out first); {@link #addAll(Map)}.
      * Example: alice/X APPROVED queued, {@code addAll([alice/X score 0.9])} -> alice/X score 0.9, still APPROVED
+     *
+     * @param scored newly scored papers
+     * @return the whole queue after the change
+     * @throws IOException if the file or a PDF copy can't be read or written
      */
     public List<ScoredPaper> addAll(Collection<ScoredPaper> scored) throws IOException {
         synchronized (lock) {
@@ -224,12 +213,12 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * Empties the queue (decisions included) and deletes its PDF copies in the students' folders, then any
-     * folder left empty. A file outside {@link #pdfRoot()} is not this store's copy and is left alone.
-     * Input: none.
-     * Output: how many entries the queue held.
-     * Used by: PipelineRunner.reset (M9, Clear and re-run), DataCaches (the Caches tab).
-     * Example: queue of 3 with copies in matched/alice -> returns 3; matched/alice deleted
+     * Empties the queue (decisions included) and deletes its PDF copies, then any folder left empty. A file
+     * outside {@link #pdfRoot()} is not this store's copy and is left alone.
+     * Used by: PipelineRunner.reset (M9), DataCaches (the Caches tab).
+     *
+     * @return how many entries the queue held
+     * @throws IOException if the file or a copy can't be deleted
      */
     public int clear() throws IOException {
         synchronized (lock) {
@@ -276,10 +265,11 @@ public final class ScoredQueueStore {
 
     /**
      * Takes these papers out of the queue (by {@link ScoredPaper#queueKey()}), leaving their PDF copies.
-     * Input: papers to remove.
-     * Output: how many of them were queued; the file is rewritten only if any were.
      * Used by: ApprovedPaperSender (M10), after recording them in {@link SentPaperStore}.
-     * Example: queue [alice/X, bob/Y], {@code remove([alice/X])} -> 1; queue [bob/Y]
+     *
+     * @param papers papers to remove
+     * @return how many of them were queued; the file is rewritten only if any were
+     * @throws IOException if the file can't be read or written
      */
     public int remove(Collection<ScoredPaper> papers) throws IOException {
         Set<String> keys = papers.stream().map(ScoredPaper::queueKey).collect(Collectors.toSet());
@@ -295,11 +285,12 @@ public final class ScoredQueueStore {
 
     /**
      * Takes M6's unmatched entries for these papers out of the queue, so the next run scores them again. An entry
-     * the professor has acted on, or another paper's, stays. Unmatched entries have no PDF copy to delete.
-     * Input: paper keys ({@link ScoredPaper#paperKey}).
-     * Output: how many entries were removed; the file is rewritten only if any were.
+     * the professor has acted on stays.
      * Used by: PriorityAuthors (M9), when an author is added to the list.
-     * Example: queue [alice/X UNMATCHED, bob/Y DROPPED], {@code removeUnmatched([X, Y])} -> 1; queue [bob/Y]
+     *
+     * @param paperKeys paper keys ({@link ScoredPaper#paperKey})
+     * @return how many entries were removed; the file is rewritten only if any were
+     * @throws IOException if the file can't be read or written
      */
     public int removeUnmatched(Collection<String> paperKeys) throws IOException {
         Set<String> keys = Set.copyOf(paperKeys);
@@ -315,12 +306,14 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * Records the professor's decision on one queued paper. A paper M6 matched to no one has its PDF copied into
-     * the student's folder once the professor decides on it.
-     * Input: the paper (matched by queue key) and its new status.
-     * Output: true if updated; false if that paper is not queued for that student.
+     * Records the professor's decision on one queued paper. An unmatched paper's PDF is copied into the student's
+     * folder once the professor decides on it.
      * Used by: ReviewPane (M8) Approve/Drop.
-     * Example: {@code setStatus(alice/X, APPROVED)} -> true; {@code setStatus(zoe/X, APPROVED)} -> false
+     *
+     * @param paper  the paper, matched by queue key
+     * @param status its new status
+     * @return false if that paper is not queued for that student
+     * @throws IOException if the file or the PDF copy can't be read or written
      */
     public boolean setStatus(ScoredPaper paper, ReviewStatus status) throws IOException {
         synchronized (lock) {
@@ -337,15 +330,17 @@ public final class ScoredQueueStore {
     }
 
     /**
-     * Gives a queued paper to another student instead ({@link ScoredPaper#movedTo}): it keeps its place in the
-     * queue, takes M6's score for that student, and its PDF is copied into their folder; the old copy is deleted
-     * once no other entry points to it. The queue is written first, so a crash leaves a stray PDF, never an entry
-     * pointing to a deleted file.
-     * Input: the queued paper (by queue key) and the student to give it to.
-     * Output: the moved entry; empty if the paper is not queued for its student; throws if it is already queued
-     * for the new one, or can't be moved ({@link ScoredPaper#movedTo}).
+     * Gives a queued paper to another student ({@link ScoredPaper#movedTo}): it keeps its place, takes M6's score
+     * for that student, and its PDF is copied into their folder; the old copy is deleted once nothing points to it.
+     * The queue is written first, so a crash leaves a stray PDF, never an entry pointing to a deleted file.
      * Used by: ReviewPane (M8) Move.
-     * Example: queue [alice/X DROPPED], {@code move(alice/X, "bob")} -> bob/X PENDING; matched/alice/x.pdf -> matched/bob/x.pdf
+     *
+     * @param paper   the queued paper (by queue key)
+     * @param student the student to give it to
+     * @return the moved entry; empty if the paper is not queued for its student
+     * @throws IllegalArgumentException if it is already queued for {@code student}, or can't be moved there
+     * @throws IllegalStateException    if it has been sent
+     * @throws IOException              if the file or a PDF copy can't be read or written
      */
     public Optional<ScoredPaper> move(ScoredPaper paper, String student) throws IOException {
         synchronized (lock) {

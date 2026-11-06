@@ -38,9 +38,13 @@ import java.util.Map;
  */
 public final class OllamaClient {
 
+    /** Environment variable for the Ollama address; it must be on this machine. */
     public static final String URL_VARIABLE = "LITROUTE_OLLAMA_URL";
+    /** Environment variable for the model name. */
     public static final String MODEL_VARIABLE = "LITROUTE_OLLAMA_MODEL";
+    /** The address used when {@value #URL_VARIABLE} is unset. */
     public static final String DEFAULT_URL = "http://localhost:11434";
+    /** The model used when {@value #MODEL_VARIABLE} is unset. */
     public static final String DEFAULT_MODEL = "llama3.2:3b";
 
     /** Room for prompts.txt (~260 tokens), a slice of an email (~1,500) and its answer (~1,300). */
@@ -92,10 +96,9 @@ public final class OllamaClient {
     }
 
     /**
-     * Input: none (reads the process environment).
-     * Output: a client on the JDK's HttpClient for the chosen address and model.
-     * Used by: AiTitleExtractor.fromEnvironment.
-     * Example: nothing set -> llama3.2:3b at http://localhost:11434
+     * {@return a client for the address and model in the environment, or the defaults}
+     *
+     * @throws IllegalArgumentException if {@value #URL_VARIABLE} is not an address on this machine
      */
     public static OllamaClient fromEnvironment() {
         return fromEnvironment(System.getenv());
@@ -164,12 +167,7 @@ public final class OllamaClient {
         };
     }
 
-    /**
-     * Input: none.
-     * Output: the model's name.
-     * Used by: AiTitleExtractor, in its log lines.
-     * Example: -> "llama3.2:3b"
-     */
+    /** {@return the model's name} */
     public String modelId() {
         return model;
     }

@@ -29,30 +29,24 @@ public final class EmailCacheStore {
     private final Path storeFile;
 
     /**
-     * Input: the JSON file to keep this store in.
-     * Output: a store for that file (nothing is read yet).
-     * Used by: {@link #atDefaultLocation}; tests with a temp folder.
-     * Example: {@code new EmailCacheStore(tmp.resolve("email_cache.json")).load()} -> empty
+     * Nothing is read until {@link #load}.
+     *
+     * @param storeFile the JSON file to keep this store in
      */
     public EmailCacheStore(Path storeFile) {
         this.storeFile = storeFile;
     }
 
-    /**
-     * Input: none.
-     * Output: a store for {@code ~/.litroute/data/email_cache.json}.
-     * Used by: PipelineRunner.atDefaultLocations (M9), PipelinePane (M8) to count processed alerts.
-     * Example: {@code atDefaultLocation()} -> store for /home/u/.litroute/data/email_cache.json
-     */
+    /** {@return a store for {@code ~/.litroute/data/email_cache.json}} */
     public static EmailCacheStore atDefaultLocation() {
         return new EmailCacheStore(Path.of(System.getProperty("user.home"), ".litroute", "data", "email_cache.json"));
     }
 
     /**
-     * Input: none.
-     * Output: a modifiable set of the Message-IDs already processed; empty if no file yet.
+     * {@return a modifiable set of the Message-IDs already processed; empty if there is no file yet}
      * Used by: PipelineRunner (M9) before fetching (M1 skips these) and on reset; AlertBatchProcessor (M2).
-     * Example: file {@code ["<a@x>","<b@x>"]} -> {@code {"<a@x>","<b@x>"}}
+     *
+     * @throws IOException if the file can't be read or is corrupt
      */
     public Set<String> load() throws IOException {
         if (!Files.exists(storeFile)) {
@@ -63,10 +57,10 @@ public final class EmailCacheStore {
     }
 
     /**
-     * Input: every Message-ID processed so far.
-     * Output: none; the file is atomically replaced with them as a JSON array.
-     * Used by: AlertBatchProcessor (M2) LAST, after M7c is saved; and with an empty set on reset.
-     * Example: {@code save({"<a@x>"})} -> file {@code ["<a@x>"]}
+     * Atomically replaces the file with these IDs. AlertBatchProcessor calls it LAST, after M7c is saved.
+     *
+     * @param processedMessageIds every Message-ID processed so far
+     * @throws IOException if the file can't be written
      */
     public void save(Set<String> processedMessageIds) throws IOException {
         byte[] content = JSON.writeValueAsBytes(Collections.unmodifiableSet(processedMessageIds));

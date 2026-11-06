@@ -17,10 +17,11 @@ public final class Vectors {
     }
 
     /**
-     * Input: two vectors of the same length.
-     * Output: their cosine similarity, -1 to 1; 0 if either is all zeros.
-     * Used by: RelevanceScorer (M6) paper-vs-profile scores, ProfileBuilderCli.
-     * Example: {@code cosine({1,0}, {1,1})} -> {@code 0.7071}
+     * {@return the cosine similarity, -1 to 1; 0 if either vector is all zeros}
+     *
+     * @param a a vector
+     * @param b a vector of the same length
+     * @throws IllegalArgumentException if the lengths differ
      */
     public static double cosine(float[] a, float[] b) {
         requireSameLength(a, b);
@@ -40,10 +41,9 @@ public final class Vectors {
     }
 
     /**
-     * Input: a vector.
-     * Output: its Euclidean length.
-     * Used by: {@link #normalize}.
-     * Example: {@code norm({3,4})} -> {@code 5.0}
+     * {@return the vector's Euclidean length}
+     *
+     * @param v a vector
      */
     public static double norm(float[] v) {
         double sum = 0;
@@ -54,10 +54,9 @@ public final class Vectors {
     }
 
     /**
-     * Input: a vector.
-     * Output: a new unit-length copy of it, or an unchanged copy if it is all zeros.
-     * Used by: Specter2EmbeddingProvider (every embedding is unit length), PaperEmbedder, ProfileBuilderCli.
-     * Example: {@code normalize({3,4})} -> {@code {0.6,0.8}}
+     * {@return a new unit-length copy, or an unchanged copy if the vector is all zeros}
+     *
+     * @param v a vector
      */
     public static float[] normalize(float[] v) {
         double norm = norm(v);
@@ -72,10 +71,10 @@ public final class Vectors {
     }
 
     /**
-     * Input: one or more vectors of equal length.
-     * Output: their element-wise mean; throws if the list is empty.
-     * Used by: PaperEmbedder and RelevanceScorer (profile centroids), ProfileBrief, ProfileBuilderCli.
-     * Example: {@code mean([{1,2},{3,4}])} -> {@code {2,3}}
+     * {@return the element-wise mean}
+     *
+     * @param vectors one or more vectors of equal length
+     * @throws IllegalArgumentException if the list is empty
      */
     public static float[] mean(List<float[]> vectors) {
         if (vectors.isEmpty()) {
@@ -87,10 +86,11 @@ public final class Vectors {
     }
 
     /**
-     * Input: vectors of equal length and one weight per vector.
-     * Output: Σ weights[i] · vectors[i]; throws if the counts differ or there are no vectors.
-     * Used by: {@link #mean}, and PaperEmbedder to blend a paper's section vectors.
-     * Example: {@code weightedSum([{1,0},{0,1}], {0.25,0.75})} -> {@code {0.25,0.75}}
+     * {@return Σ weights[i] · vectors[i]}
+     *
+     * @param vectors vectors of equal length
+     * @param weights one weight per vector
+     * @throws IllegalArgumentException if the counts differ or there are no vectors
      */
     public static float[] weightedSum(List<float[]> vectors, double[] weights) {
         if (vectors.size() != weights.length || vectors.isEmpty()) {

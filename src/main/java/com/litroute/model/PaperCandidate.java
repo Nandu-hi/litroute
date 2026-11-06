@@ -16,6 +16,7 @@ import java.util.regex.Pattern;
  * only fills fields the email left empty.
  *
  * @param sourceMessageId RFC 822 Message-ID of the {@link RawEmail} this came from
+ * @param title           the paper's title as the email prints it; the only required field
  * @param authors         visible author names in order; placeholders such as "others" or "..." are
  *                        dropped, never emitted as names
  * @param venue           journal/conference name, without volume/issue/date decorations
@@ -66,10 +67,9 @@ public record PaperCandidate(
             + "|reply\\s+to\\b|special\\s+issue\\b)");
 
     /**
-     * Whether this is a research paper rather than a note about one (book review, discussion, erratum,
-     * editorial...), by section label or title. A book review can read like a student's papers, so notes never reach M6.
-     * Input: none (this candidate's articleType and title).
-     * Output: true for a research paper, false for a note.
+     * {@return true for a research paper, false for a note about one (book review, discussion, erratum,
+     * editorial...)}, judged by section label or title. A book review can read like a student's papers, so
+     * notes never reach M6.
      * Used by: AlertHtmlParser (M2) to drop notes; RelevanceScorer (M6) as a guard.
      * Example: articleType "Book Reviews" -> false; title "Erratum: Wave loads" -> false; "Wave loads on piles" -> true
      */
@@ -79,10 +79,10 @@ public record PaperCandidate(
     }
 
     /**
-     * Input: the new PDF location, or empty for none.
-     * Output: a copy of this candidate with only pdfPath changed.
+     * {@return a copy of this candidate with only pdfPath changed}
      * Used by: ScoredQueueStore (M7e) to point an entry at the student's copy of the PDF.
-     * Example: {@code withPdfPath(Optional.of(matched/alice/x.pdf))} -> same paper, pdfPath = matched/alice/x.pdf
+     *
+     * @param newPdfPath the new PDF location, or empty for none
      */
     public PaperCandidate withPdfPath(Optional<Path> newPdfPath) {
         return new PaperCandidate(sourceMessageId, title, authors, venue, year, articleType, doi, url, abstractSnippet,

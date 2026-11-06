@@ -18,10 +18,11 @@ public final class GmailCredentials {
     private final char[] appPassword;
 
     /**
-     * Input: a Gmail address and the App Password (copied; the caller may wipe its own array).
-     * Output: the credentials; throws if the address is malformed or the password is empty.
-     * Used by: CredentialStore.load, CredentialsPane (M8), CredentialSetupCli.
-     * Example: {@code new GmailCredentials("prof@gmail.com", pw)} -> ok; {@code "prof"} -> throws
+     * Validated credentials.
+     *
+     * @param emailAddress a Gmail address
+     * @param appPassword  the App Password; copied, so the caller may wipe its own array
+     * @throws IllegalArgumentException if the address is malformed or the password is empty
      */
     public GmailCredentials(String emailAddress, char[] appPassword) {
         if (emailAddress == null || emailAddress.isBlank()) {
@@ -37,22 +38,12 @@ public final class GmailCredentials {
         this.appPassword = appPassword.clone();
     }
 
-    /**
-     * Input: none.
-     * Output: the Gmail address.
-     * Used by: GmailEmailSource (M1) IMAP login, GmailSmtpSender (M10) as sender, Session (M8).
-     * Example: -> {@code "prof@gmail.com"}
-     */
+    /** {@return the Gmail address} */
     public String emailAddress() {
         return emailAddress;
     }
 
-    /**
-     * Input: none.
-     * Output: a copy of the App Password; the caller must clear it after use.
-     * Used by: GmailEmailSource (M1) and GmailSmtpSender (M10) to log in; CredentialStore.save.
-     * Example: -> {@code ['a','b','c','d',...]}
-     */
+    /** {@return a copy of the App Password}; the caller must clear it after use. */
     public char[] appPassword() {
         return appPassword.clone();
     }

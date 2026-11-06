@@ -17,10 +17,12 @@ public final class AtomicFiles {
     }
 
     /**
-     * Input: the file to (over)write and its full new contents.
-     * Output: none; afterwards {@code target} holds exactly {@code content}, or its old contents if this threw.
-     * Used by: every M7 store's save, CredentialStore, and PdfDownloader (M3).
-     * Example: {@code writeAtomically(data/email_cache.json, "[\"<a@b>\"]".getBytes())} -> file reads {@code ["<a@b>"]}
+     * Writes a temp file in the same folder, then moves it over {@code target}, so a reader sees the old file
+     * or the new one, never half of one.
+     *
+     * @param target  the file to (over)write
+     * @param content its full new contents
+     * @throws IOException if the write fails; {@code target} then keeps its old contents
      */
     public static void writeAtomically(Path target, byte[] content) throws IOException {
         Path parentDir = target.toAbsolutePath().getParent();

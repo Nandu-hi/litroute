@@ -174,11 +174,17 @@ public final class PdfTextExtractor {
         }
     }
 
+    /** Creates an extractor; it holds no state between PDFs. */
+    public PdfTextExtractor() {
+    }
+
     /**
-     * Input: a PDF file (first {@value #MAX_PAGES} pages read).
-     * Output: its title, abstract, headings, sampled body passages and author keywords; UnreadablePdfException if unreadable, encrypted or textless.
-     * Used by: ProfileBuilder (M5) for reference PDFs; RelevanceScorer and LocalPdfCandidates (M6) for candidate PDFs.
-     * Example: rao2024.pdf -> PaperText("Wave loads on piles", "We study...", [1 Introduction, ...], [6 chunks], [piles, waves])
+     * {@return the PDF's title, abstract, headings, sampled body passages and author keywords}
+     * Only the first {@value #MAX_PAGES} pages are read.
+     * Used by: ProfileBuilder (M5) for reference PDFs; RelevanceScorer and LocalPdfCandidates (M6) for candidates.
+     *
+     * @param pdf a PDF file
+     * @throws UnreadablePdfException if the PDF is corrupt, encrypted, or has too little real text
      */
     public PaperText extract(Path pdf) throws UnreadablePdfException {
         String metadataTitle;

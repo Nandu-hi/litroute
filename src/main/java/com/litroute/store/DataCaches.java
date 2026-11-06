@@ -30,11 +30,17 @@ public final class DataCaches {
 
     /** One thing that can be cleared. The order is the order a clear takes them in: see {@link #clear}. */
     public enum Cache {
+        /** M7e: the review queue, its decisions and the students' PDF copies. */
         REVIEW_QUEUE("Review queue"),
+        /** The sent-paper record; without it a student can get a paper twice. */
         SENT_PAPERS("Sent papers"),
+        /** M7c: the extracted papers and the lookup cache. */
         EXTRACTED_PAPERS("Extracted papers"),
+        /** M7a: the processed Message-IDs (Gmail is not touched). */
         PROCESSED_EMAILS("Processed emails"),
+        /** {@code pdfs/}: the downloaded PDFs. */
         DOWNLOADED_PDFS("Downloaded PDFs"),
+        /** M7d: the built profiles (the student folders stay). */
         PROFILES("Student profiles");
 
         private final String label;
@@ -80,12 +86,7 @@ public final class DataCaches {
      */
     public record Report(List<Usage> caches, long otherBytes) {
 
-        /**
-         * Input: none.
-         * Output: the size of all the caches together.
-         * Used by: CachesPane (M8).
-         * Example: caches of 10 and 20 bytes -> 30
-         */
+        /** {@return the size of all the caches together, in bytes} */
         public long totalBytes() {
             return caches.stream().mapToLong(Usage::bytes).sum();
         }
@@ -120,10 +121,9 @@ public final class DataCaches {
     private final SentPaperStore sent;
 
     /**
-     * Input: the data folder.
-     * Output: the caches in it (nothing is read yet).
-     * Used by: {@link #atDefaultLocation}; DataCachesTest with a temp folder.
-     * Example: {@code new DataCaches(tmp).report()} -> every cache empty
+     * Nothing is read until {@link #report} or {@link #clear}.
+     *
+     * @param folder the data folder
      */
     public DataCaches(Path folder) {
         this.folder = folder.toAbsolutePath().normalize();
@@ -134,32 +134,22 @@ public final class DataCaches {
         this.sent = new SentPaperStore(this.folder.resolve(SENT_FILE));
     }
 
-    /**
-     * Input: none.
-     * Output: the caches in {@code ~/.litroute/data}.
-     * Used by: CachesPane (M8).
-     * Example: {@code atDefaultLocation().report().totalBytes()} -> 28000000
-     */
+    /** {@return the caches in {@code ~/.litroute/data}} */
     public static DataCaches atDefaultLocation() {
         return new DataCaches(Path.of(System.getProperty("user.home"), ".litroute", "data"));
     }
 
-    /**
-     * Input: none.
-     * Output: the data folder.
-     * Used by: CachesPane (M8), to say where the caches are.
-     * Example: -> /home/u/.litroute/data
-     */
+    /** {@return the data folder} */
     public Path folder() {
         return folder;
     }
 
     /**
-     * Measures every cache. Reading a store that turns out corrupt is not an error here: it is what to report.
-     * Input: none.
-     * Output: each cache's size and contents, and the size of everything else in the folder; IOException only if the folder can't be walked.
+     * Measures every cache. A corrupt store is not an error here: it is reported as such.
      * Used by: CachesPane (M8), on opening the tab, on Refresh and after a job.
-     * Example: -> Report([Usage(REVIEW_QUEUE, 2500000, "4 papers: 1 pending, 1 approved, 1 dropped, 1 not matched", ...), ...], 180000)
+     *
+     * @return each cache's size and contents, and the size of everything else in the folder
+     * @throws IOException if the folder can't be walked
      */
     public Report report() throws IOException {
         List<Usage> caches = List.of(queueUsage(), sentUsage(), extractedUsage(), emailsUsage(),
@@ -169,13 +159,13 @@ public final class DataCaches {
     }
 
     /**
-     * Clears the chosen caches, always in the {@link Cache} order: the queue before the sent papers (whose PDF copies
-     * it may share), and the processed emails after the papers extracted from them, as Clear and re-run does, so a crash part-way
-     * repeats work rather than losing it. Gmail is not touched: no email is marked unread.
-     * Input: the caches to clear.
-     * Output: none; each is empty; IOException at the first that fails, with those before it cleared.
+     * Clears the chosen caches, always in {@link Cache} order: the queue before the sent papers (whose PDF copies
+     * it may share), the processed emails after the papers extracted from them, so a crash part-way repeats work
+     * rather than losing it. Gmail is not touched.
      * Used by: CachesPane (M8), once the professor has agreed to the consequences.
-     * Example: clear({SENT_PAPERS}) -> sent_papers.json and the sent PDF copies are gone, nothing else changes
+     *
+     * @param chosen the caches to clear
+     * @throws IOException at the first cache that fails; those before it stay cleared
      */
     public void clear(Set<Cache> chosen) throws IOException {
         for (Cache cache : Cache.values()) {

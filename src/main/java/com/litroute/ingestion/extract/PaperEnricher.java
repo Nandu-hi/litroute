@@ -13,10 +13,11 @@ public interface PaperEnricher {
     PaperEnricher NONE = (candidate, linkKind) -> candidate;
 
     /**
-     * Input: a paper as parsed from the email, and how usable its link is.
-     * Output: the paper with DOI, missing metadata and pdfPath filled where found; unchanged if nothing could be.
-     * Used by: PaperExtractor.extract (M2); CachingPaperEnricher wraps OnlinePaperEnricher (M3).
+     * {@return the paper with DOI, missing metadata and pdfPath filled where found; unchanged if nothing was}
      * Example: ("Wave loads on piles", OPAQUE) -> same paper + doi "10.1061/x", abstract, pdfPath pdfs/x.pdf
+     *
+     * @param extracted a paper as parsed from the email
+     * @param linkKind  how usable its link is
      */
     PaperCandidate enrich(PaperCandidate extracted, LinkKind linkKind);
 }

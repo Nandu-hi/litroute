@@ -25,10 +25,10 @@ public final class CachingPaperEnricher implements PaperEnricher {
     private final Map<String, PaperCandidate> cache;
 
     /**
-     * Input: the enricher to call on a cache miss, and M7c's live lookups map (written to in place).
-     * Output: a caching enricher.
-     * Used by: PipelineRunner.atDefaultLocations (M9), via AlertBatchProcessor's ExtractorFactory.
-     * Example: {@code new CachingPaperEnricher(new OnlinePaperEnricher(..), contents.lookups())}
+     * The M7c lookup cache in front of {@code delegate}.
+     *
+     * @param delegate the enricher to call on a cache miss
+     * @param cache    M7c's live lookups map, written to in place
      */
     public CachingPaperEnricher(PaperEnricher delegate, Map<String, PaperCandidate> cache) {
         this.delegate = delegate;

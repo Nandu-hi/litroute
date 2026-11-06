@@ -46,10 +46,10 @@ public final class PacedFetcher implements HttpFetcher {
     private final Map<String, Long> lastStart = new HashMap<>();
 
     /**
-     * Input: the fetcher that does the requests, and the least time between two requests per paced host.
-     * Output: a paced fetcher that really sleeps.
-     * Used by: OnlinePaperEnricher.create (M3).
-     * Example: {@code new PacedFetcher(jdk, Map.of("api.crossref.org", Duration.ofMillis(250)))}
+     * A paced fetcher that really sleeps.
+     *
+     * @param fetcher   the fetcher that does the requests
+     * @param intervals the least time between two requests, per paced host
      */
     public PacedFetcher(HttpFetcher fetcher, Map<String, Duration> intervals) {
         this(fetcher, intervals, duration -> Thread.sleep(duration.toMillis()));
