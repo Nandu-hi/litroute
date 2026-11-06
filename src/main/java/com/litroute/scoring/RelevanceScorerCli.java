@@ -30,7 +30,7 @@ import java.util.stream.Stream;
  * Without a path it matches the deduplicated papers held in M7c against the profiles in M7d, adds
  * the matches to the review queue (M7e) and lists each student's papers. With a PDF, or a folder of
  * them, it reports each paper's score for every profile instead and changes nothing; when the
- * folder's subfolders are named after profiles (FOLDER/RP3-mf-sim/x.pdf), each PDF is expected to
+ * folder's subfolders are named after profiles (FOLDER/alice/x.pdf), each PDF is expected to
  * reach the profile it sits under, and the run compares the strategies on how many did and on the
  * precision of each student's best three.
  */

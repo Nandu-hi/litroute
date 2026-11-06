@@ -4,7 +4,7 @@ The record behind M6's floors and weights, oldest first. The formulas are in [ca
 
 ## Floor 0.7, no quota (October 2026)
 
-The professor's first reviewed batch had 31 alert papers. Under the old rule, every paper was queued and each student's top 3 above 0.5 were recommended. 20 of the 31 were dropped, and 15 of those had landed on RP4-mh-char, the broadest hazard profile. Five of them were notes: book reviews, a discussion, a closure and an erratum (one book review scored 0.96).
+The professor's first reviewed batch had 31 alert papers. Under the old rule, every paper was queued and each student's top 3 above 0.5 were recommended. 20 of the 31 were dropped, and 15 of those had landed on RP4, the broadest hazard profile. Five of them were notes: book reviews, a discussion, a closure and an erratum (one book review scored 0.96).
 
 | Rule | Queued | Approved | Dropped |
 |---|---|---|---|
