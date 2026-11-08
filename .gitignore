@@ -23,3 +23,6 @@ sync-install.sh
 
 # Course report (LaTeX)
 report/
+
+# Docker helper files (entrypoint, seeded-image recipe); kept local
+docker/

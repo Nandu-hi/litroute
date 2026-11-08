@@ -1,0 +1,9 @@
+.git
+target
+report
+benchmark
+eml-alerts-*.txt
+hs_err_pid*.log
+temp.txt
+scripts/model-export/.venv
+scripts/model-export/out

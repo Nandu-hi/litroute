@@ -50,9 +50,15 @@ public final class Specter2EmbeddingProvider implements EmbeddingProvider {
         this.session = session;
     }
 
-    /** {@return {@code ~/.litroute/models}, where setup_model.sh exports the model} */
+    /**
+     * {@return the folder named by the {@code litroute.models.dir} system property, else
+     * {@code ~/.litroute/models}, where setup_model.sh exports the model}
+     * The Docker image sets the property, so its model stays in the image and is not frozen in the data volume.
+     */
     public static Path defaultModelDirectory() {
-        return Path.of(System.getProperty("user.home"), ".litroute", "models");
+        String configured = System.getProperty("litroute.models.dir");
+        return configured != null && !configured.isBlank() ? Path.of(configured)
+                : Path.of(System.getProperty("user.home"), ".litroute", "models");
     }
 
     /**
